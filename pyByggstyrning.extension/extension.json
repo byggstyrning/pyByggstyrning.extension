@@ -1,0 +1,14 @@
+{
+    "builtin": "False",
+    "default_enabled": "True",
+    "type": "extension",
+    "rocket_mode_compatible": "False",
+    "name": "pyByggstyrning",
+    "description": "Reuse extension for Byggstyrning",
+    "author": "Jonatan Jacobsson",
+    "author_profile": "https://github.com/jonatanjacobsson",
+    "url": "https://github.com/byggstyrning/pyByggstyrning",
+    "website": "https://www.byggstyrning.se",
+    "image": "",
+    "dependencies": ["ifctester"]
+}

@@ -1,0 +1,212 @@
+<Window 
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Schedule AI Processor" Height="600" Width="800">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="5"/>
+            <RowDefinition Height="Auto" MinHeight="80"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        
+        <!-- Schedule Selection and Type/Instance Selection -->
+        <Grid Grid.Row="0" Margin="10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/> 
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            
+            <Label Grid.Column="0" Content="Select Schedule:" VerticalAlignment="Center"/>
+            <ComboBox Grid.Column="1" x:Name="cboScheduleSelector" Margin="5" ToolTip="Select a schedule to process"/>
+            <TextBox Grid.Column="2" x:Name="txtSelectedSchedule" IsReadOnly="True" Margin="5" Visibility="Collapsed"/>
+            <Label Grid.Column="3" Content="Select Element Type:" VerticalAlignment="Center" Margin="20,5,5,5"/>
+            <RadioButton Grid.Column="4" x:Name="rbTypes" Content="Types" Margin="10,5" IsChecked="True" GroupName="ElementSelection"/>
+            <RadioButton Grid.Column="5" x:Name="rbInstances" Content="Instances" Margin="10,5" GroupName="ElementSelection"/>
+            <Button Grid.Column="6" x:Name="btnLoadElements" Content="Reload Schedule" HorizontalAlignment="Left" Click="btnLoadElements_Click" Margin="3" />
+        </Grid>
+        
+        <!-- Data Grid for Schedule Data -->
+        <DataGrid Grid.Row="1" x:Name="dataGrid" AutoGenerateColumns="False"
+                  CanUserAddRows="False" CanUserDeleteRows="False" 
+                  SelectionMode="Single" SelectionUnit="FullRow"
+                  HeadersVisibility="Column" Margin="10"
+                  Background="White"
+                  AlternatingRowBackground="#F8F9FA"
+                  GridLinesVisibility="Horizontal"
+                  HorizontalGridLinesBrush="#E9ECEF"
+                  VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Auto"
+                  BorderThickness="1"
+                  BorderBrush="#DEE2E6"
+                  CanUserResizeColumns="True"
+                  CanUserReorderColumns="True"
+                  RowHeaderWidth="0">
+            <DataGrid.Resources>
+                <Style TargetType="DataGridColumnHeader">
+                    <Setter Property="Background" Value="#F8F9FA"/>
+                    <Setter Property="Foreground" Value="#212529"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                    <Setter Property="Height" Value="60"/>
+                    <Setter Property="Padding" Value="12,0"/>
+                    <Setter Property="BorderThickness" Value="0,0,1,1"/>
+                    <Setter Property="BorderBrush" Value="#DEE2E6"/>
+                    <Setter Property="HorizontalContentAlignment" Value="Left"/>
+                    <Setter Property="VerticalContentAlignment" Value="Center"/>
+                </Style>
+                <Style TargetType="DataGridCell">
+                    <Setter Property="Padding" Value="12,6"/>
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="DataGridCell">
+                                <Border Background="{TemplateBinding Background}" 
+                                        BorderBrush="{TemplateBinding BorderBrush}" 
+                                        BorderThickness="{TemplateBinding BorderThickness}">
+                                    <ContentPresenter VerticalAlignment="Center" />
+                                </Border>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+                <Style x:Key="MultilineTextBoxStyle" TargetType="TextBox">
+                    <Setter Property="TextWrapping" Value="NoWrap"/>
+                    <Setter Property="AcceptsReturn" Value="True"/>
+                    <Setter Property="BorderThickness" Value="0"/>
+                    <Setter Property="Background" Value="White"/>
+                    <Setter Property="Padding" Value="0"/>
+                    <Setter Property="Margin" Value="0"/>
+                    <Setter Property="VerticalContentAlignment" Value="Center"/>
+                    <Setter Property="HorizontalScrollBarVisibility" Value="Hidden"/>
+                    <Setter Property="VerticalScrollBarVisibility" Value="Hidden"/>
+                </Style>
+                <Style TargetType="DataGridRow">
+                    <Setter Property="MinHeight" Value="30"/>
+                    <Setter Property="VerticalContentAlignment" Value="Stretch"/>
+                    <Style.Triggers>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter Property="Background" Value="#E7F3FF"/>
+                            <Setter Property="Foreground" Value="#212529"/>
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter Property="Background" Value="#F1F8FF"/>
+                        </Trigger>
+                    </Style.Triggers>
+                </Style>
+            </DataGrid.Resources>   
+        </DataGrid>
+        
+        <!-- GridSplitter for Expander -->
+        <GridSplitter Grid.Row="2" 
+                      Height="5"
+                      HorizontalAlignment="Stretch"
+                      VerticalAlignment="Center"
+                      Background="#E0E0E0"
+                      Margin="10,0"/>
+        
+
+        <!-- AI Configuration Panel -->
+        <Expander Grid.Row="3" Header="AI Configuration" IsExpanded="False" Margin="10">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto" MinHeight="100"/>
+                    <RowDefinition Height="5"/>
+                    <RowDefinition Height="Auto" MinHeight="100"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                
+                <!-- AI Agent Selection -->
+                <Label Grid.Row="0" Grid.Column="0" Content="AI Agent:"/>
+                <ComboBox Grid.Row="0" Grid.Column="1" x:Name="cboAIAgent">
+                    <ComboBoxItem Content="OpenAI o3-mini (OpenRouter)" IsSelected="True"/>
+                    <ComboBoxItem Content="Claude (OpenRouter)"/>
+                    <ComboBoxItem Content="Gemini (OpenRouter)"/>
+                    <ComboBoxItem Content="Custom API"/>
+                </ComboBox>
+                
+                <!-- API Key -->
+                <Label Grid.Row="1" Grid.Column="0" Content="API Key:"/>
+                <PasswordBox Grid.Row="1" Grid.Column="1" x:Name="txtAPIKey" ToolTip="Enter your API key for the selected service"/>
+                
+                <!-- Prompt Selection -->
+                <Label Grid.Row="2" Grid.Column="0" Content="Prompt Template:"/>
+                <ComboBox Grid.Row="2" Grid.Column="1" x:Name="cboPromptTemplate" Margin="5" 
+                            SelectionChanged="cboPromptTemplate_SelectionChanged"
+                            ToolTip="Select a prompt template to use"/>
+                
+                <!-- System Prompt Row -->
+                <Grid Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    
+                    <Label Grid.Column="0" Content="System Prompt:" VerticalAlignment="Top"/>
+                    <TextBox Grid.Column="1" x:Name="txtSystemPrompt" AcceptsReturn="True" 
+                                TextWrapping="Wrap" MinHeight="100" VerticalScrollBarVisibility="Auto" 
+                                Margin="5,0,10,0" MaxHeight="400"
+                                Text="You are an assistant that helps analyze and enhance building element data. Your task is to process the provided element properties and generate concise, professional descriptions or recommendations."/>
+                    
+                    <TextBox Grid.Column="2" x:Name="txtSystemPromptPreview" IsReadOnly="True" 
+                                TextWrapping="Wrap" MinHeight="100" VerticalScrollBarVisibility="Auto"
+                                Background="#F5F5F5" Foreground="#333333" FontStyle="Italic" 
+                                Margin="0,0,10,0" MaxHeight="400"/>
+                </Grid>
+
+                <!-- GridSplitter between System and User Prompts -->
+                <GridSplitter Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2"
+                            Height="5" HorizontalAlignment="Stretch" 
+                            VerticalAlignment="Center"
+                            Background="#E0E0E0"
+                            ResizeDirection="Rows"/>
+                
+                <!-- User Prompt Row -->
+                <Grid Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    
+                    <Label Grid.Column="0" Content="User Prompt:" VerticalAlignment="Top"/>
+                    <TextBox Grid.Column="1" x:Name="txtUserPrompt" AcceptsReturn="True" 
+                                TextWrapping="Wrap" MinHeight="100" VerticalScrollBarVisibility="Auto" 
+                                Margin="5,0,10,0" MaxHeight="400"
+                                Text="Based on the following element properties, generate a concise description or recommendation: {Properties}"/>
+                    
+                    <TextBox Grid.Column="2" x:Name="txtUserPromptPreview" IsReadOnly="True" 
+                                TextWrapping="Wrap" MinHeight="100" VerticalScrollBarVisibility="Auto"
+                                Background="#F5F5F5" Foreground="#333333" FontStyle="Italic" 
+                                Margin="0,0,10,0" MaxHeight="400"/>
+                </Grid>
+            </Grid>
+        </Expander>
+        
+        <!-- Action Buttons -->
+        <Grid Grid.Row="4" Margin="10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            
+            <TextBlock Grid.Column="0" x:Name="txtStatus" VerticalAlignment="Center"/>
+            <Button Grid.Column="1" x:Name="btnProcessAll" Content="Process All" Click="btnProcessAll_Click" Margin="5"/>
+            <Button Grid.Column="2" x:Name="btnAcceptAll" Content="Accept All" Click="btnAcceptAll_Click" Margin="5"/>
+            <Button Grid.Column="3" x:Name="btnSave" Content="Save to Revit" Click="btnSave_Click" Margin="5"/>
+        </Grid>
+    </Grid>
+</Window>
