@@ -36,6 +36,8 @@ ENV/
 # IDE specific files
 .idea/
 .vscode/
+.cursor/
+.repomix/
 *.swp
 *.swo
 

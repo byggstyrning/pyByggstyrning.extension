@@ -242,22 +242,17 @@ class ApplyColorsHandler(UI.IExternalEventHandler):
                 if pat.GetFillPattern().IsSolidFill:
                     solid_fill_id = pat.Id
                     break
-            logger.info("Solid fill ID: %s", solid_fill_id)
 
-            logger.info("Applying colors to elements")
             with revit.Transaction("Apply colors to elements"):
                 selected_cat = self.ui.get_selected_category()
                 if not selected_cat:
-                    logger.info("No category selected")
                     return
                     
                 selected_param = self.ui.get_selected_parameter()
                 if not selected_param:
-                    logger.info("No parameter selected")
                     return
                     
                 value_items = self.ui.get_value_items()
-                logger.info("Value items: %s", value_items)
                 # Check if we're dealing with rooms, spaces, areas that need color schemes
                 # Use the stored function from the UI
                 get_elementid_value = self.ui.get_elementid_value
@@ -277,7 +272,7 @@ class ApplyColorsHandler(UI.IExternalEventHandler):
                     self.ui.statusText.Text = "Note: Rooms, spaces and areas may require a color scheme in the view."
                 else:
                     self.ui.statusText.Text = ""
-                logger.info("Applying colors to elements")
+                    
                 # Apply colors to elements
                 for value_item in value_items:
                     ogs = DB.OverrideGraphicSettings()
@@ -300,7 +295,7 @@ class ApplyColorsHandler(UI.IExternalEventHandler):
                     # Apply override to each element
                     for element_id in value_item.ele_id:
                         view.SetElementOverrides(element_id, ogs)
-                logger.info("Colors applied successfully to elements.")
+
                 self.ui.statusText.Text = "Colors applied successfully to elements."
                 
         except Exception as ex:
@@ -325,12 +320,18 @@ class ResetColorsHandler(UI.IExternalEventHandler):
     
     def __init__(self, colorizer_ui):
         self.ui = colorizer_ui
+        self.specific_view = None
     
     def Execute(self, uiapp):
         try:
             active_doc = uiapp.ActiveUIDocument.Document
-            # Use the active view from the UI instance
-            view = self.ui.active_view
+            # Use the specific view if provided, otherwise use the active view
+            view = self.specific_view if self.specific_view else self.ui.active_view
+            self.ui.logger.info("Resetting colors in {0}".format(view.Name))
+            
+            # Reset the specific view reference after using it
+            self.specific_view = None
+            
             if not view:
                 return
             
@@ -361,6 +362,10 @@ class ResetColorsHandler(UI.IExternalEventHandler):
             logger.error("Error resetting colors: %s", ex)
             self.log_exception()
     
+    def set_specific_view(self, view):
+        """Set a specific view to reset colors in."""
+        self.specific_view = view
+        
     def GetName(self):
         return "Reset Element Colors"
     
@@ -373,60 +378,7 @@ class ResetColorsHandler(UI.IExternalEventHandler):
         for tb in extract_tb(exc_traceback):
             logger.debug("File: %s, Line: %s, Function: %s, Code: %s", tb[0], tb[1], tb[2], tb[3])
 
-def get_used_categories(active_view, excluded_cats=None):
-    """Get all used categories and their parameters in the active view."""
-    if excluded_cats is None:
-        excluded_cats = CAT_EXCLUDED
-        
-    # Get all elements in view
-    collector = DB.FilteredElementCollector(doc, active_view.Id) \
-                 .WhereElementIsNotElementType() \
-                 .WhereElementIsViewIndependent() \
-                 .ToElements()
-                 
-    categories = []
-    
-    # Get the function once instead of calling it for each element
-    get_elementid_value = get_elementid_value_func()
-    
-    for element in collector:
-        if element.Category is None:
-            continue
-            
-        current_cat_id = get_elementid_value(element.Category.Id)
-        
-        # Skip excluded categories and already processed categories
-        if current_cat_id in excluded_cats or any(x.int_id == current_cat_id for x in categories):
-            continue
-            
-        # Get instance parameters
-        instance_parameters = []
-        for param in element.Parameters:
-            if param.Definition.BuiltInParameter not in (DB.BuiltInParameter.ELEM_CATEGORY_PARAM, 
-                                                        DB.BuiltInParameter.ELEM_CATEGORY_PARAM_MT):
-                instance_parameters.append(ParameterInfo(0, param))
-        
-        # Get type parameters
-        type_element = element.Document.GetElement(element.GetTypeId())
-        if type_element is None:
-            continue
-            
-        type_parameters = []
-        for param in type_element.Parameters:
-            if param.Definition.BuiltInParameter not in (DB.BuiltInParameter.ELEM_CATEGORY_PARAM, 
-                                                        DB.BuiltInParameter.ELEM_CATEGORY_PARAM_MT):
-                type_parameters.append(ParameterInfo(1, param))
-        
-        # Combine all parameters
-        all_parameters = instance_parameters + type_parameters
-        all_parameters.sort(key=lambda x: x.name.upper())
-        
-        # Add category to the list
-        categories.append(CategoryInfo(element.Category, all_parameters))
-    
-    # Sort categories by name
-    categories.sort(key=lambda x: x.name)
-    return categories
+
 
 # Main UI Class
 class RevitColorizerWindow(WPFWindow):
@@ -434,9 +386,6 @@ class RevitColorizerWindow(WPFWindow):
     
     def __init__(self):
         try:
-            # Add initialization tracking
-            logger.info("=============== WINDOW INITIALIZATION STARTED ===============")
-            
             # Create XAML file path
             xaml_file = os.path.join(
                 os.path.dirname(__file__), 
@@ -460,12 +409,35 @@ class RevitColorizerWindow(WPFWindow):
             self.revit = revit  # Store reference to the revit module
             self.UI = UI  # Store reference to the UI module
             
+            # Flag indicating if the window is active
+            self.is_window_active = True
+            
+            # Flag to prevent selection storage during restore process
+            self._processing_restored_selection = False
+            
+            # Variable to store selected category names for persistence between views
+            self.selected_category_names = []
+            
             # Store both the function and its result for use in different contexts
             self.get_elementid_value_func_ref = get_elementid_value_func  # Store the function reference
             self.get_elementid_value = get_elementid_value_func()  # Store the result of calling the function
             
             # Create a custom ValuesInfo class
             self.ValuesInfo = self.create_custom_values_info_class()
+            
+            # Store references to required classes and functions
+            # We need to initialize these BEFORE creating any event handlers or methods
+            # that might use them
+            self.ParameterInfo = ParameterInfo
+            self.CategoryInfo = CategoryInfo
+            self.PropertyChangedEventArgs = PropertyChangedEventArgs  # Store reference to PropertyChangedEventArgs
+            self.strip_accents = strip_accents
+            self.normalize = normalize
+            self.unicode_category = unicode_category
+            self.CAT_EXCLUDED = CAT_EXCLUDED
+            
+            # Create a custom CategoryItem class
+            self.CategoryItem = self.create_custom_category_item_class()
             
             # Create external event handlers
             self.apply_colors_handler = ApplyColorsHandler(self)
@@ -480,6 +452,10 @@ class RevitColorizerWindow(WPFWindow):
                 self.Close()
                 return
                 
+            # Register for view activation events
+            self.uiapp.ViewActivating += self.on_view_activating
+            self.uiapp.ViewActivated += self.on_view_activated
+                
             # Set up UI event handlers
             self.setup_ui_components()
             
@@ -488,8 +464,6 @@ class RevitColorizerWindow(WPFWindow):
             
             # Show startup message
             self.statusText.Text = "Ready. Select a category to begin."
-            
-            logger.info("=============== WINDOW INITIALIZATION COMPLETED ===============")
             
         except Exception as ex:
             UI.TaskDialog.Show("Error", "Failed to initialize Revit Colorizer: " + str(ex))
@@ -540,6 +514,70 @@ class RevitColorizerWindow(WPFWindow):
         
         return CustomValuesInfo
     
+    def create_custom_category_item_class(self):
+        """Create a custom version of CategoryItem that uses our stored PropertyChangedEventArgs reference."""
+        outer_self = self
+        # Store reference to System.ComponentModel.PropertyChangedEventArgs for the inner class
+        PropertyChangedEventArgs_ref = self.PropertyChangedEventArgs
+        Object_ref = Object
+        INotifyPropertyChanged_ref = INotifyPropertyChanged
+        
+        class CustomCategoryItem(Object_ref, INotifyPropertyChanged_ref):
+            """View model for a category with property change notifications."""
+            
+            def __init__(self, category_info):
+                self._category_info = category_info
+                self._is_selected = False
+                # Initialize event handlers
+                self._propertyChanged = None
+                self._window_reference = None
+            
+            @property
+            def name(self):
+                return self._category_info.name
+            
+            @property
+            def category_info(self):
+                return self._category_info
+            
+            @property 
+            def IsSelected(self):
+                return self._is_selected
+                
+            @IsSelected.setter
+            def IsSelected(self, value):
+                if self._is_selected != value:
+                    old_value = self._is_selected
+                    self._is_selected = value
+                    self.OnPropertyChanged("IsSelected")
+                    # Notify the window when IsSelected changes (checkbox clicked)
+                    if self._window_reference:
+                        self._window_reference.on_category_checkbox_changed(self)
+                    else:
+                        old_value, value, self.name
+            
+            def set_window_reference(self, window):
+                """Set reference to the main window for callbacks."""
+                self._window_reference = window
+            
+            # INotifyPropertyChanged implementation
+            def add_PropertyChanged(self, handler):
+                if self._propertyChanged is None:
+                    self._propertyChanged = handler
+                else:
+                    self._propertyChanged += handler
+                
+            def remove_PropertyChanged(self, handler):
+                if self._propertyChanged is not None:
+                    self._propertyChanged -= handler
+            
+            def OnPropertyChanged(self, property_name):
+                if self._propertyChanged is not None:
+                    # Use the stored reference to PropertyChangedEventArgs
+                    self._propertyChanged(self, PropertyChangedEventArgs_ref(property_name))
+        
+        return CustomCategoryItem
+    
     def setup_ui_components(self):
         """Set up UI components and event handlers."""
         # Close button
@@ -548,14 +586,7 @@ class RevitColorizerWindow(WPFWindow):
         # Apply and Reset buttons
         self.applyButton.Click += self.on_apply_colors
         self.resetButton.Click += self.on_reset_colors
-        
-        # Filter buttons
-        self.addFiltersButton.Click += self.on_add_filters
-        self.removeFiltersButton.Click += self.on_remove_filters
-        
-        # Instead of relying on ListBox selection, we'll manually check the 
-        # CheckBox controls after the form loads and ListBox is populated
-        
+                        
         # Parameter type selection
         self.instanceRadioButton.Checked += self.on_parameter_type_changed
         self.typeRadioButton.Checked += self.on_parameter_type_changed
@@ -574,6 +605,8 @@ class RevitColorizerWindow(WPFWindow):
         # Checkbox events
         self.showElementsCheckbox.Checked += self.on_show_elements_changed
         self.showElementsCheckbox.Unchecked += self.on_show_elements_changed
+        self.overrideProjectionCheckbox.Checked += self.on_override_projection_changed
+        self.overrideProjectionCheckbox.Unchecked += self.on_override_projection_changed
         
         # Setting initial values for checkboxes
         self.overrideProjectionCheckbox.IsChecked = True
@@ -591,43 +624,225 @@ class RevitColorizerWindow(WPFWindow):
     def load_categories(self):
         """Load categories from the current view."""
         try:
+            self.logger.info("Loading categories in {0}".format(self.active_view.Name))
+            
+            # Only store current selections if we don't already have stored categories
+            # This prevents overwriting the categories stored during view change
+            if not self.selected_category_names:
+                self.store_selected_categories()
+            else:
+                self.logger.info("Using previously stored categories: {0}".format(", ".join(self.selected_category_names)))
+            
             # Clear existing items
             self.categoryListBox.Items.Clear()
             
-            # Get categories used in the current view
-            categories = get_used_categories(self.active_view, CAT_EXCLUDED)
+            # Get categories using our wrapper method that provides proper context
+            categories = self.get_used_categories(self.active_view)
+            
+            # Log available categories for debugging
+            available_category_names = [cat.name for cat in categories]
+            self.logger.info("Available categories in this view: {0}".format(", ".join(available_category_names)))
+            
+            # Check which stored categories are available in this view
+            available_stored_categories = [name for name in self.selected_category_names if name in available_category_names]
+            missing_categories = [name for name in self.selected_category_names if name not in available_category_names]
+            
+            if missing_categories:
+                self.logger.info("Categories not available in this view: {0}".format(", ".join(missing_categories)))
+            
+            # Set processing flag BEFORE creating any category items
+            # This prevents checkbox event handlers from running during restoration
+            self._processing_restored_selection = True
             
             # Create category items for the list
+            category_items_added = []
             for category in categories:
-                category_item = CategoryItem(category)
+                category_item = self.CategoryItem(category)
                 # Set reference to this window BEFORE adding to listbox
                 category_item.set_window_reference(self)
                 self.categoryListBox.Items.Add(category_item)
+                category_items_added.append(category_item)
                 
             # Process UI updates
             self.categoryListBox.UpdateLayout()
             
-            # Select the first category by default and directly call the handler to load parameters
-            if self.categoryListBox.Items.Count > 0:
+            # Try to restore previously selected categories
+            categories_selected = False
+            
+            # If we have stored category names, try to select them
+            if self.selected_category_names:
+                self.logger.info("Attempting to restore {0} previously selected categories".format(
+                    len(self.selected_category_names)))
+                
+                # Select categories by name - all at once before processing anything
+                selected_count = 0
+                for item in category_items_added:
+                    if item.name in self.selected_category_names:
+                        item.IsSelected = True
+                        categories_selected = True
+                        selected_count += 1
+                        self.logger.info("Restored selection for category: {0}".format(item.name))
+                
+                self.logger.info("Successfully restored {0} categories".format(selected_count))
+                
+                # If we didn't restore all categories, log which ones failed
+                if selected_count < len(self.selected_category_names):
+                    failed_categories = [name for name in self.selected_category_names if name not in [item.name for item in category_items_added if item.IsSelected]]
+                    self.logger.info("Failed to restore categories: {0}".format(", ".join(failed_categories)))
+            
+            # If no categories were selected and we have items, select the first one
+            if not categories_selected and self.categoryListBox.Items.Count > 0:
                 # Important: Set the first category as selected explicitly
+                self.categoryListBox.Items[0].IsSelected = True
+                self.logger.info("No stored categories were available, selected first category instead")
+            
+            # Process the selection to load parameters etc.
+            if self.categoryListBox.Items.Count > 0:
+                # Now process the selection (flag still prevents store_selected_categories from running)
+                self.process_category_selection()
                 
-                # Use a slight delay to ensure the UI is ready
-                def select_first_category():
-                    self.categoryListBox.Items[0].IsSelected = True
-                    self.process_category_selection()
+                # After processing, turn off the flag
+                self._processing_restored_selection = False
                 
-                # Use Dispatcher to ensure UI is updated properly
-                self.System.Windows.Threading.Dispatcher.CurrentDispatcher.BeginInvoke(
-                    self.System.Action(select_first_category),
-                    self.System.Windows.Threading.DispatcherPriority.Background)
+                # Now that all categories are restored, store them again to ensure consistency
+                self.store_selected_categories()
                 
+                # After processing, verify the selections
+                current_selections = [item.name for item in self.categoryListBox.Items if item.IsSelected]
+                self.logger.info("Final category selections after processing: {0}".format(", ".join(current_selections)))
+                            
             self.statusText.Text = "Loaded {} categories.".format(len(categories))
-            self.logger.info("Loaded {} categories with checkbox bindings.".format(len(categories)))
                 
         except Exception as ex:
+            self._processing_restored_selection = False  # Make sure to reset flag on error
             self.statusText.Text = "Error loading categories: " + str(ex)
             self.logger.error("Error loading categories: %s", str(ex))
     
+
+    def get_used_categories(self, active_view, excluded_cats=None):
+        """Get all used categories and their parameters in the active view."""
+        try:
+            if excluded_cats is None:
+                excluded_cats = self.CAT_EXCLUDED
+                
+            # Get all elements in view
+            collector = self.DB.FilteredElementCollector(self.doc, active_view.Id) \
+                        .WhereElementIsNotElementType() \
+                        .WhereElementIsViewIndependent() \
+                        .ToElements()
+                        
+            categories = []
+                    
+            # Store references to avoid scope issues
+            get_elementid_value = self.get_elementid_value
+            
+            # Create a simple, self-contained version of strip_accents that doesn't rely on external functions
+            def simple_strip_accents(text):
+                """Simplified function to strip accents from text without external dependencies."""
+                try:
+                    # For non-ASCII characters, just keep the ASCII ones
+                    result = ""
+                    for char in text:
+                        if ord(char) < 128:  # ASCII range
+                            result += char
+                        else:
+                            # Try to replace common accented characters
+                            if char in 'áàâäãåā':
+                                result += 'a'
+                            elif char in 'éèêëēė':
+                                result += 'e'
+                            elif char in 'íìîïī':
+                                result += 'i'
+                            elif char in 'óòôöõøō':
+                                result += 'o'
+                            elif char in 'úùûüū':
+                                result += 'u'
+                            elif char in 'ñń':
+                                result += 'n'
+                            elif char in 'çć':
+                                result += 'c'
+                            elif char in 'ÿ':
+                                result += 'y'
+                            elif char in 'žźż':
+                                result += 'z'
+                            elif char in 'šś':
+                                result += 's'
+                            else:
+                                # Keep other characters as is
+                                result += char
+                    return result
+                except:
+                    # Failsafe - if anything goes wrong, just return the original text
+                    return text
+            
+            # Create custom parameter and category wrapper classes that use our local strip_accents function
+            class LocalParameterInfo(object):
+                """Class to store parameter information with local strip_accents."""
+                def __init__(self, param_type, para):
+                    self.param_type = param_type  # 0 for instance, 1 for type
+                    self.rl_par = para
+                    self.par = para.Definition
+                    self.name = simple_strip_accents(para.Definition.Name)
+
+                def __str__(self):
+                    return self.name
+            
+            class LocalCategoryInfo(object):
+                """Class to store category information with local strip_accents."""
+                def __init__(self, category, parameters):
+                    self.name = simple_strip_accents(category.Name)
+                    self.cat = category
+                    self.int_id = get_elementid_value(category.Id)
+                    self.par = parameters
+
+                def __str__(self):
+                    return self.name
+            
+            # Use our local classes instead of the original ones
+            for element in collector:
+                if element.Category is None:
+                    continue
+                    
+                current_cat_id = get_elementid_value(element.Category.Id)
+                
+                # Skip excluded categories and already processed categories
+                if current_cat_id in excluded_cats or any(x.int_id == current_cat_id for x in categories):
+                    continue
+                    
+                # Get instance parameters
+                instance_parameters = []
+                for param in element.Parameters:
+                    if param.Definition.BuiltInParameter not in (self.DB.BuiltInParameter.ELEM_CATEGORY_PARAM, 
+                                                                self.DB.BuiltInParameter.ELEM_CATEGORY_PARAM_MT):
+                        instance_parameters.append(LocalParameterInfo(0, param))
+                
+                # Get type parameters
+                type_element = element.Document.GetElement(element.GetTypeId())
+                if type_element is None:
+                    continue
+                    
+                type_parameters = []
+                for param in type_element.Parameters:
+                    if param.Definition.BuiltInParameter not in (self.DB.BuiltInParameter.ELEM_CATEGORY_PARAM, 
+                                                                self.DB.BuiltInParameter.ELEM_CATEGORY_PARAM_MT):
+                        type_parameters.append(LocalParameterInfo(1, param))
+                
+                # Combine all parameters
+                all_parameters = instance_parameters + type_parameters
+                all_parameters.sort(key=lambda x: x.name.upper())
+                
+                # Add category to the list
+                categories.append(LocalCategoryInfo(element.Category, all_parameters))
+            
+            # Sort categories by name
+            categories.sort(key=lambda x: x.name)
+            return categories
+        except Exception as ex:
+            self.logger.error("Error in get_used_categories: %s", str(ex))
+            # Fallback: Create an extremely simple implementation that just returns empty results
+            self.logger.info("Using fallback empty categories list")
+            return []
+
     def on_category_listbox_clicked(self, sender, args):
         """Handle mouse clicks on the category list box to detect checkbox clicks."""
         try:
@@ -654,6 +869,10 @@ class RevitColorizerWindow(WPFWindow):
     def process_category_selection(self):
         """Process the current category selection state."""
         try:
+            # Log initial selection state
+            initial_selections = [item.name for item in self.categoryListBox.Items if item.IsSelected]
+            self.logger.info("Processing category selection. Initial selections: {0}".format(", ".join(initial_selections)))
+            
             # Store currently selected parameter name to try to preserve it
             current_param_name = None
             if self.parameterSelector.SelectedItem:
@@ -671,9 +890,19 @@ class RevitColorizerWindow(WPFWindow):
             if selected_count == 0:
                 self.statusText.Text = "No categories selected."
                 self.valuesListBox.Items.Clear()
+                self.reset_colors_event.Raise()
             
             # Force an update to the UI
             self.categoryListBox.UpdateLayout()
+            
+            # Update the stored selected categories after all processing is done
+            # But only if we're not in the middle of a restore operation
+            if not self._processing_restored_selection:
+                self.store_selected_categories()
+            
+            # Log final selection state
+            final_selections = [item.name for item in self.categoryListBox.Items if item.IsSelected]
+            self.logger.info("Category selection processing complete. Final selections: {0}".format(", ".join(final_selections)))
             
         except Exception as ex:
             self.statusText.Text = "Error processing category selection: " + str(ex)
@@ -696,6 +925,7 @@ class RevitColorizerWindow(WPFWindow):
             if not selected_categories:
                 self.statusText.Text = "No categories selected."
                 self.valuesListBox.Items.Clear()
+                self.reset_colors_event.Raise()
                 return
             
             # If parameter type was not specified to preserve, use current selection
@@ -776,7 +1006,10 @@ class RevitColorizerWindow(WPFWindow):
                 
                 for value_info in values:
                     self.valuesListBox.Items.Add(value_info)
-                    
+
+                # Trigger apply colors after loading values
+                self.apply_colors_event.Raise()
+
                 self.statusText.Text = "Loaded {} values for parameter '{}'.".format(
                     len(values), selected_parameter.name)
             else:
@@ -920,11 +1153,16 @@ class RevitColorizerWindow(WPFWindow):
         """Handle window closing event to reset colors when window closes."""
         try:
             self.logger.info("Window closing event triggered - resetting element colors")
+            
+            # Mark window as inactive to disable event handling
+            self.is_window_active = False
+            self.logger.info("Window marked as inactive")
+                
             # Only reset colors if we actually have a valid view
             if self.active_view:
-                # Reset colors by raising the reset colors event
-                # Note: we need to raise the event because we want the reset to happen
-                # in the Revit main thread, not in the UI thread.
+                # Set the specific view in the handler and then raise the event
+                # This ensures colors are reset in the current view, regardless of any pending view changes
+                self.reset_colors_handler.set_specific_view(self.active_view)
                 self.reset_colors_event.Raise()
                 self.logger.info("Reset colors event raised on window close")
         except Exception as ex:
@@ -935,13 +1173,15 @@ class RevitColorizerWindow(WPFWindow):
         """Override WPF window's OnClosing method to ensure colors are reset when window closes.
         This catches ALL closing scenarios including the Windows X button."""
         try:
-            self.logger.info("OnClosing override triggered - resetting element colors")
+            # Mark window as inactive to disable event handling
+            self.is_window_active = False
+                
             # Only reset colors if we actually have a valid view
             if self.active_view:
-                # Raise the external event instead of directly executing the handler
-                # This ensures the handler runs in the proper Revit API context
+                # Set the specific view in the handler and then raise the event
+                # This ensures colors are reset in the current view, regardless of any pending view changes
+                self.reset_colors_handler.set_specific_view(self.active_view)
                 self.reset_colors_event.Raise()
-                self.logger.info("Reset colors event raised in OnClosing")
         except Exception as ex:
             # Just log the error, don't show to user since window is closing
             self.logger.error("Error in OnClosing: %s", str(ex))
@@ -949,6 +1189,38 @@ class RevitColorizerWindow(WPFWindow):
         # Always call the base class implementation
         super(RevitColorizerWindow, self).OnClosing(e)
     
+    def on_view_activating(self, sender, args):
+        """Handle Revit view activating events (fires BEFORE the view changes)."""
+        try:
+            # Store the current view before it changes
+            current_view = self.active_view
+            self.logger.info("View activating event triggered - resetting element colors in {0}".format(current_view.Name))
+            
+            # Store selected categories for persistence between views
+            self.store_selected_categories()
+            
+            # Set the specific view in the handler and then raise the event
+            self.reset_colors_handler.set_specific_view(current_view)
+            self.reset_colors_event.Raise()
+                
+        except Exception as ex:
+            self.logger.error("Error handling view activation: %s", ex)
+            # Update UI on error
+            self.statusText.Text = "Error handling view change: " + str(ex)
+
+    def on_view_activated(self, sender, args):
+        """Handle Revit view activated events (fires AFTER the view changes)."""
+        try:
+            # Get the freshly activated view from the document
+            self.active_view = self.doc.ActiveView
+            self.logger.info("View activated event triggered - loading categories in {0}".format(self.active_view.Name))
+            self.load_categories()
+        except Exception as ex:
+            self.logger.error("Error handling view activation: %s", ex)
+            # Update UI on error
+            self.statusText.Text = "Error handling view change: " + str(ex)
+    
+
     # Helper methods to get selected items
     def get_selected_category(self):
         """Get the first checked category."""
@@ -957,7 +1229,6 @@ class RevitColorizerWindow(WPFWindow):
             if item.IsSelected:
                 return item.category_info
         return None
-    
     
     def get_parameter_values(self, param, view):
         """Get all values for a parameter across all selected categories."""
@@ -1060,7 +1331,6 @@ class RevitColorizerWindow(WPFWindow):
                 
         return values
 
-
     def get_selected_parameter(self):
         """Get the selected parameter."""
         if self.parameterSelector.SelectedItem:
@@ -1071,7 +1341,6 @@ class RevitColorizerWindow(WPFWindow):
     def get_value_items(self):
         """Get all value items from the list."""
         return [item for item in self.valuesListBox.Items]
-    
 
     def random_color(self):
         """Generate a random color."""
@@ -1202,13 +1471,27 @@ class RevitColorizerWindow(WPFWindow):
             self.statusText.Text = "Error changing selection mode: " + str(ex)
             self.logger.error("Show elements checkbox error: %s", str(ex))
 
+    def on_override_projection_changed(self, sender, args):
+        """Handle override projection checkbox state change."""
+        try:
+            self.apply_colors_event.Raise()
+        except Exception as ex:
+            self.statusText.Text = "Error changing selection mode: " + str(ex)
+            self.logger.error("Show elements checkbox error: %s", str(ex))
+
     def on_category_checkbox_changed(self, category_item):
         """Handle category checkbox selection changed event."""
         try:
-            self.logger.info("Category checkbox changed: %s, IsSelected: %s", 
-                             category_item.name, category_item.IsSelected)
-            
-            # Directly process the selection
+            # Skip processing if we're in the middle of restoring selection
+            if self._processing_restored_selection:
+                self.logger.info("Skipping category checkbox processing during restoration: {0}".format(category_item.name))
+                return
+                
+            # Log which category was changed
+            self.logger.info("Category checkbox changed: {0} is now {1}".format(
+                category_item.name, "selected" if category_item.IsSelected else "unselected"))
+                
+            # Directly process the selection which will handle the category storage if needed
             self.process_category_selection()
                 
         except Exception as ex:
@@ -1231,6 +1514,7 @@ class RevitColorizerWindow(WPFWindow):
             if not selected_categories:
                 self.statusText.Text = "No categories selected."
                 self.valuesListBox.Items.Clear()
+                self.reset_colors_event.Raise()
                 return
                 
             # Get common parameters
@@ -1269,6 +1553,16 @@ class RevitColorizerWindow(WPFWindow):
         except Exception as ex:
             self.statusText.Text = "Error refreshing parameters: {0}".format(str(ex))
             self.logger.error("Parameter refresh error: %s", str(ex))
+
+    def store_selected_categories(self):
+        """Store the names of currently selected categories for persistence between views."""
+        self.selected_category_names = []
+        for item in self.categoryListBox.Items:
+            if item.IsSelected:
+                self.selected_category_names.append(item.name)
+        self.logger.info("Stored {0} selected category names: {1}".format(
+            len(self.selected_category_names), ", ".join(self.selected_category_names)))
+        return self.selected_category_names
 
 # Main script execution
 if __name__ == "__main__":

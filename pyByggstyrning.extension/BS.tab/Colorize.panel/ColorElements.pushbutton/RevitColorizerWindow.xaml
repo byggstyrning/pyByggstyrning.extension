@@ -113,7 +113,7 @@
         <!-- Main Content -->
         <Grid Grid.Row="2">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="250"/>
+                <ColumnDefinition Width="200"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
             
@@ -187,28 +187,28 @@
                         <!-- Header -->
                         <Grid Background="#F5F5F5">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="35"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="70"/>
                             </Grid.ColumnDefinitions>
-                            <CheckBox Margin="10,5"/>
+                            <CheckBox Grid.Column="0" Margin="10,5"/>
                             <TextBlock Grid.Column="1" Text="Value" Margin="5"/>
-                            <TextBlock Grid.Column="2" Text="Color" Margin="5" HorizontalAlignment="Center"/>
+                            <TextBlock Grid.Column="2" Text="Color" Margin="5"/>
                         </Grid>
                         
                         <!-- Values -->
-                        <ListBox Grid.Row="1" x:Name="valuesListBox" BorderThickness="0" SelectionMode="Extended">
+                        <ListBox Grid.Row="1" x:Name="valuesListBox" BorderThickness="0" SelectionMode="Extended" HorizontalContentAlignment="Stretch">
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
-                                    <Grid Margin="0,2">
+                                    <Grid HorizontalAlignment="Stretch">
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="35"/>
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="70"/>
                                         </Grid.ColumnDefinitions>
-                                        <CheckBox Margin="5,0"/>
+                                        <CheckBox Grid.Column="0" Margin="0,0"/>
                                         <TextBlock Grid.Column="1" Text="{Binding value}" VerticalAlignment="Center" Margin="5,0"/>
-                                        <Border Grid.Column="2" Width="50" Height="20" Background="{Binding color}" BorderBrush="Black" BorderThickness="1" Margin="5,0"/>
+                                        <Border Grid.Column="2" Width="50" Height="20" Background="{Binding color}" BorderBrush="Black" BorderThickness="1" HorizontalAlignment="Center"/>
                                     </Grid>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
@@ -237,18 +237,15 @@
                         <TextBlock Text="Show Elements in Properties" VerticalAlignment="Center"/>
                         <CheckBox Grid.Column="1" Style="{StaticResource ToggleSwitchStyle}" x:Name="showElementsCheckbox"/>
                     </Grid>
-                                        
-                    <Grid Margin="0,10,0,0">
+
+                    <Grid Margin="0,5">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <Button Content="Add View Filters" Margin="5,5" x:Name="addFiltersButton"/>
-                        <Button Grid.Column="1" Content="Remove View Filters" Margin="5,5" x:Name="removeFiltersButton"/>
+                        <Button Grid.Column="0" Content="Reset Colors" Background="#ffe0e0" Margin="5,0" x:Name="resetButton"/>
+                        <Button Grid.Column="1" Content="Apply Colors" Background="#e0ffe0" Margin="5,10" x:Name="applyButton"/>
                     </Grid>
-                    
-                    <Button Content="Apply Colors" Background="#e0ffe0" Margin="5,10" x:Name="applyButton"/>
-                    <Button Content="Reset Colors" Background="#ffe0e0" Margin="5,0" x:Name="resetButton"/>
                 </StackPanel>
             </Grid>
         </Grid>
