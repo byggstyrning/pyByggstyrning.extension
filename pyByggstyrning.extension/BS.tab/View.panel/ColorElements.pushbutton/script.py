@@ -324,10 +324,13 @@ class ResetColorsHandler(UI.IExternalEventHandler):
     
     def Execute(self, uiapp):
         try:
+            # Check if window is still active
+            if not self.ui.is_window_active:
+                return
+                
             active_doc = uiapp.ActiveUIDocument.Document
             # Use the specific view if provided, otherwise use the active view
             view = self.specific_view if self.specific_view else self.ui.active_view
-            self.ui.logger.info("Resetting colors in {0}".format(view.Name))
             
             # Reset the specific view reference after using it
             self.specific_view = None
@@ -389,7 +392,7 @@ class RevitColorizerWindow(WPFWindow):
             # Create XAML file path
             xaml_file = os.path.join(
                 os.path.dirname(__file__), 
-                "RevitColorizerWindow.xaml"
+                "ColorElementsWindow.xaml"
             )
             
             # Load XAML
@@ -579,10 +582,7 @@ class RevitColorizerWindow(WPFWindow):
         return CustomCategoryItem
     
     def setup_ui_components(self):
-        """Set up UI components and event handlers."""
-        # Close button
-        self.closeButton.Click += self.on_close
-        
+        """Set up UI components and event handlers."""        
         # Apply and Reset buttons
         self.applyButton.Click += self.on_apply_colors
         self.resetButton.Click += self.on_reset_colors
@@ -618,20 +618,12 @@ class RevitColorizerWindow(WPFWindow):
         # Add a handler for mouse click events on the ListBox to detect checkbox clicks
         self.categoryListBox.PreviewMouseLeftButtonUp += self.on_category_listbox_clicked
         
-        # Add window closing event handler to reset colors when window closes
-        self.Closing += self.on_window_closing
 
     def load_categories(self):
         """Load categories from the current view."""
-        try:
-            self.logger.info("Loading categories in {0}".format(self.active_view.Name))
-            
-            # Only store current selections if we don't already have stored categories
-            # This prevents overwriting the categories stored during view change
+        try:            
             if not self.selected_category_names:
                 self.store_selected_categories()
-            else:
-                self.logger.info("Using previously stored categories: {0}".format(", ".join(self.selected_category_names)))
             
             # Clear existing items
             self.categoryListBox.Items.Clear()
@@ -639,18 +631,6 @@ class RevitColorizerWindow(WPFWindow):
             # Get categories using our wrapper method that provides proper context
             categories = self.get_used_categories(self.active_view)
             
-            # Log available categories for debugging
-            available_category_names = [cat.name for cat in categories]
-            self.logger.info("Available categories in this view: {0}".format(", ".join(available_category_names)))
-            
-            # Check which stored categories are available in this view
-            available_stored_categories = [name for name in self.selected_category_names if name in available_category_names]
-            missing_categories = [name for name in self.selected_category_names if name not in available_category_names]
-            
-            if missing_categories:
-                self.logger.info("Categories not available in this view: {0}".format(", ".join(missing_categories)))
-            
-            # Set processing flag BEFORE creating any category items
             # This prevents checkbox event handlers from running during restoration
             self._processing_restored_selection = True
             
@@ -671,8 +651,6 @@ class RevitColorizerWindow(WPFWindow):
             
             # If we have stored category names, try to select them
             if self.selected_category_names:
-                self.logger.info("Attempting to restore {0} previously selected categories".format(
-                    len(self.selected_category_names)))
                 
                 # Select categories by name - all at once before processing anything
                 selected_count = 0
@@ -681,20 +659,11 @@ class RevitColorizerWindow(WPFWindow):
                         item.IsSelected = True
                         categories_selected = True
                         selected_count += 1
-                        self.logger.info("Restored selection for category: {0}".format(item.name))
-                
-                self.logger.info("Successfully restored {0} categories".format(selected_count))
-                
-                # If we didn't restore all categories, log which ones failed
-                if selected_count < len(self.selected_category_names):
-                    failed_categories = [name for name in self.selected_category_names if name not in [item.name for item in category_items_added if item.IsSelected]]
-                    self.logger.info("Failed to restore categories: {0}".format(", ".join(failed_categories)))
-            
+                                    
             # If no categories were selected and we have items, select the first one
             if not categories_selected and self.categoryListBox.Items.Count > 0:
                 # Important: Set the first category as selected explicitly
                 self.categoryListBox.Items[0].IsSelected = True
-                self.logger.info("No stored categories were available, selected first category instead")
             
             # Process the selection to load parameters etc.
             if self.categoryListBox.Items.Count > 0:
@@ -707,9 +676,7 @@ class RevitColorizerWindow(WPFWindow):
                 # Now that all categories are restored, store them again to ensure consistency
                 self.store_selected_categories()
                 
-                # After processing, verify the selections
-                current_selections = [item.name for item in self.categoryListBox.Items if item.IsSelected]
-                self.logger.info("Final category selections after processing: {0}".format(", ".join(current_selections)))
+                # Removed final selections verification logging
                             
             self.statusText.Text = "Loaded {} categories.".format(len(categories))
                 
@@ -839,8 +806,6 @@ class RevitColorizerWindow(WPFWindow):
             return categories
         except Exception as ex:
             self.logger.error("Error in get_used_categories: %s", str(ex))
-            # Fallback: Create an extremely simple implementation that just returns empty results
-            self.logger.info("Using fallback empty categories list")
             return []
 
     def on_category_listbox_clicked(self, sender, args):
@@ -869,10 +834,6 @@ class RevitColorizerWindow(WPFWindow):
     def process_category_selection(self):
         """Process the current category selection state."""
         try:
-            # Log initial selection state
-            initial_selections = [item.name for item in self.categoryListBox.Items if item.IsSelected]
-            self.logger.info("Processing category selection. Initial selections: {0}".format(", ".join(initial_selections)))
-            
             # Store currently selected parameter name to try to preserve it
             current_param_name = None
             if self.parameterSelector.SelectedItem:
@@ -899,10 +860,6 @@ class RevitColorizerWindow(WPFWindow):
             # But only if we're not in the middle of a restore operation
             if not self._processing_restored_selection:
                 self.store_selected_categories()
-            
-            # Log final selection state
-            final_selections = [item.name for item in self.categoryListBox.Items if item.IsSelected]
-            self.logger.info("Category selection processing complete. Final selections: {0}".format(", ".join(final_selections)))
             
         except Exception as ex:
             self.statusText.Text = "Error processing category selection: " + str(ex)
@@ -1152,22 +1109,43 @@ class RevitColorizerWindow(WPFWindow):
     def on_window_closing(self, sender, e):
         """Handle window closing event to reset colors when window closes."""
         try:
-            self.logger.info("Window closing event triggered - resetting element colors")
-            
             # Mark window as inactive to disable event handling
             self.is_window_active = False
-            self.logger.info("Window marked as inactive")
+            
+            # Safely unregister view activation events
+            try:
+                if hasattr(self, 'uiapp'):
+                    # Store references to the event handlers
+                    view_activating_handler = self.on_view_activating
+                    view_activated_handler = self.on_view_activated
+                    
+                    # Try to unregister each event handler separately
+                    try:
+                        if hasattr(self.uiapp, 'ViewActivating'):
+                            self.uiapp.ViewActivating -= view_activating_handler
+                    except:
+                        pass  # Ignore errors when unregistering ViewActivating
+                        
+                    try:
+                        if hasattr(self.uiapp, 'ViewActivated'):
+                            self.uiapp.ViewActivated -= view_activated_handler
+                    except:
+                        pass  # Ignore errors when unregistering ViewActivated
+            except Exception as ex:
+                self.logger.error("Error unregistering view events: %s", str(ex))
                 
             # Only reset colors if we actually have a valid view
             if self.active_view:
-                # Set the specific view in the handler and then raise the event
-                # This ensures colors are reset in the current view, regardless of any pending view changes
-                self.reset_colors_handler.set_specific_view(self.active_view)
-                self.reset_colors_event.Raise()
-                self.logger.info("Reset colors event raised on window close")
+                try:
+                    # Set the specific view in the handler and then raise the event
+                    self.reset_colors_handler.set_specific_view(self.active_view)
+                    self.reset_colors_event.Raise()
+                except Exception as ex:
+                    self.logger.error("Error resetting colors: %s", str(ex))
+                
         except Exception as ex:
             # Just log the error, don't show to user since window is closing
-            self.logger.error("Error resetting colors on window close: %s", str(ex))
+            self.logger.error("Error in window closing: %s", str(ex))
     
     def OnClosing(self, e):
         """Override WPF window's OnClosing method to ensure colors are reset when window closes.
@@ -1175,26 +1153,58 @@ class RevitColorizerWindow(WPFWindow):
         try:
             # Mark window as inactive to disable event handling
             self.is_window_active = False
+            
+            # Safely unregister view activation events
+            try:
+                if hasattr(self, 'uiapp'):
+                    # Store references to the event handlers
+                    view_activating_handler = self.on_view_activating
+                    view_activated_handler = self.on_view_activated
+                    
+                    # Try to unregister each event handler separately
+                    try:
+                        if hasattr(self.uiapp, 'ViewActivating'):
+                            self.uiapp.ViewActivating -= view_activating_handler
+                    except:
+                        pass  # Ignore errors when unregistering ViewActivating
+                        
+                    try:
+                        if hasattr(self.uiapp, 'ViewActivated'):
+                            self.uiapp.ViewActivated -= view_activated_handler
+                    except:
+                        pass  # Ignore errors when unregistering ViewActivated
+            except Exception as ex:
+                self.logger.error("Error unregistering view events: %s", str(ex))
                 
             # Only reset colors if we actually have a valid view
             if self.active_view:
-                # Set the specific view in the handler and then raise the event
-                # This ensures colors are reset in the current view, regardless of any pending view changes
-                self.reset_colors_handler.set_specific_view(self.active_view)
-                self.reset_colors_event.Raise()
+                try:
+                    # Set the specific view in the handler and then raise the event
+                    self.reset_colors_handler.set_specific_view(self.active_view)
+                    self.reset_colors_event.Raise()
+                except Exception as ex:
+                    self.logger.error("Error resetting colors: %s", str(ex))
+                    
         except Exception as ex:
             # Just log the error, don't show to user since window is closing
             self.logger.error("Error in OnClosing: %s", str(ex))
         
-        # Always call the base class implementation
-        super(RevitColorizerWindow, self).OnClosing(e)
+        # Call the base class implementation using the fully qualified name
+        try:
+            from pyrevit import forms  # Import at the method level to ensure it's available
+            forms.WPFWindow.OnClosing(self, e)
+        except Exception as ex:
+            self.logger.error("Error in base class OnClosing: %s", str(ex))
     
     def on_view_activating(self, sender, args):
         """Handle Revit view activating events (fires BEFORE the view changes)."""
         try:
+            # Skip if window is not active
+            if not self.is_window_active:
+                return
+                
             # Store the current view before it changes
             current_view = self.active_view
-            self.logger.info("View activating event triggered - resetting element colors in {0}".format(current_view.Name))
             
             # Store selected categories for persistence between views
             self.store_selected_categories()
@@ -1211,9 +1221,12 @@ class RevitColorizerWindow(WPFWindow):
     def on_view_activated(self, sender, args):
         """Handle Revit view activated events (fires AFTER the view changes)."""
         try:
+            # Skip if window is not active
+            if not self.is_window_active:
+                return
+                
             # Get the freshly activated view from the document
             self.active_view = self.doc.ActiveView
-            self.logger.info("View activated event triggered - loading categories in {0}".format(self.active_view.Name))
             self.load_categories()
         except Exception as ex:
             self.logger.error("Error handling view activation: %s", ex)
@@ -1484,12 +1497,7 @@ class RevitColorizerWindow(WPFWindow):
         try:
             # Skip processing if we're in the middle of restoring selection
             if self._processing_restored_selection:
-                self.logger.info("Skipping category checkbox processing during restoration: {0}".format(category_item.name))
                 return
-                
-            # Log which category was changed
-            self.logger.info("Category checkbox changed: {0} is now {1}".format(
-                category_item.name, "selected" if category_item.IsSelected else "unselected"))
                 
             # Directly process the selection which will handle the category storage if needed
             self.process_category_selection()
@@ -1560,8 +1568,6 @@ class RevitColorizerWindow(WPFWindow):
         for item in self.categoryListBox.Items:
             if item.IsSelected:
                 self.selected_category_names.append(item.name)
-        self.logger.info("Stored {0} selected category names: {1}".format(
-            len(self.selected_category_names), ", ".join(self.selected_category_names)))
         return self.selected_category_names
 
 # Main script execution
