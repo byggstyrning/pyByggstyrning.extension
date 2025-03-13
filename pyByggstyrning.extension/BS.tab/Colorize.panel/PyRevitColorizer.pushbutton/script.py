@@ -23,6 +23,9 @@ from random import randint
 import clr
 from traceback import extract_tb
 
+from unicodedata import normalize
+from unicodedata import category as unicode_category
+
 # .NET imports
 clr.AddReference('PresentationCore')
 clr.AddReference('PresentationFramework')
@@ -31,7 +34,9 @@ clr.AddReference('System.Windows.Forms')
 clr.AddReference('WindowsBase')
 clr.AddReference('System')
 
+# Import System namespace and its components
 from System import Object, Uri, Action
+import System
 from System.Windows import Window, Application, FrameworkElement
 from System.Windows.Controls import *
 from System.Windows.Media import *
@@ -43,17 +48,22 @@ from System.Collections.ObjectModel import ObservableCollection
 from System.ComponentModel import INotifyPropertyChanged, PropertyChangedEventArgs
 from System.Windows.Data import Binding
 from System.Collections.Generic import List, Dictionary
-
 # pyRevit imports
 from pyrevit import HOST_APP, revit, DB, UI
-from pyrevit.forms import WPFWindow
-
+from pyrevit import forms   # By importing forms you also get references to WPF package! IT'S Very IMPORTANT !!!
+import wpf         # wpf can be imported only after pyrevit.forms!
 from pyrevit.script import get_logger
-from pyrevit.framework import Forms
+from pyrevit.framework import Forms, Drawing
 from pyrevit.compat import get_elementid_value_func
+
+# Revit imports
+from Autodesk.Revit.DB import *
 
 # Set up logger
 logger = get_logger() # get logger and trigger debug mode using CTRL+click
+
+# Global variable to track if a window is already running
+_colorizer_window_instance = None
 
 # Get the current document and application
 doc = revit.doc
@@ -71,7 +81,8 @@ def safe_get_builtin_category_id(category_name):
         if category_enum is not None:
             return int(category_enum)
         return None
-    except Exception:
+    except Exception as ex:
+        logger.error("Error on safe get builtin category id: {}".format(ex))
         return None
 
 # Categories to exclude from coloring
@@ -110,30 +121,22 @@ PREDEFINED_SCHEMAS = {
 }
 
 # Helper Classes 
-class ValueInfo:
-    """Stores information about a parameter value and its associated colors"""
-    def __init__(self, parameter, value, element_id, r, g, b):
-        self.parameter = parameter
-        self.value = value
-        self.name = self.get_sanitized_name(parameter)
-        self.element_ids = List[DB.ElementId]()
-        self.element_ids.Add(element_id)
-        self.r = r
-        self.g = g
-        self.b = b
-        self.color = Color.FromRgb(r, g, b)
+class ValuesInfo():
+    def __init__(self, para, val, idt, num1, num2, num3):
+        self.par = para
+        self.value = val
+        self.name = strip_accents(para.Definition.Name)
+        self.ele_id = List[DB.ElementId]()
+        self.ele_id.Add(idt)
+        self.n1 = num1
+        self.n2 = num2
+        self.n3 = num3
+        self.colour = Drawing.Color.FromArgb(self.n1, self.n2, self.n3)
         self.values_double = []
-        if parameter.StorageType == DB.StorageType.Double:
-            self.values_double.append(parameter.AsDouble())
-        elif parameter.StorageType == DB.StorageType.ElementId:
-            self.values_double.append(parameter.AsElementId())
-    
-    def get_sanitized_name(self, parameter):
-        """Get sanitized parameter name without special characters"""
-        try:
-            return parameter.Definition.Name
-        except:
-            return "Unknown"
+        if para.StorageType == DB.StorageType.Double:
+            self.values_double.append(para.AsDouble())
+        elif para.StorageType == DB.StorageType.ElementId:
+            self.values_double.append(para.AsElementId())
 
 class ParameterInfo:
     """Stores information about a parameter"""
@@ -173,7 +176,7 @@ class ApplyColorsHandler(UI.IExternalEventHandler):
             view = self.ui.current_view
             if not view:
                 self.ui.status_text.Text = "No active view available"
-                logger.info("No active view available")
+                self.logger.info("No active view available")
                 return
                 
             # Get the solid fill pattern for overrides
@@ -184,7 +187,7 @@ class ApplyColorsHandler(UI.IExternalEventHandler):
                 selected_categories = [item for item in self.ui.category_items if item.IsSelected]
                 if not selected_categories:
                     self.ui.status_text.Text = "No category selected"
-                    logger.info("No category selected")
+                    self.logger.info("No category selected")
                     return
                 
                 for value_info in self.ui.values_list:
@@ -209,12 +212,13 @@ class ApplyColorsHandler(UI.IExternalEventHandler):
                     for element_id in value_info.element_ids:
                         try:
                             view.SetElementOverrides(element_id, ogs)
-                        except Exception:
-                            external_event_trace()
+                        except Exception as ex:
+                            self.logger.error("Error on set element overrides: {}".format(ex))
                 
                 self.ui.status_text.Text = "Colors applied successfully"
-        except Exception:
-            external_event_trace()
+        except Exception as ex:
+            self.logger.error("Error on apply colors: {}".format(ex))
+            
     def get_solid_fill_pattern_id(self, document):
         """Gets the solid fill pattern ID from the document"""
         patterns = DB.FilteredElementCollector(document).OfClass(DB.FillPatternElement)
@@ -237,7 +241,7 @@ class ResetColorsHandler(UI.IExternalEventHandler):
             view = self.ui.current_view
             if not view:
                 self.ui.status_text.Text = "No active view available"
-                logger.info("No active view available")
+                self.logger.info("No active view available")
                 return
                 
             # Default override settings (no overrides)
@@ -252,12 +256,12 @@ class ResetColorsHandler(UI.IExternalEventHandler):
                 for element_id in all_colored_ids:
                     try:
                         view.SetElementOverrides(element_id, ogs)
-                    except Exception:
-                        external_event_trace()
+                    except Exception as ex:
+                        self.logger.error("Error on reset colors: {}".format(ex))
                 
                 self.ui.status_text.Text = "Colors reset successfully"
-        except Exception:
-            external_event_trace()
+        except Exception as ex:
+            self.logger.error("Error on reset colors: {}".format(ex))
     
     def GetName(self):
         return "Reset Colors Handler"
@@ -320,23 +324,116 @@ def get_used_categories(active_view, excluded_cats=None):
     category_list = sorted(categories.values(), key=lambda x: x.name)
     return category_list
 
-def is_numeric(value):
-    """Check if a string can be converted to a number"""
-    try:
-        float(value)
-        return True
-    except (ValueError, TypeError):
-        return False
-
-def external_event_trace():
-    exc_type, exc_value, exc_traceback = sys.exc_info()
-    logger.debug("Exception type: %s",exc_type)
-    logger.debug("Exception value: %s",exc_value)
-    logger.debug("Traceback details:")
-    for tb in extract_tb(exc_traceback):
-        logger.debug("File: %s, Line: %s, Function: %s, Code: %s",tb[0], tb[1], tb[2], tb[3])
-
 # Add helper functions for parameter values
+def get_parameter_values(category, param, new_view):
+    """Gets all unique values for a parameter in the given category"""
+    try:
+        
+        logger.info("Getting parameter values for category: {} (ID: {})".format(
+            category.name, category.int_id))
+        
+        # Get the category ID as an ElementId
+        category_id = DB.ElementId(category.int_id)
+        logger.info("Created ElementId: {}".format(category_id))
+        
+        # Get elements of this category in the current view using OfCategoryId instead of OfCategory
+        collector = (DB.FilteredElementCollector(doc, new_view.Id)
+                    .OfCategoryId(category_id)
+                    .WhereElementIsNotElementType()
+                    .WhereElementIsViewIndependent())
+        
+        # Count elements found - do this before converting to elements
+        element_count = collector.GetElementCount()
+        logger.info("Found {} elements in category".format(element_count))
+        
+        # Convert to elements after getting count
+        elements = collector.ToElements()
+        
+        # Initialize empty list and set for used colors
+        list_values = []
+        used_colors = set()
+        
+        # Store references to frequently used types/constants
+        storage_double = DB.StorageType.Double
+        
+        for ele in elements:
+            try:
+                # Get element or its type based on parameter type
+                ele_par = ele if param.param_type != 1 else doc.GetElement(ele.GetTypeId())
+                
+                for pr in ele_par.Parameters:
+                    if pr.Definition.Name == param.name:
+                        value = get_parameter_value(pr) or "None"
+                        match = [x for x in list_values if x.value == value]
+                        if match:
+                            # Check if ele_id is a List[DB.ElementId] or a regular list
+                            if hasattr(match[0].ele_id, 'Add'):
+                                # It's a proper .NET List, use Add method
+                                match[0].ele_id.Add(ele.Id)
+                            else:
+                                # It's a regular Python list, use append
+                                match[0].ele_id.append(ele.Id)
+                                
+                            if pr.StorageType == storage_double:
+                                match[0].values_double.append(pr.AsDouble())
+                        else:
+                            while True:
+                                r, g, b = random_color()
+                                if (r, g, b) not in used_colors:
+                                    used_colors.add((r, g, b))
+                                    try:
+                                        # Create ValuesInfo with proper DB reference  
+                                        val = ValuesInfo(pr, value, ele.Id, r, g, b)
+                                        list_values.append(val)
+                                        break
+                                    except Exception as ex:
+                                        logger.error("Error creating ValuesInfo: {}".format(ex))
+                                        raise
+                        break
+            except Exception as ex:
+                logger.error("Error processing element: {}".format(ex))
+                continue
+                    
+        # Separate None values
+        none_values = [x for x in list_values if x.value == "None"]
+        logger.info("Found {} None values".format(len(none_values)))
+        list_values = [x for x in list_values if x.value != "None"]
+        logger.info("Found {} non-None values".format(len(list_values)))
+        # Sort values
+        list_values = sorted(list_values, key=lambda x: x.value, reverse=False)
+        if len(list_values) > 1:
+            try:
+                first_value = list_values[0].value
+                indx_del = get_index_units(first_value)
+                if indx_del == 0:
+                    list_values = sorted(list_values, key=lambda x: safe_float(x.value))
+                elif 0 < indx_del < len(first_value):
+                    list_values = sorted(list_values, key=lambda x: safe_float(x.value[:-indx_del]))
+            except ValueError as ve:
+                logger.error("ValueError during sorting: {}".format(ve))
+            except Exception as ex:
+                logger.error("Error on sort values: {}".format(ex))
+                
+        # Add None values at the end if they contain elements
+        if none_values and any(len(x.ele_id) > 0 for x in none_values):
+            list_values.extend(none_values)
+                    
+        logger.info("Returning {} unique values".format(len(list_values)))
+        return list_values
+    except Exception as ex:
+        import traceback
+        tb = traceback.format_exc()
+        logger.error("Error in get_parameter_values: {} - Traceback: {}".format(ex, tb))
+        raise
+
+    
+def random_color():
+    """Generates a random RGB color"""
+    r = randint(0, 230)
+    g = randint(0, 230)
+    b = randint(0, 230)
+    return r, g, b
+
 def get_parameter_value(para):
     """Extract value from a parameter based on its storage type"""
     if not para.HasValue:
@@ -401,15 +498,54 @@ def get_index_units(value):
         return 0
     except:
         return 0
-
+    
+def strip_accents(text):
+    return ''.join(char for char in normalize('NFKD', text) if unicode_category(char) != 'Mn')
+  
 # Main class for the Colorizer UI
-class RevitColorizerWindow(WPFWindow):
+class RevitColorizerWindow(Window):
     """Main WPF window for the Revit Colorizer tool"""
         
-    def __init__(self, xaml_file_name):
+    def __init__(self):
         try:
-            # Initialize WPF window from XAML file
-            WPFWindow.__init__(self, xaml_file_name)
+            # Add initialization tracking
+            logger.info("=============== WINDOW INITIALIZATION STARTED ===============")
+            
+            # Create XAML file for our UI
+            xaml_file = os.path.join(
+                os.path.dirname(__file__), 
+                "RevitColorizerWindow.xaml"
+            )
+
+            wpf.LoadComponent(self, xaml_file)
+            
+            # Store logger reference
+            self.logger = get_logger()
+            
+            # Store DB reference to ensure it's accessible in methods
+            self.DB = DB
+            self.logger.info("DB reference stored: {}".format(self.DB))
+
+            # Store doc reference to ensure it's accessible in methods
+            self.doc = doc
+            self.logger.info("doc reference stored: {}".format(self.doc))
+            
+            # Store System reference to ensure it's accessible in methods
+            self.System = System
+            self.logger.info("System reference stored: {}".format(self.System))
+            
+            # store reference to helper functions
+            self.get_parameter_value = get_parameter_value
+            self.get_parameter_values = get_parameter_values
+            self.get_index_units = get_index_units
+            self.get_elementid_value = get_elementid_value
+            self.get_double_value = get_double_value
+            self.get_integer_value = get_integer_value
+            self.safe_float = safe_float
+            self.strip_accents = strip_accents
+            
+            # Store reference to randint from random module
+            self.randint = randint
             
             # Initialize UI components
             self.setup_ui_components()
@@ -426,9 +562,11 @@ class RevitColorizerWindow(WPFWindow):
             
             # Load categories
             self.load_categories()
-        except Exception:
-            external_event_trace()
-    
+
+            self.Show()
+        except Exception as ex:
+            self.logger.error("Error initializing RevitColorizerWindow: {}".format(ex))
+        
     def setup_ui_components(self):
         """Set up the UI components from XAML"""
         # Main components - these should match the names in the XAML file
@@ -458,50 +596,95 @@ class RevitColorizerWindow(WPFWindow):
         # Status text
         self.status_text = self.statusText
         
-        # Set initial status message
-        self.status_text.Text = "Select categories and a parameter to get started"
-        logger.info("Select categories and a parameter to get started")
+        # Set up event handlers with strong references
+        def create_handler(method_name):
+            method = getattr(self, method_name)
+            # Store critical references
+            DB_ref = self.DB
+            doc_ref = self.doc
+            logger_ref = self.logger
+            
+            def handler(sender, args):
+                try:
+                    # Log event
+                    logger_ref.info("Event triggered: {}".format(method_name))
+                    
+                    # Restore critical references if needed
+                    if not hasattr(self, 'DB') or self.DB is None:
+                        self.DB = DB_ref
+                    if not hasattr(self, 'doc') or self.doc is None:
+                        self.doc = doc_ref
+                        
+                    # Call the actual method
+                    return method(sender, args)
+                except Exception as ex:
+                    logger_ref.error("Error in {}: {}".format(method_name, str(ex)))
+            return handler
         
-        # Set up event handlers
-        self.apply_button.Click += self.on_apply_colors
-        self.reset_button.Click += self.on_reset_colors
-        self.save_button.Click += self.on_save_config
-        self.load_button.Click += self.on_load_config
-        self.close_button.Click += self.on_close
+        # Store all handlers as instance variables to prevent garbage collection
+        self.handlers = {}
         
-        # Set up ListBox selection change event (as a backup)
-        self.category_listbox.SelectionChanged += self.on_category_selection_changed
+        # Button handlers
+        self.handlers['on_apply_colors'] = create_handler('on_apply_colors')
+        self.handlers['on_reset_colors'] = create_handler('on_reset_colors')
+        self.handlers['on_save_config'] = create_handler('on_save_config')
+        self.handlers['on_load_config'] = create_handler('on_load_config')
+        self.handlers['on_close'] = create_handler('on_close')
+        self.handlers['on_add_filters'] = create_handler('on_add_filters')
+        self.handlers['on_remove_filters'] = create_handler('on_remove_filters')
         
-        # Set up radio button handlers - both Checked and Click events
-        self.instance_radio.Checked += self.on_parameter_type_changed
-        self.type_radio.Checked += self.on_parameter_type_changed
-
-        # Adding Click handlers for better responsiveness
-        self.instance_radio.Click += self.on_radio_button_click
-        self.type_radio.Click += self.on_radio_button_click
+        # Other UI handlers
+        self.handlers['on_category_selection_changed'] = create_handler('on_category_selection_changed')
+        self.handlers['on_parameter_type_changed'] = create_handler('on_parameter_type_changed')
+        self.handlers['on_radio_button_click'] = create_handler('on_radio_button_click')
+        self.handlers['on_parameter_selected'] = create_handler('on_parameter_selected')
+        self.handlers['on_parameter_dropdown_closed'] = create_handler('on_parameter_dropdown_closed')
+        self.handlers['on_value_selected'] = create_handler('on_value_selected')
+        self.handlers['on_value_double_click'] = create_handler('on_value_double_click')
+        self.handlers['on_window_loaded'] = create_handler('on_window_loaded')
+        
+        # Checkbox handlers - create separate handlers for checked/unchecked
+        self.handlers['on_option_changed_checked'] = create_handler('on_option_changed')
+        self.handlers['on_option_changed_unchecked'] = create_handler('on_option_changed')
+                
+        # Connect all the handlers
+        self.apply_button.Click += self.handlers['on_apply_colors']
+        self.reset_button.Click += self.handlers['on_reset_colors']
+        self.save_button.Click += self.handlers['on_save_config']
+        self.load_button.Click += self.handlers['on_load_config']
+        self.close_button.Click += self.handlers['on_close']
+        
+        # Set up ListBox selection change event
+        self.category_listbox.SelectionChanged += self.handlers['on_category_selection_changed']
+        
+        # Set up radio button handlers
+        self.instance_radio.Checked += self.handlers['on_parameter_type_changed']
+        self.type_radio.Checked += self.handlers['on_parameter_type_changed']
+        self.instance_radio.Click += self.handlers['on_radio_button_click']
+        self.type_radio.Click += self.handlers['on_radio_button_click']
         
         # Set up toggle switch handlers
-        self.override_projection_checkbox.Checked += self.on_option_changed
-        self.override_projection_checkbox.Unchecked += self.on_option_changed
-        self.show_elements_checkbox.Checked += self.on_option_changed
-        self.show_elements_checkbox.Unchecked += self.on_option_changed
-        self.keep_overrides_checkbox.Checked += self.on_option_changed
-        self.keep_overrides_checkbox.Unchecked += self.on_option_changed
+        self.override_projection_checkbox.Checked += self.handlers['on_option_changed_checked']
+        self.override_projection_checkbox.Unchecked += self.handlers['on_option_changed_unchecked']
+        self.show_elements_checkbox.Checked += self.handlers['on_option_changed_checked']
+        self.show_elements_checkbox.Unchecked += self.handlers['on_option_changed_unchecked']
+        self.keep_overrides_checkbox.Checked += self.handlers['on_option_changed_checked']
+        self.keep_overrides_checkbox.Unchecked += self.handlers['on_option_changed_unchecked']
         
         # Set up filter button handlers
-        self.add_filters_button.Click += self.on_add_filters
-        self.remove_filters_button.Click += self.on_remove_filters
+        self.add_filters_button.Click += self.handlers['on_add_filters']
+        self.remove_filters_button.Click += self.handlers['on_remove_filters']
         
         # Set up parameter selector
-        self.parameter_selector.SelectionChanged += self.on_parameter_selected
-        self.parameter_selector.DropDownClosed += self.on_parameter_dropdown_closed
+        self.parameter_selector.SelectionChanged += self.handlers['on_parameter_selected']
+        self.parameter_selector.DropDownClosed += self.handlers['on_parameter_dropdown_closed']
         
         # Set up values listbox for color selection
-        self.values_listbox.SelectionChanged += self.on_value_selected
-        self.values_listbox.MouseDoubleClick += self.on_value_double_click
+        self.values_listbox.SelectionChanged += self.handlers['on_value_selected']
+        self.values_listbox.MouseDoubleClick += self.handlers['on_value_double_click']
         
         # Add window loaded event handler
-        self.Loaded += self.on_window_loaded
+        self.Loaded += self.handlers['on_window_loaded']
         
         # Set window title
         self.Title = "PyRevit Colorizer"
@@ -514,7 +697,7 @@ class RevitColorizerWindow(WPFWindow):
         
         if not selected_view.CanUseTemporaryVisibilityModes():
             self.status_text.Text = "Visibility settings cannot be modified in {} views".format(selected_view.ViewType)
-            logger.info("Visibility settings cannot be modified in {} views".format(selected_view.ViewType))
+            self.logger.info("Visibility settings cannot be modified in {} views".format(selected_view.ViewType))
             return None
         
         return selected_view
@@ -583,7 +766,7 @@ class RevitColorizerWindow(WPFWindow):
             
         # Update status
         self.status_text.Text = "Found {} categories in the current view".format(len(self.categories))
-        logger.info("Found {} categories in the current view".format(len(self.categories)))
+        self.logger.info("Found {} categories in the current view".format(len(self.categories)))
     
     def refresh_parameter_selection(self):
         """Refresh parameters based on current category selection"""
@@ -594,14 +777,14 @@ class RevitColorizerWindow(WPFWindow):
             
             if selected_count == 0:
                 self.status_text.Text = "Please select at least one category"
-                logger.info("Please select at least one category")
+                self.logger.info("Please select at least one category")
                 self.parameter_selector.Items.Clear()
                 self.values_listbox.Items.Clear()
                 return
                 
             # Update status
             self.status_text.Text = "Selected {} categories".format(selected_count)
-            logger.info("Selected {} categories".format(selected_count))
+            self.logger.info("Selected {} categories".format(selected_count))
             
             # Set to instance parameter type if needed
             current_instance_state = self.instance_radio.IsChecked
@@ -614,16 +797,16 @@ class RevitColorizerWindow(WPFWindow):
             # Load parameters for the first selected category
             if selected_count > 0:
                 self.load_parameters_for_category(selected_categories[0].category_info)
-        except Exception:
-            external_event_trace()
+        except Exception as ex:
+            self.logger.error("Error refreshing parameter selection: {}".format(ex))
     
     def on_category_selection_changed(self, sender, args):
         """Handle category selection changes - this is now primarily a backup"""
         try:
             # We'll rely primarily on property changed events, but keep this as a backup
             pass
-        except Exception:
-            external_event_trace()
+        except Exception as ex:
+            self.logger.error("Error on category selection changed: {}".format(ex))
     
     def load_parameters_for_category(self, category):
         """Load parameters for the selected category"""
@@ -647,7 +830,7 @@ class RevitColorizerWindow(WPFWindow):
             param_count = len(filtered_params)
             if param_count > 0:
                 self.status_text.Text = "Found {} {} parameters".format(param_count, param_type_name)
-                logger.info("Found {} {} parameters".format(param_count, param_type_name))
+                self.logger.info("Found {} {} parameters".format(param_count, param_type_name))
                 # Select first parameter
                 if self.parameter_selector.Items.Count > 0:
                     self.parameter_selector.SelectedIndex = 0
@@ -655,10 +838,10 @@ class RevitColorizerWindow(WPFWindow):
                     self.on_parameter_selected(None, None)
             else:
                 self.status_text.Text = "No {} parameters found".format(param_type_name)
-                logger.info("No {} parameters found".format(param_type_name))
+                self.logger.info("No {} parameters found".format(param_type_name))
                 
-        except Exception:
-            external_event_trace()
+        except Exception as ex:
+            self.logger.error("Error loading parameters for category: {}".format(ex))
     
     def on_parameter_type_changed(self, sender, args):
         """Handle parameter type change (instance/type)"""
@@ -677,49 +860,64 @@ class RevitColorizerWindow(WPFWindow):
             if selected_categories:
                 # Reload parameters for the first selected category
                 self.load_parameters_for_category(selected_categories[0].category_info)
-        except Exception:
-            external_event_trace()
+        except Exception as ex:
+            self.logger.error("Error on parameter type changed: {}".format(ex))
     
     def on_option_changed(self, sender, args):
         """Handle option checkbox changes"""
-        # Update status with current options
-        options = []
-        if self.override_projection_checkbox.IsChecked:
-            options.append("Override Projection/Cut Lines")
-        if self.show_elements_checkbox.IsChecked:
-            options.append("Show Elements in Properties")
-        if self.keep_overrides_checkbox.IsChecked:
-            options.append("Keep Overrides")
+        try:
+            # Get the checkbox that triggered the event
+            checkbox = sender
+            self.logger.info("Checkbox '{}' state changed to: {}".format(checkbox.Name, checkbox.IsChecked))
             
-        if options:
-            self.status_text.Text = "Options enabled: {}".format(', '.join(options))
-            logger.info("Options enabled: {}".format(', '.join(options)))
-        else:
-            self.status_text.Text = "All options disabled"
-            logger.info("All options disabled")
+            # Force UI update for the checkbox
+            checkbox.UpdateLayout()
+            
+            # Update status with current options
+            options = []
+            if self.override_projection_checkbox.IsChecked:
+                options.append("Override Projection/Cut Lines")
+            if self.show_elements_checkbox.IsChecked:
+                options.append("Show Elements in Properties")
+            if self.keep_overrides_checkbox.IsChecked:
+                options.append("Keep Overrides")
+                
+            if options:
+                self.status_text.Text = "Options enabled: {}".format(', '.join(options))
+                self.logger.info("Options enabled: {}".format(', '.join(options)))
+            else:
+                self.status_text.Text = "All options disabled"
+                self.logger.info("All options disabled")
+            
+            # If colors are already applied, update them with new settings
+            if self.values_list and len(self.values_list) > 0:
+                self.on_apply_colors(None, None)
+                
+        except Exception as ex:
+            self.logger.error("Error on option changed: {}".format(ex))
     
     def on_add_filters(self, sender, args):
         """Handle adding view filters"""
         try:
             self.status_text.Text = "Adding view filters is not implemented yet"
-            logger.info("Adding view filters is not implemented yet")
-        except Exception:
-            external_event_trace()
+            self.logger.info("Adding view filters is not implemented yet")
+        except Exception as ex:
+            self.logger.error("Error on add filters: {}".format(ex))
     
     def on_remove_filters(self, sender, args):
         """Handle removing view filters"""
         try:
             self.status_text.Text = "Removing view filters is not implemented yet"
-            logger.info("Removing view filters is not implemented yet")
-        except Exception:
-            external_event_trace()
+            self.logger.info("Removing view filters is not implemented yet")
+        except Exception as ex:
+            self.logger.error("Error on remove filters: {}".format(ex))
     
     def on_close(self, sender, args):
         """Handle close button click"""
         try:
             self.Close()
-        except Exception:
-            external_event_trace()
+        except Exception as ex:
+            self.logger.error("Error on close: {}".format(ex))
     
     def on_window_loaded(self, sender, args):
         """Called when the window is fully loaded"""
@@ -728,14 +926,14 @@ class RevitColorizerWindow(WPFWindow):
             self.parameter_selector.UpdateLayout()
             
             # Set default toggle states
-            self.override_projection_checkbox.IsChecked = True
+            self.override_projection_checkbox.IsChecked = False
             self.show_elements_checkbox.IsChecked = False
             self.keep_overrides_checkbox.IsChecked = False
             
             # Load saved configurations into settings dropdown
             self.load_saved_configurations()
-        except Exception:
-            external_event_trace()
+        except Exception as ex:
+            self.logger.error("Error on window loaded: {}".format(ex))
             
     def load_saved_configurations(self):
         """Load saved configurations into settings dropdown"""
@@ -756,14 +954,14 @@ class RevitColorizerWindow(WPFWindow):
                 
             # Select Default
             self.settings_combo.SelectedIndex = 0
-        except Exception:
-            external_event_trace()
+        except Exception as ex:
+            self.logger.error("Error on load saved configurations: {}".format(ex))
     
     def on_apply_colors(self, sender, args):
         """Apply colors to elements"""
         if not self.values_list:
             self.status_text.Text = "No values to apply colors to"
-            logger.info("No values to apply colors to")
+            self.logger.info("No values to apply colors to")
             return
         
         # Check which options are enabled
@@ -771,12 +969,15 @@ class RevitColorizerWindow(WPFWindow):
         
         # Apply colors with appropriate options
         self.status_text.Text = "Applying colors..."
-        logger.info("Applying colors...")
+        self.logger.info("Applying colors...")
         self.apply_colors_event.Raise()
     
     def on_parameter_selected(self, sender, args):
         """Handle parameter selection"""
         try:
+            # Debug state at the start of parameter selection
+            self.debug_state("on_parameter_selected start")
+            
             self.values_listbox.Items.Clear()
             self.values_list = []
             
@@ -784,34 +985,43 @@ class RevitColorizerWindow(WPFWindow):
             selected_categories = [item for item in self.category_items if item.IsSelected]
             if not selected_categories:
                 self.status_text.Text = "Please select at least one category"
-                logger.info("Please select at least one category")
+                self.logger.info("Please select at least one category")
                 return
                 
             selected_parameter = self.parameter_selector.SelectedItem
             
             if not selected_parameter:
                 self.status_text.Text = "Please select a parameter"
-                logger.info("Please select a parameter")
+                self.logger.info("Please select a parameter")
                 return
             
             # Get values for the selected parameter
-            exclude_none = False  # No longer have the exclude none checkbox
             self.status_text.Text = "Loading values for parameter: {}".format(selected_parameter.name)
-            logger.info("Loading values for parameter: {}".format(selected_parameter.name))
-            Forms.alert("Loading values for parameter: {}".format(selected_parameter.name))
-            # Get values for the first selected category - use self. to call the method
-            self.values_list = self.get_parameter_values(selected_categories[0].category_info, selected_parameter, self.current_view, exclude_none)
+            self.logger.info("Loading values for parameter: {}".format(selected_parameter.name))
             
+            try:
+                
+                # Use get_parameter_values to get values list
+                self.values_list = get_parameter_values(selected_categories[0].category_info, 
+                                                        selected_parameter, 
+                                                        self.current_view)
+                self.logger.info("Found {} values for parameter".format(len(self.values_list)))
+                
+            except Exception as ex:
+                self.logger.error("Error getting parameter values: {}".format(ex))
+                self.status_text.Text = "Error: {}".format(str(ex))
+                return
+
             # Populate values listbox
             for value_info in self.values_list:
                 self.values_listbox.Items.Add(value_info)
                 
             if not self.values_list:
                 self.status_text.Text = "No values found for parameter: {}".format(selected_parameter.name)
-                logger.info("No values found for parameter: {}".format(selected_parameter.name))
+                self.logger.info("No values found for parameter: {}".format(selected_parameter.name))
             else:
                 self.status_text.Text = "Found {} unique values".format(len(self.values_list))
-                logger.info("Found {} unique values".format(len(self.values_list)))
+                self.logger.info("Found {} unique values".format(len(self.values_list)))
                 
                 # Force a refresh to ensure the UI updates
                 self.values_listbox.Items.Refresh()
@@ -819,8 +1029,9 @@ class RevitColorizerWindow(WPFWindow):
                 # Automatically apply colors if there are values
                 # Always auto-apply when ticking a checkbox
                 self.on_apply_colors(None, None)
-        except Exception:
-            external_event_trace()
+        except Exception as ex:
+            self.logger.error("Error on parameter selected: {}".format(ex))
+            self.status_text.Text = "Error: {}".format(str(ex))
 
     def on_parameter_dropdown_closed(self, sender, args):
         """Handle parameter dropdown closing - another chance to catch selection"""
@@ -829,20 +1040,20 @@ class RevitColorizerWindow(WPFWindow):
             if selected_parameter:
                 # Manually call the parameter selection handler
                 self.on_parameter_selected(sender, args)
-        except Exception:
-            external_event_trace()
+        except Exception as ex:
+            self.logger.error("Error on parameter dropdown closed: {}".format(ex))
             
     def on_reset_colors(self, sender, args):
         """Reset colors on elements"""
         self.status_text.Text = "Resetting colors..."
-        logger.info("Resetting colors...")
+        self.logger.info("Resetting colors...")
         self.reset_colors_event.Raise()
     
     def on_save_config(self, sender, args):
         """Save configuration to file"""
         if not self.values_list:
             self.status_text.Text = "No configuration to save"
-            logger.info("No configuration to save")
+            self.logger.info("No configuration to save")
             return
             
         try:
@@ -850,13 +1061,13 @@ class RevitColorizerWindow(WPFWindow):
             selected_categories = [item for item in self.category_items if item.IsSelected]
             if not selected_categories:
                 self.status_text.Text = "Please select at least one category"
-                logger.info("Please select at least one category")
+                self.logger.info("Please select at least one category")
                 return
                 
             selected_parameter = self.parameter_selector.SelectedItem
             if not selected_parameter:
                 self.status_text.Text = "Please select a parameter"
-                logger.info("Please select a parameter")
+                self.logger.info("Please select a parameter")
                 return
                 
             # Get the name for the config (from settings combobox or prompt for new name)
@@ -866,7 +1077,7 @@ class RevitColorizerWindow(WPFWindow):
                 input_dialog = Forms.InputBox("Enter a name for this configuration:", "Save Configuration", "")
                 if not input_dialog:
                     self.status_text.Text = "Save cancelled"
-                    logger.info("Save cancelled")
+                    self.logger.info("Save cancelled")
                     return
                 setting_name = input_dialog
                 
@@ -915,9 +1126,9 @@ class RevitColorizerWindow(WPFWindow):
                 self.settings_combo.SelectedItem = item
                 
             self.status_text.Text = "Configuration '{}' saved successfully".format(setting_name)
-            logger.info("Configuration '{}' saved successfully".format(setting_name))
-        except Exception:
-            external_event_trace()
+            self.logger.info("Configuration '{}' saved successfully".format(setting_name))
+        except Exception as ex:
+            self.logger.error("Error on save config: {}".format(ex))
     
     def on_load_config(self, sender, args):
         """Load configuration from file"""
@@ -946,7 +1157,7 @@ class RevitColorizerWindow(WPFWindow):
                 config_file = os.path.join(app_data_path, "{}.rvtcolor".format(setting_name))
                 if not os.path.exists(config_file):
                     self.status_text.Text = "Configuration file for '{}' not found".format(setting_name)
-                    logger.info("Configuration file for '{}' not found".format(setting_name))
+                    self.logger.info("Configuration file for '{}' not found".format(setting_name))
                     return
             
             # Load configuration
@@ -976,7 +1187,7 @@ class RevitColorizerWindow(WPFWindow):
                     break
             else:
                 self.status_text.Text = "Category '{}' not found in current view".format(config["category"])
-                logger.info("Category '{}' not found in current view".format(config["category"]))
+                self.logger.info("Category '{}' not found in current view".format(config["category"]))
                 return
             
             # Find parameter in the loaded parameters
@@ -987,7 +1198,7 @@ class RevitColorizerWindow(WPFWindow):
                     break
             else:
                 self.status_text.Text = "Parameter '{}' not found in selected category".format(config["parameter"])
-                logger.info("Parameter '{}' not found in selected category".format(config["parameter"]))
+                self.logger.info("Parameter '{}' not found in selected category".format(config["parameter"]))
                 return
             
             # Apply colors to values if we have them
@@ -1006,9 +1217,9 @@ class RevitColorizerWindow(WPFWindow):
                 self.values_listbox.Items.Refresh()
             
             self.status_text.Text = "Configuration '{}' loaded successfully".format(setting_name)
-            logger.info("Configuration '{}' loaded successfully".format(setting_name))
-        except Exception:
-            external_event_trace()
+            self.logger.info("Configuration '{}' loaded successfully".format(setting_name))
+        except Exception as ex:
+            self.logger.error("Error on load config: {}".format(ex))
 
     def on_value_selected(self, sender, args):
         """Handle value selection in listbox"""
@@ -1019,9 +1230,9 @@ class RevitColorizerWindow(WPFWindow):
                 
             # Just update status text with selection info
             self.status_text.Text = "Selected value: {}".format(selected_value.value)
-            logger.info("Selected value: {}".format(selected_value.value))
-        except Exception:
-            external_event_trace()
+            self.logger.info("Selected value: {}".format(selected_value.value))
+        except Exception as ex:
+            self.logger.error("Error on value selected: {}".format(ex))
             
     def on_value_double_click(self, sender, args):
         """Handle double-click on a value to change its color"""
@@ -1044,9 +1255,9 @@ class RevitColorizerWindow(WPFWindow):
                 # Refresh listbox
                 self.values_listbox.Items.Refresh()
                 self.status_text.Text = "Updated color for value: {}".format(selected_value.value)
-                logger.info("Updated color for value: {}".format(selected_value.value))
-        except Exception:
-            external_event_trace()
+                self.logger.info("Updated color for value: {}".format(selected_value.value))
+        except Exception as ex:
+            self.logger.error("Error on value double click: {}".format(ex))
 
     def on_radio_button_click(self, sender, args):
         """Handle direct clicks on radio buttons"""
@@ -1055,151 +1266,21 @@ class RevitColorizerWindow(WPFWindow):
             selected_categories = [item for item in self.category_items if item.IsSelected]
             if selected_categories:
                 self.load_parameters_for_category(selected_categories[0].category_info)
-        except Exception:
-            external_event_trace()
+        except Exception as ex:
+            self.logger.error("Error on radio button click: {}".format(ex))
 
-    def get_parameter_values(self, category, parameter, view, exclude_none=False):
-        """Gets all unique values for a parameter in the given category"""
+
+    def debug_state(self, context=""):
+        """Log the current state of critical variables for debugging"""
         try:
-            # Check if view is valid
-            if not view:
-                self.status_text.Text = "No active view available"
-                logger.info("No active view available")
-                return []
-                
-            # Check if category ID is valid
-            if not category.id.IntegerValue:
-                self.status_text.Text = "Invalid category ID"
-                logger.info("Invalid category ID")
-                return []
-            
-            # Try to find BuiltInCategory for this category
-            bic = None
-            for sample_bic in System.Enum.GetValues(DB.BuiltInCategory):
-                if category.int_id == int(sample_bic):
-                    bic = sample_bic
-                    break
-            
-            if not bic:
-                self.status_text.Text = "Could not find BuiltInCategory for {}".format(category.name)
-                logger.info("Could not find BuiltInCategory for {}".format(category.name))
-                return []
-            
-            # Get elements of this category in the current view
-            collector = DB.FilteredElementCollector(doc, view.Id) \
-                        .OfCategory(bic) \
-                        .WhereElementIsNotElementType() \
-                        .WhereElementIsViewIndependent() \
-                        
-            element_count = len(list(collector))
-            Forms.alert("Found {} elements for category: {}".format(element_count, category.name))
-
-            if element_count == 0:
-                self.status_text.Text = "No elements found for category: {}".format(category.name)
-                logger.info("No elements found for category: {}".format(category.name))
-                return []
-                
-        except Exception:
-            external_event_trace()
-            return []
-        
-        list_values = []
-        used_colors = set()  # Will be filled as we add values
-        
-        try:
-            for element in collector:
-                # Get the appropriate element based on parameter type
-                ele_par = element if parameter.param_type == 0 else doc.GetElement(element.GetTypeId())
-                if not ele_par:
-                    continue
-                
-                # Find the parameter in the element
-                for param in ele_par.Parameters:
-                    if param.Definition.Name == parameter.name:
-                        # Get parameter value
-                        Forms.alert("Found parameter: {}".format(param.Definition.Name))
-                        value = get_parameter_value(param) or "None"
-                        Forms.alert("Found parameter value: {}".format(value))
-                        
-                        # Skip None values if exclude_none is True
-                        if value == "None" and exclude_none:
-                            continue
-                        
-                        # Find matching existing value or create new one
-                        match = [x for x in list_values if x.value == value]
-                        if match:
-                            # Add element ID to existing value info
-                            match[0].element_ids.Add(element.Id)
-                            if param.StorageType == DB.StorageType.Double:
-                                match[0].values_double.append(param.AsDouble())
-                        else:
-                            # Generate a random color not already used
-                            while True:
-                                r, g, b = random_color()
-                                if (r, g, b) not in used_colors:
-                                    used_colors.add((r, g, b))
-                                    break
-                            
-                            # Check if this parameter has a predefined color scheme
-                            if parameter.name in PREDEFINED_SCHEMAS and value in PREDEFINED_SCHEMAS[parameter.name]:
-                                r, g, b = PREDEFINED_SCHEMAS[parameter.name][value]
-                            
-                            # Create new value info
-                            val_info = ValueInfo(param, value, element.Id, r, g, b)
-                            list_values.append(val_info)
-                        
-                        break  # Found the parameter, no need to check others
-        except Exception:
-            external_event_trace()
-            return []
-        
-        # Separate None values
-        none_values = [x for x in list_values if x.value == "None"]
-        list_values = [x for x in list_values if x.value != "None"]
-        
-        # Sort values with improved logic
-        if len(list_values) > 1:
-            try:
-                # Basic sorting first
-                list_values = sorted(list_values, key=lambda x: x.value)
-                
-                # Try numerical sorting if applicable
-                if list_values:
-                    first_value = list_values[0].value
-                    indx_del = get_index_units(first_value)
-                    
-                    if indx_del == 0 and all(is_numeric(x.value) for x in list_values):
-                        # Pure numeric values
-                        list_values = sorted(list_values, key=lambda x: safe_float(x.value))
-                    elif 0 < indx_del < len(first_value):
-                        # Values with units - sort by the numeric part
-                        try:
-                            list_values = sorted(list_values, 
-                                                key=lambda x: safe_float(x.value[:-indx_del] if len(x.value) > indx_del else x.value))
-                        except Exception:
-                            # Fall back to basic sorting if unit parsing fails
-                            pass
-            except Exception:
-                external_event_trace()
-        
-        # Add None values at the end if they contain elements
-        if none_values and any(len(x.element_ids) > 0 for x in none_values):
-            list_values.extend(none_values)
-        
-        return list_values
-
-# Create XAML file for our UI
-xaml_file = os.path.join(
-    os.path.dirname(__file__), 
-    "RevitColorizerWindow.xaml"
-)
+            self.logger.info("-------- DEBUG STATE [{}] --------".format(context))
+            self.logger.info("DB reference: {}".format(self.DB if hasattr(self, 'DB') else "NOT FOUND"))
+            self.logger.info("doc reference: {}".format(self.doc if hasattr(self, 'doc') else "NOT FOUND"))
+            self.logger.info("System reference: {}".format(self.System if hasattr(self, 'System') else "NOT FOUND"))
+            self.logger.info("values_list count: {}".format(len(self.values_list) if hasattr(self, 'values_list') and self.values_list else "NOT FOUND"))
+            self.logger.info("--------------------------------")
+        except Exception as ex:
+            self.logger.error("Error in debug_state: {}".format(ex))
 
 
-# Main entry point for the script
-if __name__ == '__main__':
-    try:
-        # Create and show the main window
-        colorizer_window = RevitColorizerWindow(xaml_file)
-        colorizer_window.Show()
-    except Exception:
-        external_event_trace()
+colorizer_window = RevitColorizerWindow()

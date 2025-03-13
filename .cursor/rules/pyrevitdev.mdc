@@ -1,0 +1,135 @@
+---
+description: This rule is to make sure that the llm alwaysuses ironpython 2.7
+globs: *.py
+alwaysApply: false
+---
+# PyRevit Development Best Practices
+
+## 1. Code Structure
+
+Organizing your PyRevit extension code is crucial for maintainability. PyRevit provides an **extension** architecture that encourages modular code separation. Follow these guidelines:
+
+- **Use Extensions (Don’t Modify Core)**  
+  Keep your scripts in a separate `.extension` folder rather than altering the core pyRevit tools. This ensures your custom scripts remain safe from pyRevit updates and can be shared independently.
+
+- **Bundle Commands Properly**  
+  Structure each tool as a command bundle (a folder ending in `.pushbutton`). Inside that, include a `script.py` (and optionally a `config.py` for additional options). This bundle approach organizes commands logically and helps avoid a single giant script.
+
+- **Shared Code in `lib` Folder**  
+  For common functions or classes, use a `lib/` subfolder in your extension or panel bundle. PyRevit adds the bundle’s `lib` directory to the search path, so you can import modules easily. This promotes modularity and code reuse.
+
+- **Self-Contained Dependencies**  
+  If your scripts rely on external .NET assemblies, include them in a `bin/` folder inside the bundle. This helps prevent assembly version conflicts and ensures each extension can carry its own dependencies.
+
+- **Follow PyRevit Script Conventions**  
+  At the top of each script, define metadata like `__doc__`, `__title__`, and `__author__`. These become tool tooltips and labels in Revit. Use `__context__` if needed to control command availability.
+
+- **Prefer PyRevit APIs and Utilities**  
+  Use pyRevit’s provided modules (e.g. `pyrevit.script`, `pyrevit.forms`, etc.) for common tasks instead of directly accessing Revit APIs. Consistent use of these helpers enhances code clarity.
+
+- **Version Control and Organization**  
+  Keep your extension in a version-controlled repository (e.g., Git) with a clear hierarchy: one folder per extension, organized by tabs/panels and then command bundles. Document your tools with a README for setup and usage instructions.
+
+## 2. Debugging Best Practices
+
+Effective debugging in IronPython for PyRevit is essential since traditional debuggers are hard to attach. Adopt these strategies:
+
+- **Use Logging for Insight**  
+  Instrument your scripts with logging calls using `pyrevit.script.get_logger()`. Use `logger.debug()`, `info()`, `warning()`, etc., to trace execution and identify issues. Toggle debug mode when necessary.
+
+- **Prints and PyRevit Output**  
+  Supplement logging with `print()` statements when needed. This simple approach can help validate critical variables or workflow checkpoints, especially during early development.
+
+- **Avoid Relying on Interactive Debuggers**  
+  Since attaching Visual Studio or VS Code is not straightforward in this environment, use a test-driven approach: isolate complex logic outside Revit or use RevitPythonShell to run snippets interactively.
+
+- **Granular Exception Handling**  
+  Wrap only small code segments in `try/except` blocks. Catch specific exceptions (e.g., `KeyError`, Revit API exceptions) to provide meaningful error messages rather than a blanket `except:`.
+
+- **Defensive Programming**  
+  Proactively check conditions (e.g., user selections, list lengths) to prevent errors instead of solely relying on error handling. This makes your code more robust and predictable.
+
+- **Fail Gracefully (but Not Silently)**  
+  Handle exceptions in a way that informs the user (e.g., using TaskDialog or `forms.alert`) instead of just logging them. This improves the user experience by providing clear feedback.
+
+- **Leverage PyRevit Transactions**  
+  When modifying the Revit document, use the `pyrevit.revit.Transaction` context manager. This ensures that if an error occurs, the transaction is rolled back, leaving Revit in a stable state.
+
+- **Iterative Testing**  
+  Develop and test your scripts on small examples or dummy models to isolate issues early. This minimizes the risk of encountering basic logic errors in the full Revit environment.
+
+## 3. WPF and IronPython Integration
+
+Creating rich WPF UIs in PyRevit requires careful handling of the UI thread and event management. Follow these best practices:
+
+- **Separate UI Layout with XAML**  
+  Define your WPF UI in a XAML file and load it in IronPython. This keeps UI design declarative and your Python code focused on event handling.
+
+- **Use PyRevit Forms Framework**  
+  Leverage `pyrevit.forms` utilities (e.g., subclassing `forms.WPFWindow` or `forms.WPFPanel`) for common UI tasks. This framework handles XAML loading and event wiring, reducing boilerplate code.
+
+- **Modal vs. Modeless Windows**  
+  Decide if your window should be modal (blocking Revit until closed) or modeless (allowing interaction with Revit). For modeless windows, do not call Revit API methods directly from the UI; use the ExternalEvent pattern instead.
+
+- **Use ExternalEvent for Revit Actions**  
+  In modeless scenarios, any Revit API action should be executed via an ExternalEvent and IExternalEventHandler. This pattern safely delegates actions from the UI thread to Revit’s main thread.
+
+- **UI Performance Considerations**  
+  Avoid overly complex WPF visuals and heavy data bindings in IronPython. Offload heavy computations or data loading (e.g., using background threads with `Dispatcher.Invoke` for UI updates) to maintain a responsive interface.
+
+- **Closing and Cleanup**  
+  Ensure you release references to large objects when a WPF window is closed. Unsubscribe from any events (such as Revit’s selection or document events) to prevent memory leaks.
+
+## 4. Best Practices for IronPython 2.7
+
+Since PyRevit uses IronPython 2.7, you must consider its particularities:
+
+- **Memory Management and Garbage Collection**  
+  IronPython uses the .NET garbage collector. Avoid holding onto large objects longer than necessary, and be aware that modern PyRevit uses Lightweight Scopes to reduce memory bloat.
+
+- **Dispose Unmanaged Resources**  
+  Dispose of .NET objects that implement IDisposable (like FileStreams or certain Revit API classes) using context managers or finally blocks to prevent memory leaks.
+
+- **.NET Interoperability**  
+  Import .NET libraries using `import clr` and add references to needed assemblies. Ensure these assemblies target a compatible .NET Framework version with Revit.
+
+- **Avoid CPython-Specific Modules**  
+  Do not rely on C-extension modules (like NumPy, SciPy, etc.) as they are not compatible with IronPython. Seek pure-Python alternatives or .NET equivalents.
+
+- **Python 2.7 Language Considerations**  
+  Write your code using Python 2.7 conventions (e.g., no f-strings). Consider importing features from `__future__` (like `print_function` and `division`) to mitigate common pitfalls.
+
+- **Threading and Concurrency**  
+  While IronPython 2.7 does not have a Global Interpreter Lock (GIL) and allows true multi-threading, all Revit API calls must remain on the main thread. Use threads only for independent calculations or I/O tasks, and marshal UI updates to the UI thread.
+
+- **Handling Legacy Issues**  
+  Be prepared to address legacy library quirks or missing modules in IronPython. Sometimes you may need to include pure-Python modules directly in your extension’s lib folder.
+
+## 5. IronPython Scopes and Events for WPF Windows
+
+Managing scopes and event handlers in WPF UIs is critical for maintaining functionality over the lifetime of a modeless window.
+
+- **Script Lifetime vs. UI Lifetime**  
+  Ensure that the scope holding your WPF window’s event handlers remains active as long as the window is open. Use a class-based approach and store a reference to the window in a module-level variable to prevent premature garbage collection.
+
+- **Avoiding Scope Leaks**  
+  While keeping necessary references, avoid excessive global state that could lead to memory leaks. Use caching or file-based storage if you need to persist large data between runs.
+
+- **Event Handler Patterns**  
+  Bind event handlers by assigning them to WPF control events (e.g., `button.Click += handler_function`). Prefer class methods for these handlers to ensure they remain callable as long as the window exists.
+
+- **Revit Events and Threads**  
+  If your UI must respond to Revit events (like selection changes), subscribe to those events within a stable scope (e.g., the panel class constructor) and always unsubscribe upon window closure.
+
+- **External Events for Complex Interactions**  
+  Use ExternalEvent to handle Revit API calls from a modeless UI. This decouples UI interactions from Revit actions, reducing the risk of threading issues.
+
+- **Threading Concerns**  
+  For any background processing, use background threads carefully. Always marshal UI updates to the main thread using the WPF Dispatcher and ensure all Revit API calls occur on the main thread.
+
+- **Testing UIs**  
+  Thoroughly test your WPF windows. Monitor for memory leaks by repeatedly opening and closing windows, and verify that event handlers are responsive over long sessions.
+
+---
+
+This Markdown file outlines the essential rules and best practices for PyRevit development with a focus on code structure, debugging, WPF integration, IronPython 2.7 practices, and managing scopes and events for WPF windows.  
