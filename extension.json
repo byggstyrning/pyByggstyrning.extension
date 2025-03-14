@@ -2,7 +2,7 @@
     "builtin": "False",
     "default_enabled": "True",
     "type": "extension",
-    "rocket_mode_compatible": "False",
+    "rocket_mode_compatible": "true",
     "name": "pyByggstyrning",
     "description": "Tools and scripts made by Byggstyrning",
     "author": "Jonatan Jacobsson",
