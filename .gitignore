@@ -44,3 +44,6 @@ ENV/
 # OS specific files
 .DS_Store
 Thumbs.db 
+
+# Installer
+installer.ps1
