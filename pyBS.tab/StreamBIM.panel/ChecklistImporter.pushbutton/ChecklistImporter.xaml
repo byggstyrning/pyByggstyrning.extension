@@ -1,6 +1,6 @@
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="StreamBIM Property Importer" Width="600" Height="650" WindowStartupLocation="CenterScreen">
+        Title="StreamBIM Checklist Importer" Width="600" Height="650" WindowStartupLocation="CenterScreen">
     <Grid Margin="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -9,8 +9,8 @@
         </Grid.RowDefinitions>
 
         <StackPanel Grid.Row="0">
-            <TextBlock Text="StreamBIM Property Importer" FontSize="16" FontWeight="Bold" Margin="0,0,0,10"/>
-            <TextBlock Text="Import properties from StreamBIM to Revit elements" Margin="0,0,0,15"/>
+            <TextBlock Text="StreamBIM Checklist Importer" FontSize="16" FontWeight="Bold" Margin="0,0,0,10"/>
+            <TextBlock Text="Import properties from StreamBIM to Revit instance parameters" Margin="0,0,0,15"/>
         </StackPanel>
 
         <!-- Main Content with TabControl -->
@@ -39,9 +39,12 @@
                     <TextBlock Text="Password:" Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Margin="0,10,0,10"/>
                     <PasswordBox x:Name="passwordBox" Grid.Row="2" Grid.Column="1" Margin="0,10,0,10"/>
 
-                    <Button x:Name="loginButton" Content="Login" Grid.Row="3" Grid.Column="1" HorizontalAlignment="Left" Width="100" Height="30" Margin="0,10,0,10"/>
+                    <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Margin="0,10,0,10">
+                        <Button x:Name="loginButton" Content="Login" Width="100" Height="30" Margin="0,0,10,0"/>
+                        <Button x:Name="logoutButton" Content="Logout" Width="100" Height="30" IsEnabled="False"/>
+                    </StackPanel>
                     
-                    <TextBlock x:Name="loginStatusTextBlock" Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,10,0,0"/>
+                    <TextBlock x:Name="loginStatusTextBlock" Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,10,0,0" TextWrapping="Wrap"/>
                 </Grid>
             </TabItem>
 
@@ -55,7 +58,7 @@
                     </Grid.RowDefinitions>
 
                     <TextBlock Text="Select a StreamBIM Project:" Grid.Row="0" Margin="0,0,0,10"/>
-                    <ListView x:Name="projectsListView" Grid.Row="1" Margin="0,0,0,10" SelectionMode="Single">
+                    <ListView x:Name="projectsListView" Grid.Row="1" Margin="0,0,0,10" SelectionMode="Single" MouseDoubleClick="projects_list_double_click">
                         <ListView.View>
                             <GridView>
                                 <GridViewColumn Header="ID" DisplayMemberBinding="{Binding Id}" Width="50"/>
@@ -78,7 +81,7 @@
                     </Grid.RowDefinitions>
 
                     <TextBlock Text="Select a StreamBIM Checklist:" Grid.Row="0" Margin="0,0,0,10"/>
-                    <ListView x:Name="checklistsListView" Grid.Row="1" Margin="0,0,0,10" SelectionMode="Single">
+                    <ListView x:Name="checklistsListView" Grid.Row="1" Margin="0,0,0,10" SelectionMode="Single" MouseDoubleClick="checklists_list_double_click">
                         <ListView.View>
                             <GridView>
                                 <GridViewColumn Header="ID" DisplayMemberBinding="{Binding Id}" Width="50"/>
@@ -110,19 +113,26 @@
                     <TextBlock Text="StreamBIM Properties:" Grid.Row="0" Grid.Column="0" Margin="0,10,0,5"/>
                     <ComboBox x:Name="streamBIMPropertiesComboBox" Grid.Row="0" Grid.Column="1" Margin="0,10,0,5"/>
                     
-                    <TextBlock Text="Preview Values:" Grid.Row="1" Grid.Column="0" Margin="0,15,0,5"/>
-                    <TextBlock x:Name="previewValuesTextBlock" Grid.Row="1" Grid.Column="1" Margin="0,15,0,5" TextWrapping="Wrap"/>
+                    <TextBlock Text="Preview Values:" Grid.Row="1" Grid.Column="0" Margin="0,15,0,5" FontStyle="Italic"/>
+                    <TextBlock x:Name="previewValuesTextBlock" Grid.Row="1" Grid.Column="1" Margin="0,15,0,5" TextWrapping="Wrap" FontStyle="Italic"/>
                     
-                    <TextBlock Text="Revit Parameter:" Grid.Row="2" Grid.Column="0" Margin="0,15,0,5"/>
+                    <TextBlock Text="Revit Instance Parameters:" Grid.Row="2" Grid.Column="0" Margin="0,15,0,5"/>
+                    <TextBlock Text="(From visible elements)" Grid.Row="2" Grid.Column="0" Margin="0,35,0,5" FontStyle="Italic"/>
                     <ComboBox x:Name="revitParametersComboBox" Grid.Row="2" Grid.Column="1" Margin="0,15,0,5"/>
                     
-                    <CheckBox x:Name="onlyVisibleElementsCheckBox" Content="Only Apply to Visible Elements" Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,15,0,5" IsChecked="True"/>
+                    <CheckBox x:Name="onlyVisibleElementsCheckBox" Content="Only Apply to Visible Elements" Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,15,0,5" IsChecked="True" Visibility="Collapsed" />
                     
                     <TextBlock Text="Summary:" Grid.Row="4" Grid.Column="0" Margin="0,15,0,5"/>
                     <TextBlock x:Name="summaryTextBlock" Grid.Row="4" Grid.Column="1" Margin="0,15,0,5" TextWrapping="Wrap" 
                               Text="No parameters selected yet."/>
                     
-                    <Button x:Name="importButton" Content="Import Values" Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" HorizontalAlignment="Left" Width="120" Height="30" Margin="0,15,0,0"/>
+                    <ProgressBar x:Name="progressBar" Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" Height="20" Margin="0,15,0,5" Visibility="Collapsed"/>
+                    <TextBlock x:Name="progressText" Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,0,0" TextAlignment="Center" Visibility="Collapsed"/>
+                    
+                    <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,15,0,0">
+                        <Button x:Name="importButton" Content="Import Values" Width="120" Height="30" Margin="0,0,10,0"/>
+                        <Button x:Name="isolateButton" Content="Isolate Updated Elements" Width="150" Height="30" IsEnabled="False"/>
+                    </StackPanel>
                 </Grid>
             </TabItem>
         </TabControl>

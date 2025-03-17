@@ -4,9 +4,9 @@
 This tool connects to StreamBIM to import parameter values from StreamBIM checklists
 into Revit parameters for elements in the current view.
 """
-__title__ = "StreamBIM\nImporter"
-__author__ = "Your Company"
-__doc__ = "Import StreamBIM checklist data into Revit parameters"
+__title__ = "Checklist\nImporter"
+__author__ = "Byggstyrning AB"
+__doc__ = "Import StreamBIM checklist items data into Revit instance parameters"
 
 import os
 import sys
@@ -17,7 +17,7 @@ from collections import namedtuple
 # Add the extension directory to the path
 import os.path as op
 extension_dir = op.dirname(op.dirname(op.dirname(op.dirname(__file__))))
-lib_path = op.join(extension_dir, 'pyBS.lib')
+lib_path = op.join(extension_dir, 'lib')
 if lib_path not in sys.path:
     sys.path.append(lib_path)
 
@@ -25,19 +25,21 @@ if lib_path not in sys.path:
 clr.AddReference("PresentationFramework")
 clr.AddReference("PresentationCore")
 clr.AddReference("WindowsBase")
+clr.AddReference('RevitAPI')
+from Autodesk.Revit.DB import *
 
 from System import EventHandler
 from System.Collections.ObjectModel import ObservableCollection
 from System.Dynamic import ExpandoObject
-from System.Windows import MessageBox, MessageBoxButton
+from System.Windows import MessageBox, MessageBoxButton, Visibility
 
 from pyrevit import script
 from pyrevit import forms
 from pyrevit import revit
 
 # Import custom modules from the extension lib
-from streambim import streambim_api
-from streambim import revit_utils
+from lib.streambim import streambim
+from lib.revit import revit_utils
 
 # Initialize logger
 logger = script.get_logger()
@@ -53,30 +55,91 @@ class StreamBIMImporterUI(forms.WPFWindow):
     def __init__(self):
         """Initialize the StreamBIM Importer UI."""
         # Initialize WPF window
-        forms.WPFWindow.__init__(self, 'StreamBIMImporter.xaml')
+        forms.WPFWindow.__init__(self, 'ChecklistImporter.xaml')
         
         # Initialize StreamBIM API client
-        self.streambim_client = streambim_api.StreamBIMClient()
-        
+        self.streambim_client = streambim.StreamBIMClient()
+                
         # Initialize data collections
         self.projects = ObservableCollection[object]()
         self.checklists = ObservableCollection[object]()
         self.checklist_items = []
         self.streambim_properties = []
-        
+        self.updated_elements = []  # Store updated elements for isolation
+
         # Set up event handlers
         self.loginButton.Click += self.login_button_click
+        self.logoutButton.Click += self.logout_button_click
         self.selectProjectButton.Click += self.select_project_button_click
         self.selectChecklistButton.Click += self.select_checklist_button_click
         self.streamBIMPropertiesComboBox.SelectionChanged += self.streambim_property_selected
         self.importButton.Click += self.import_button_click
+        self.isolateButton.Click += self.isolate_button_click
         
         # Initialize UI
         self.projectsListView.ItemsSource = self.projects
         self.checklistsListView.ItemsSource = self.checklists
         
-        # Set status
-        self.update_status("Ready to connect to StreamBIM")
+        # Try automatic login if we have saved tokens
+        self.try_automatic_login()
+    
+    def try_automatic_login(self):
+        """Attempt to automatically log in using saved tokens."""
+        if self.streambim_client.idToken:
+            self.update_status("Found saved login...")
+            # If we have a saved username, display it in the username field
+            try:
+                if hasattr(self.streambim_client, 'username') and self.streambim_client.username:
+                    self.usernameTextBox.Text = self.streambim_client.username
+            except:
+                # If username attribute doesn't exist, just continue
+                pass
+            self.on_login_success()
+            return True
+        return False
+    
+    def on_login_success(self):
+        """Handle successful login."""
+        # Update login status
+        try:
+            if hasattr(self.streambim_client, 'username') and self.streambim_client.username:
+                self.loginStatusTextBlock.Text = "Logged in as: " + self.streambim_client.username
+            else:
+                self.loginStatusTextBlock.Text = "Logged in"
+        except:
+            self.loginStatusTextBlock.Text = "Logged in"
+            
+        # Disable login fields
+        self.usernameTextBox.IsEnabled = False
+        self.passwordBox.IsEnabled = False
+        self.serverUrlTextBox.IsEnabled = False
+        
+        # Update buttons
+        self.loginButton.IsEnabled = False
+        self.logoutButton.IsEnabled = True
+        self.passwordBox.Password = ""  # Clear password for security
+        
+        # Enable project tab and switch to it
+        self.projectTab.IsEnabled = True
+        self.tabControl.SelectedItem = self.projectTab
+        
+        # Get projects
+        self.update_status("Retrieving projects...")
+        projects = self.streambim_client.get_projects()
+        if projects:
+            self.projects.Clear()
+            for project in projects:
+                # Handle new project-links data structure
+                attrs = project.get('attributes', {})
+                self.projects.Add(Project(
+                    Id=str(project.get('id')),
+                    Name=attrs.get('name', 'Unknown'),
+                    Description=attrs.get('description', '')
+                ))
+            self.update_status("Retrieved {} projects".format(len(projects)))
+        else:
+            error_msg = self.streambim_client.last_error or "No projects found"
+            self.update_status(error_msg)
     
     def login_button_click(self, sender, args):
         """Handle login button click event."""
@@ -97,33 +160,46 @@ class StreamBIMImporterUI(forms.WPFWindow):
         success = self.streambim_client.login(username, password)
         
         if success:
-            self.update_status("Login successful. Retrieving projects...")
-            self.loginStatusTextBlock.Text = "Logged in as: " + username
-            
-            # Get projects
-            projects = self.streambim_client.get_projects()
-            if projects:
-                self.projects.Clear()
-                for project in projects:
-                    self.projects.Add(Project(
-                        Id=str(project.get('id')),
-                        Name=project.get('name', 'Unknown'),
-                        Description=project.get('description', '')
-                    ))
-                
-                # Enable project tab
-                self.projectTab.IsEnabled = True
-                self.tabControl.SelectedItem = self.projectTab
-                self.update_status("Retrieved {} projects".format(len(projects)))
-            else:
-                error_msg = self.streambim_client.last_error or "No projects found"
-                self.update_status(error_msg)
+            self.on_login_success()
         else:
             error_msg = self.streambim_client.last_error or "Login failed. Please check your credentials."
             self.update_status(error_msg)
             self.loginStatusTextBlock.Text = "Login failed: " + error_msg
+            self.loginButton.IsEnabled = True
+    
+    def logout_button_click(self, sender, args):
+        """Handle logout button click event."""
+        # Clear tokens
+        try:
+            # Use the clear_tokens method if it exists
+            self.streambim_client.clear_tokens()
+        except:
+            # Fallback to manually clearing tokens
+            self.streambim_client.idToken = None
+            self.streambim_client.accessToken = None
+            if hasattr(self.streambim_client, 'username'):
+                self.streambim_client.username = None
         
+        # Reset UI
         self.loginButton.IsEnabled = True
+        self.logoutButton.IsEnabled = False
+        self.projectTab.IsEnabled = False
+        self.checklistTab.IsEnabled = False
+        self.parameterTab.IsEnabled = False
+        self.tabControl.SelectedItem = self.loginTab
+        
+        # Enable login fields
+        self.usernameTextBox.IsEnabled = True
+        self.passwordBox.IsEnabled = True
+        self.serverUrlTextBox.IsEnabled = True
+        
+        # Clear data
+        self.projects.Clear()
+        self.checklists.Clear()
+        
+        # Update status
+        self.loginStatusTextBlock.Text = "Logged out"
+        self.update_status("Logged out successfully")
     
     def select_project_button_click(self, sender, args):
         """Handle project selection button click."""
@@ -170,12 +246,13 @@ class StreamBIMImporterUI(forms.WPFWindow):
         
         # Update UI
         self.selectChecklistButton.IsEnabled = False
-        self.update_status("Loading checklist items...")
+        self.update_status("Loading checklist preview...")
         
-        # Get checklist items
-        checklist_items = self.streambim_client.get_checklist_items(selected_checklist.Id)
+        # Get checklist items (limited for preview)
+        checklist_items = self.streambim_client.get_checklist_items(selected_checklist.Id, limit=1)
         if checklist_items:
             self.checklist_items = checklist_items
+            self.selected_checklist_id = selected_checklist.Id  # Store for later use
             
             # Extract available properties from checklist items
             self.extract_available_properties()
@@ -187,7 +264,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
             # Enable parameter tab
             self.parameterTab.IsEnabled = True
             self.tabControl.SelectedItem = self.parameterTab
-            self.update_status("Retrieved {} checklist items".format(len(checklist_items)))
+            self.update_status("Retrieved checklist preview")
         else:
             error_msg = self.streambim_client.last_error or "No items found in this checklist"
             self.update_status(error_msg)
@@ -224,7 +301,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
             
             # Create property value object
             self.streambim_properties.append(PropertyValue(
-                Name=prop_name,
+                Name=self.streambim_client._decode_utf8(prop_name),
                 Sample=', '.join(sample_values[:3]) + ('...' if len(sample_values) > 3 else '')
             ))
         
@@ -244,7 +321,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
         # Find the property in the list
         for prop in self.streambim_properties:
             if prop.Name == selected_property:
-                self.previewValuesTextBlock.Text = "Sample values: " + prop.Sample
+                self.previewValuesTextBlock.Text = prop.Sample
                 break
         
         self.update_summary()
@@ -272,6 +349,25 @@ class StreamBIMImporterUI(forms.WPFWindow):
         
         # Update UI
         self.importButton.IsEnabled = False
+        self.isolateButton.IsEnabled = False
+        self.progressBar.Visibility = Visibility.Visible
+        self.progressText.Visibility = Visibility.Visible
+        self.progressBar.Value = 0
+        self.progressText.Text = "Fetching checklist items..."
+        self.update_status("Loading all checklist items...")
+        
+        # Get all checklist items
+        all_checklist_items = self.streambim_client.get_checklist_items(self.selected_checklist_id, limit=0)
+        if not all_checklist_items:
+            error_msg = self.streambim_client.last_error or "Failed to retrieve all checklist items"
+            self.update_status(error_msg)
+            self.importButton.IsEnabled = True
+            self.progressBar.Visibility = Visibility.Collapsed
+            self.progressText.Visibility = Visibility.Collapsed
+            return
+            
+        self.progressBar.Value = 50
+        self.progressText.Text = "Processing elements..."
         self.update_status("Importing values...")
         
         # Collect elements to update
@@ -284,50 +380,89 @@ class StreamBIMImporterUI(forms.WPFWindow):
         
         # Create mapping from IFC GUID to checklist item
         guid_to_item = {}
-        for item in self.checklist_items:
+        for item in all_checklist_items:
             if 'object' in item:
                 guid_to_item[item['object']] = item
         
         # Track progress
         processed = 0
         updated = 0
+        self.updated_elements = []  # Reset updated elements list
         
-        # Process elements
-        for element in elements:
-            processed += 1
+        # Start a group transaction for all parameter changes
+        t = Transaction(revit.doc, 'Import StreamBIM Values')
+        t.Start()
+        
+        try:
+            # Process elements
+            total_elements = len(elements)
+            for i, element in enumerate(elements):
+                processed += 1
+                
+                try:
+                    # Try to get IFC GUID from element - check different parameter names
+                    ifc_guid_param = element.LookupParameter("IFCGuid")
+                    if not ifc_guid_param:
+                        ifc_guid_param = element.LookupParameter("IfcGUID")
+                    if not ifc_guid_param:
+                        ifc_guid_param = element.LookupParameter("IFC GUID")
+                    
+                    if not ifc_guid_param:
+                        continue
+                    
+                    ifc_guid = ifc_guid_param.AsString()
+                    if not ifc_guid or ifc_guid not in guid_to_item:
+                        continue
+                    
+                    # Get item data
+                    item = guid_to_item[ifc_guid]
+                    if 'items' not in item or streambim_prop not in item['items']:
+                        continue
+                    
+                    # Get property value
+                    value = item['items'][streambim_prop]
+                    
+                    # Get the parameter
+                    param = element.LookupParameter(revit_param)
+                    if not param:
+                        continue
+                        
+                    # Set parameter value directly within the transaction
+                    try:
+                        if param.StorageType == StorageType.String:
+                            param.Set(str(value))
+                        elif param.StorageType == StorageType.Double:
+                            param.Set(float(value))
+                        elif param.StorageType == StorageType.Integer:
+                            param.Set(int(value))
+                        updated += 1
+                        self.updated_elements.append(element)
+                    except Exception as e:
+                        logger.error("Error setting parameter value: {}".format(str(e)))
+                        
+                except Exception as e:
+                    logger.error("Error processing element: {}".format(str(e)))
+                
+                # Update progress
+                progress = 50 + (i / total_elements * 50)
+                self.progressBar.Value = progress
+                self.progressText.Text = "Processing elements... ({}/{})".format(i + 1, total_elements)
             
-            try:
-                # Try to get IFC GUID from element - check different parameter names
-                ifc_guid_param = element.LookupParameter("IFCGuid")
-                if not ifc_guid_param:
-                    ifc_guid_param = element.LookupParameter("IfcGUID")
-                if not ifc_guid_param:
-                    ifc_guid_param = element.LookupParameter("IFC GUID")
-                
-                if not ifc_guid_param:
-                    continue
-                
-                ifc_guid = ifc_guid_param.AsString()
-                if not ifc_guid or ifc_guid not in guid_to_item:
-                    continue
-                
-                # Get item data
-                item = guid_to_item[ifc_guid]
-                if 'items' not in item or streambim_prop not in item['items']:
-                    continue
-                
-                # Get property value
-                value = item['items'][streambim_prop]
-                
-                # Set parameter value
-                if revit_utils.set_parameter_value(element, revit_param, value):
-                    updated += 1
-            except Exception as e:
-                logger.error("Error processing element: {}".format(str(e)))
+            # Commit all changes
+            t.Commit()
+            
+        except Exception as e:
+            t.RollBack()
+            logger.error("Error during import: {}".format(str(e)))
+            self.update_status("Error during import: {}".format(str(e)))
+            return
         
         # Update UI
         self.update_status("Import complete. Updated {}/{} elements.".format(updated, processed))
         self.importButton.IsEnabled = True
+        self.isolateButton.IsEnabled = updated > 0  # Enable isolate button if elements were updated
+        self.progressBar.Visibility = Visibility.Collapsed
+        self.progressText.Visibility = Visibility.Collapsed
         
         # Show results
         MessageBox.Show(
@@ -336,10 +471,28 @@ class StreamBIMImporterUI(forms.WPFWindow):
             MessageBoxButton.OK
         )
     
+    def isolate_button_click(self, sender, args):
+        """Handle isolate button click."""
+        if self.updated_elements:
+            if revit_utils.isolate_elements(self.updated_elements):
+                self.update_status("Isolated {} updated elements".format(len(self.updated_elements)))
+            else:
+                self.update_status("Failed to isolate elements")
+    
     def update_status(self, message):
         """Update status text."""
         self.statusTextBlock.Text = message
         logger.debug(message)
+
+    def projects_list_double_click(self, sender, args):
+        """Handle double-click on projects list view."""
+        if self.projectsListView.SelectedItem and self.selectProjectButton.IsEnabled:
+            self.select_project_button_click(sender, args)
+    
+    def checklists_list_double_click(self, sender, args):
+        """Handle double-click on checklists list view."""
+        if self.checklistsListView.SelectedItem and self.selectChecklistButton.IsEnabled:
+            self.select_checklist_button_click(sender, args)
 
 # Main execution
 if __name__ == '__main__':
