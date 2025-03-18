@@ -1,5 +1,10 @@
 ---
-description: This rule is to make sure that the llm alwaysuses ironpython 2.7
+description: 
+globs: 
+alwaysApply: true
+---
+---
+description: This rule is to make sure that the llm always uses ironpython 2.7 and follows pyRevit best practices
 globs: *.py
 alwaysApply: false
 ---

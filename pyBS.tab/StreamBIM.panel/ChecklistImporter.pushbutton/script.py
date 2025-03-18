@@ -38,8 +38,8 @@ from pyrevit import forms
 from pyrevit import revit
 
 # Import custom modules from the extension lib
-from lib.streambim import streambim
-from lib.revit import revit_utils
+from streambim import streambim_api
+from revit import revit_utils
 
 # Initialize logger
 logger = script.get_logger()
@@ -58,7 +58,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
         forms.WPFWindow.__init__(self, 'ChecklistImporter.xaml')
         
         # Initialize StreamBIM API client
-        self.streambim_client = streambim.StreamBIMClient()
+        self.streambim_client = streambim_api.StreamBIMClient()
                 
         # Initialize data collections
         self.projects = ObservableCollection[object]()

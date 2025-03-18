@@ -190,7 +190,7 @@
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="70"/>
                                         </Grid.ColumnDefinitions>
-                                        <CheckBox Grid.Column="0" Margin="0,0"/>
+                                        <CheckBox Grid.Column="0" Margin="0,0" IsChecked="{Binding IsChecked, Mode=TwoWay}" Checked="ValueCheckbox_Changed" Unchecked="ValueCheckbox_Changed"/>
                                         <TextBlock Grid.Column="1" Text="{Binding value}" VerticalAlignment="Center" Margin="5,0"/>
                                         <Border Grid.Column="2" Width="50" Height="20" Background="{Binding color}" BorderBrush="Black" BorderThickness="1" HorizontalAlignment="Center"/>
                                     </Grid>
@@ -217,7 +217,7 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="Show Elements in Properties" VerticalAlignment="Center"/>
+                        <TextBlock Text="Select Elements in Properties" VerticalAlignment="Center"/>
                         <CheckBox Grid.Column="1" Style="{StaticResource ToggleSwitchStyle}" x:Name="showElementsCheckbox"/>
                     </Grid>
 

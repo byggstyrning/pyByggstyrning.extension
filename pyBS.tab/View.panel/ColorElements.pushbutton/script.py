@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""PyRevit Colorizer for elements based on parameter values.
-Allows users to colorize elements in Revit views based on parameter values.
+"""Color Elements by Parameter values.
+Allows you to colorize elements in Revit views based on parameter values.
 """
 # pylint: disable=import-error,unused-argument,missing-docstring,invalid-name,broad-except
 # pyright: reportMissingImports=false
@@ -12,6 +12,13 @@ from random import randint
 from unicodedata import normalize
 from unicodedata import category as unicode_category
 from traceback import extract_tb
+import re
+
+# Create coloringschemas directory if it doesn't exist
+script_dir = os.path.dirname(__file__)
+schemas_dir = os.path.join(script_dir, "coloringschemas")
+if not os.path.exists(schemas_dir):
+    os.makedirs(schemas_dir)
 
 # .NET imports
 clr.AddReference('PresentationCore')
@@ -122,6 +129,25 @@ class ValuesInfo(object):
             self.values_double.append(para.AsDouble())
         elif para.StorageType == DB.StorageType.ElementId:
             self.values_double.append(para.AsElementId())
+        # Add IsChecked property for checkbox binding
+        self._is_checked = False
+        
+        # Add a method that mimics the Add method of List
+        self.ele_id_add = self.ele_id.append
+    
+    # IsChecked property with getter and setter
+    @property
+    def IsChecked(self):
+        return self._is_checked
+    
+    @IsChecked.setter
+    def IsChecked(self, value):
+        self._is_checked = value
+    
+    # Color property with proper getter
+    @property
+    def color(self):
+        return self.color
 
 class ParameterInfo(object):
     """Class to store parameter information."""
@@ -496,13 +522,25 @@ class RevitColorizerWindow(WPFWindow):
                 self._color = Media_ref.Color.FromRgb(r, g, b)
                 self._brush = Media_ref.SolidColorBrush(self._color)
                 self.values_double = []
-                if para.StorageType == outer_self.DB.StorageType.Double:
+                # Add IsChecked property for checkbox binding
+                self._is_checked = False
+                
+                if para.StorageType == DB.StorageType.Double:
                     self.values_double.append(para.AsDouble())
-                elif para.StorageType == outer_self.DB.StorageType.ElementId:
+                elif para.StorageType == DB.StorageType.ElementId:
                     self.values_double.append(para.AsElementId())
                 
                 # Add a method that mimics the Add method of List
                 self.ele_id_add = self.ele_id.append
+            
+            # IsChecked property with getter and setter
+            @property
+            def IsChecked(self):
+                return self._is_checked
+                
+            @IsChecked.setter
+            def IsChecked(self, value):
+                self._is_checked = value
             
             # Color property with proper getter
             @property
@@ -601,6 +639,10 @@ class RevitColorizerWindow(WPFWindow):
         # Values list
         self.valuesListBox.MouseDoubleClick += self.on_value_double_click
         self.valuesListBox.SelectionChanged += self.on_value_click
+        
+        # Connect the checkbox events in the values list
+        # These are defined in the XAML file
+        self.ValueCheckbox_Changed = self.ValueCheckbox_Changed
 
         # Checkbox events
         self.showElementsCheckbox.Checked += self.on_show_elements_changed
@@ -609,15 +651,14 @@ class RevitColorizerWindow(WPFWindow):
         self.overrideProjectionCheckbox.Unchecked += self.on_override_projection_changed
         
         # Setting initial values for checkboxes
-        self.overrideProjectionCheckbox.IsChecked = True
-        self.showElementsCheckbox.IsChecked = False
+        self.overrideProjectionCheckbox.IsChecked = False
+        self.showElementsCheckbox.IsChecked = True
         
         # Default to instance parameters being selected
         self.instanceRadioButton.IsChecked = True
         
         # Add a handler for mouse click events on the ListBox to detect checkbox clicks
         self.categoryListBox.PreviewMouseLeftButtonUp += self.on_category_listbox_clicked
-        
 
     def load_categories(self):
         """Load categories from the current view."""
@@ -819,6 +860,8 @@ class RevitColorizerWindow(WPFWindow):
                 self.System.Action(delayed_process),
                 self.System.Windows.Threading.DispatcherPriority.Background)
             
+            self.apply_colors_event.Raise()
+            
         except Exception as ex:
             self.statusText.Text = "Error handling category click: " + str(ex)
             self.logger.error("Category click error: %s", str(ex))
@@ -950,28 +993,36 @@ class RevitColorizerWindow(WPFWindow):
             self.logger.error("Parameter type change error: %s", str(ex))
     
     def on_parameter_selected(self, sender, args):
-        """Handle parameter selection changed event."""
+        """Handle parameter selection change."""
         try:
-            selected_parameter = self.get_selected_parameter()
+            # Clear current values list
+            if hasattr(self, 'valuesListBox') and self.valuesListBox:
+                self.valuesListBox.ItemsSource = None
             
-            if selected_parameter:
-                # Load parameter values for all selected categories
-                values = self.get_parameter_values(selected_parameter, self.active_view)
+            # Get selected parameter and category
+            selected_param = self.get_selected_parameter()
+            if not selected_param:
+                return
+            
+            # Fetch values for the parameter
+            values = self.get_parameter_values(selected_param, self.active_view)
+            
+            # Set values to list
+            if values:
+                self.valuesListBox.ItemsSource = values
+                self.valuesListBox.UpdateLayout()
                 
-                # Clear and populate values list
-                self.valuesListBox.Items.Clear()
-                
-                for value_info in values:
-                    self.valuesListBox.Items.Add(value_info)
+                # Check for matching schema file
+                schema_path = self.check_for_matching_schema(selected_param.name)
+                if schema_path:
+                    self.load_color_schema_from_file(schema_path)
+                    self.statusText.Text = "Automatically loaded schema for {}".format(selected_param.name)
+            
+            # Update UI status
+            param_source_txt = "Instance" if self.instanceRadioButton.IsChecked else "Type"
+            self.statusText.Text = "Loaded {} values for {} parameter {}".format(len(values) if values else 0, param_source_txt, selected_param.name)
 
-                # Trigger apply colors after loading values
-                self.apply_colors_event.Raise()
-
-                self.statusText.Text = "Loaded {} values for parameter '{}'.".format(
-                    len(values), selected_parameter.name)
-            else:
-                self.valuesListBox.Items.Clear()
-                self.statusText.Text = "No parameter selected."
+            self.apply_colors_event.Raise()
         except Exception as ex:
             self.statusText.Text = "Error selecting parameter: " + str(ex)
             self.logger.error("Parameter selection error: %s", str(ex))
@@ -993,19 +1044,14 @@ class RevitColorizerWindow(WPFWindow):
                 
             value_item = sender.SelectedItem
             
-            # Create element ID collection for selection
-            element_ids = self.System.Collections.Generic.List[self.DB.ElementId]()
+            # Toggle the checkbox state when item is clicked
+            value_item.IsChecked = not value_item.IsChecked
             
-            # Add all element IDs for this value to the collection
-            for element_id in value_item.ele_id:
-                element_ids.Add(element_id)
-            # Set selection in the active document
-            self.uidoc.Selection.SetElementIds(element_ids)
+            # Update the UI to reflect the change
+            self.valuesListBox.Items.Refresh()
             
-            # Update status
-            elements_count = len(value_item.ele_id)
-            self.statusText.Text = "Selected {} elements with value '{}'.".format(
-                elements_count, value_item.value)
+            # Select all checked elements
+            self.select_checked_elements()
             
         except Exception as ex:
             self.logger.error("Element selection error: %s", str(ex))
@@ -1036,6 +1082,7 @@ class RevitColorizerWindow(WPFWindow):
                 # Refresh the list view
                 self.valuesListBox.Items.Refresh()
                 self.statusText.Text = "Color updated for value '{}'.".format(value_item.value)
+                self.apply_colors_event.Raise()
         except Exception as ex:
             self.statusText.Text = "Error changing color: " + str(ex)
             self.logger.error("Value double click error: %s", str(ex))
@@ -1079,25 +1126,199 @@ class RevitColorizerWindow(WPFWindow):
         except Exception as ex:
             self.statusText.Text = "Error removing filters: " + str(ex)
             self.logger.error("Remove filters error: %s", str(ex))
-    
-    def on_save_config(self, sender, args):
-        """Handle save configuration button click."""
+
+
+    def load_color_schema_from_file(self, file_path):
+        """Load a color scheme from a file."""
         try:
-            self.statusText.Text = "Saving configuration is not implemented yet."
-            # This would save the current configuration to a file
+            if not os.path.exists(file_path):
+                self.statusText.Text = "Error: Schema file does not exist."
+                return
+            
+            # Load the schema
+            schema_data = []
+            with open(file_path, "r") as file:
+                for line in file:
+                    line = line.strip()
+                    if not line:  # Skip empty lines
+                        continue
+                    
+                    # Parse line in format "value::RrGgBb"
+                    parts = line.split("::")
+                    if len(parts) != 2:
+                        continue
+                    
+                    value = parts[0]
+                    rgb_part = parts[1]
+                    
+                    # Parse RGB values using regex
+                    rgb_values = re.split(r'[RGB]', rgb_part)
+                    if len(rgb_values) >= 4:  # [0] is empty before the first R
+                        r = int(rgb_values[1])
+                        g = int(rgb_values[2])
+                        b = int(rgb_values[3])
+                        
+                        schema_data.append({
+                            'value': value,
+                            'color': Media.Color.FromRgb(r, g, b)
+                        })
+            
+            # Apply to current values if any
+            if schema_data and self.valuesListBox.Items:
+                # First try matching by value
+                for value_item in self.valuesListBox.Items:
+                    for schema_item in schema_data:
+                        if value_item.value == schema_item['value']:
+                            wpf_color = schema_item['color']
+                            # Update RGB values
+                            value_item.n1 = wpf_color.R
+                            value_item.n2 = wpf_color.G
+                            value_item.n3 = wpf_color.B
+                            # Update color property using the setter
+                            value_item.color = wpf_color
+                                
+                # Refresh the list
+                self.valuesListBox.Items.Refresh()
+                self.statusText.Text = "Color scheme loaded successfully."
+            else:
+                self.statusText.Text = "No values to apply colors to or empty schema file."
         except Exception as ex:
-            self.statusText.Text = "Error saving configuration: " + str(ex)
-            self.logger.error("Save config error: %s", str(ex))
-    
-    def on_load_config(self, sender, args):
-        """Handle load configuration button click."""
+            self.statusText.Text = "Error loading schema: {}".format(str(ex))
+            self.logger.error("Error loading color schema: %s", str(ex))
+
+    def get_available_schemas(self):
+        """Get list of available color schemas in the coloringschemas folder."""
+        schemas = []
+        script_dir = os.path.dirname(__file__)
+        schemas_dir = os.path.join(script_dir, "coloringschemas")
+        
+        if os.path.exists(schemas_dir):
+            for file in os.listdir(schemas_dir):
+                if file.endswith(".cschn"):
+                    schema_name = os.path.splitext(file)[0]
+                    schemas.append({
+                        'name': schema_name,
+                        'path': os.path.join(schemas_dir, file)
+                    })
+        
+        return schemas
+
+    def check_for_matching_schema(self, parameter_name):
+        """Check if there's a color schema matching the parameter name."""
+        if not parameter_name:
+            return None
+        
+        schemas = self.get_available_schemas()
+        for schema in schemas:
+            # Case-insensitive comparison
+            if schema['name'].lower() == parameter_name.lower():
+                return schema['path']
+        
+        return None
+
+    def on_show_elements_changed(self, sender, args):
+        """Handle show elements checkbox state change."""
         try:
-            self.statusText.Text = "Loading configuration is not implemented yet."
-            # This would load a configuration from a file
+            # If checkbox is unchecked, clear Revit selection
+            if not self.showElementsCheckbox.IsChecked:
+                # Clear current selection
+                self.uidoc.Selection.SetElementIds(self.System.Collections.Generic.List[self.DB.ElementId]())
+                self.statusText.Text = "Element selection disabled."
+            else:
+                # Select based on checked checkboxes
+                self.select_checked_elements()
         except Exception as ex:
-            self.statusText.Text = "Error loading configuration: " + str(ex)
-            self.logger.error("Load config error: %s", str(ex))
-    
+            self.statusText.Text = "Error changing selection mode: " + str(ex)
+            self.logger.error("Show elements checkbox error: %s", str(ex))
+
+    def on_override_projection_changed(self, sender, args):
+        """Handle override projection checkbox state change."""
+        try:
+            self.apply_colors_event.Raise()
+        except Exception as ex:
+            self.statusText.Text = "Error changing selection mode: " + str(ex)
+            self.logger.error("Show elements checkbox error: %s", str(ex))
+
+    def on_category_checkbox_changed(self, category_item):
+        """Handle category checkbox selection changed event."""
+        try:
+            # Skip processing if we're in the middle of restoring selection
+            if self._processing_restored_selection:
+                return
+                
+            # Directly process the selection which will handle the category storage if needed
+            self.process_category_selection()
+                
+        except Exception as ex:
+            self.statusText.Text = "Error handling category checkbox: " + str(ex)
+            self.logger.error("Category checkbox error: %s", str(ex))
+
+    def on_refresh_parameters(self, sender, args):
+        """Handle refresh parameters button click."""
+        try:
+            # Store current selections
+            current_param_type_is_instance = self.instanceRadioButton.IsChecked
+            current_param_name = None
+            if self.parameterSelector.SelectedItem:
+                current_param_name = self.parameterSelector.SelectedItem.parameter_info.name
+                
+            # Clear and reload parameters
+            self.parameterSelector.Items.Clear()
+            selected_categories = self.get_selected_categories()
+            
+            if not selected_categories:
+                self.statusText.Text = "No categories selected."
+                self.valuesListBox.Items.Clear()
+                self.reset_colors_event.Raise()
+                return
+                
+            # Get common parameters
+            param_type_code = 0 if current_param_type_is_instance else 1
+            common_params = [p for p in selected_categories[0].par if p.param_type == param_type_code]
+            
+            for category in selected_categories[1:]:
+                category_params = [p for p in category.par if p.param_type == param_type_code]
+                category_param_names = [p.name for p in category_params]
+                common_params = [p for p in common_params if p.name in category_param_names]
+                
+            # Add parameters to dropdown
+            selected_index = -1
+            for i, param in enumerate(common_params):
+                self.parameterSelector.Items.Add(self.ParameterDisplayItem(param))
+                if current_param_name and param.name == current_param_name:
+                    selected_index = i
+                    
+            # Restore selection
+            if selected_index >= 0:
+                self.parameterSelector.SelectedIndex = selected_index
+                self.statusText.Text = "Refreshed parameters, maintained selection of '{0}'.".format(current_param_name)
+            elif self.parameterSelector.Items.Count > 0:
+                self.parameterSelector.SelectedIndex = 0
+                self.statusText.Text = "Refreshed {0} common parameters.".format(len(common_params))
+            else:
+                param_type = "instance" if current_param_type_is_instance else "type"
+                self.statusText.Text = "No common {0} parameters found.".format(param_type)
+                self.valuesListBox.Items.Clear()
+                return
+                
+            # Reload values
+            if self.parameterSelector.SelectedItem:
+                self.on_parameter_selected(self.parameterSelector, None)
+                
+            self.apply_colors_event.Raise()
+                
+        except Exception as ex:
+            self.statusText.Text = "Error refreshing parameters: {0}".format(str(ex))
+            self.logger.error("Parameter refresh error: %s", str(ex))
+
+    def store_selected_categories(self):
+        """Store the names of currently selected categories for persistence between views."""
+        self.selected_category_names = []
+        for item in self.categoryListBox.Items:
+            if item.IsSelected:
+                self.selected_category_names.append(item.name)
+        return self.selected_category_names
+
     def on_close(self, sender, args):
         """Handle close button click."""
         try:
@@ -1202,7 +1423,7 @@ class RevitColorizerWindow(WPFWindow):
             # Skip if window is not active
             if not self.is_window_active:
                 return
-                
+            
             # Store the current view before it changes
             current_view = self.active_view
             
@@ -1228,6 +1449,7 @@ class RevitColorizerWindow(WPFWindow):
             # Get the freshly activated view from the document
             self.active_view = self.doc.ActiveView
             self.load_categories()
+            self.apply_colors_event.Raise()
         except Exception as ex:
             self.logger.error("Error handling view activation: %s", ex)
             # Update UI on error
@@ -1254,7 +1476,7 @@ class RevitColorizerWindow(WPFWindow):
         for category in selected_categories:
             # Try to find BuiltInCategory if possible
             bic = None
-            for sample_bic in self.System.Enum.GetValues(self.DB.BuiltInCategory):
+            for sample_bic in System.Enum.GetValues(DB.BuiltInCategory):
                 if category.int_id == int(sample_bic):
                     bic = sample_bic
                     break
@@ -1263,7 +1485,7 @@ class RevitColorizerWindow(WPFWindow):
                 continue
                 
             # Get all elements of this category in view
-            collector = self.DB.FilteredElementCollector(self.doc, view.Id) \
+            collector = DB.FilteredElementCollector(self.doc, view.Id) \
                         .OfCategory(bic) \
                         .WhereElementIsNotElementType() \
                         .WhereElementIsViewIndependent() \
@@ -1287,7 +1509,7 @@ class RevitColorizerWindow(WPFWindow):
                         if matching_items:
                             # Add element ID to existing value
                             matching_items[0].ele_id.append(element.Id)
-                            if parameter.StorageType == self.DB.StorageType.Double:
+                            if parameter.StorageType == DB.StorageType.Double:
                                 matching_items[0].values_double.append(parameter.AsDouble())
                         else:
                             # Instead of picking a random color, create a placeholder for now
@@ -1332,7 +1554,7 @@ class RevitColorizerWindow(WPFWindow):
                 value_item.n2 = g
                 value_item.n3 = b
                 # Update the color property with a new WPF color object
-                value_item.color = self.Media.Color.FromRgb(r, g, b)
+                value_item.color = Media.Color.FromRgb(r, g, b)
                 
         # Always use gray for None values
         for value_item in none_values:
@@ -1340,28 +1562,52 @@ class RevitColorizerWindow(WPFWindow):
             value_item.n2 = 192
             value_item.n3 = 192
             # Update the color property with a new WPF color object
-            value_item.color = self.Media.Color.FromRgb(192, 192, 192)
-                
+            value_item.color = Media.Color.FromRgb(192, 192, 192)
+        
         return values
-
+    
     def get_selected_parameter(self):
         """Get the selected parameter."""
         if self.parameterSelector.SelectedItem:
             # Unwrap the parameter from its display wrapper
             return self.parameterSelector.SelectedItem.parameter_info
         return None
-    
+        
     def get_value_items(self):
         """Get all value items from the list."""
         return [item for item in self.valuesListBox.Items]
 
-    def random_color(self):
-        """Generate a random color."""
-        r = self.randint(0, 230)
-        g = self.randint(0, 230)
-        b = self.randint(0, 230)
-        return r, g, b
-    
+    def get_parameter_value(self, para):
+        """Get parameter value as string."""
+        if not para.HasValue:
+            return "None"
+        
+        if para.StorageType == DB.StorageType.Double:
+            return para.AsValueString()
+        elif para.StorageType == DB.StorageType.ElementId:
+            id_val = para.AsElementId()
+            if self.get_elementid_value(id_val) >= 0:
+                return DB.Element.Name.GetValue(self.doc.GetElement(id_val))
+            else:
+                return "None"
+        elif para.StorageType == DB.StorageType.Integer:
+            if self.version > 2021:
+                param_type = para.Definition.GetDataType()
+                if DB.SpecTypeId.Boolean.YesNo == param_type:
+                    return "True" if para.AsInteger() == 1 else "False"
+                else:
+                    return para.AsValueString()
+            else:
+                param_type = para.Definition.ParameterType
+                if DB.ParameterType.YesNo == param_type:
+                    return "True" if para.AsInteger() == 1 else "False"
+                else:
+                    return para.AsValueString()
+        elif para.StorageType == DB.StorageType.String:
+            return para.AsString() or "None"
+        else:
+            return "None"
+
     def generate_color_range(self, count):
         """Generate a range of visually distinct colors based on count.
         
@@ -1371,204 +1617,138 @@ class RevitColorizerWindow(WPFWindow):
         Returns:
             List of (r, g, b) tuples representing colors
         """
-        # Define color palettes based on count ranges
+
         if count <= 5:
-            # For small sets, use distinct colors
-            distinct_colors = [
-                (255, 0, 0),      # Red
-                (0, 200, 0),      # Green
-                (0, 0, 255),      # Blue
-                (255, 215, 0),    # Gold/Yellow
-                (148, 0, 211)     # Purple
+            # Jewel Bright palette (from Tableau)
+            jewel_bright = [
+                (253, 111, 48),   # #fd6f30 - Orange
+                (249, 167, 41),   # #f9a729 - Yellow-orange
+                (249, 210, 60),   # #f9d23c - Yellow
+                (95, 187, 104),   # #5fbb68 - Green
+                (100, 205, 204),  # #64cdcc - Teal
             ]
-            return distinct_colors[:count]
+            return jewel_bright[:count]
             
-        elif count <= 20:
-            # For medium sets, create a gradient between Red -> Green -> Blue
-            colors = []
-            if count > 0:
-                # First half: Red to Green
-                half_count = count // 2
-                for i in range(half_count):
-                    factor = float(i) / (half_count - 1) if half_count > 1 else 0
-                    r = int(255 * (1 - factor))
-                    g = int(200 * factor)
-                    b = 0
-                    colors.append((r, g, b))
-                
-                # Second half: Green to Blue
-                remaining = count - half_count
-                for i in range(remaining):
-                    factor = float(i) / (remaining - 1) if remaining > 1 else 0
-                    r = 0
-                    g = int(200 * (1 - factor))
-                    b = int(255 * factor)
-                    colors.append((r, g, b))
-            return colors
+        # Define color palettes based on count ranges
+        if count <= 9:
+            # Jewel Bright palette (from Tableau)
+            jewel_bright = [
+                (235, 30, 44),    # #eb1e2c - Red
+                (253, 111, 48),   # #fd6f30 - Orange
+                (249, 167, 41),   # #f9a729 - Yellow-orange
+                (249, 210, 60),   # #f9d23c - Yellow
+                (95, 187, 104),   # #5fbb68 - Green
+                (100, 205, 204),  # #64cdcc - Teal
+                (145, 220, 234),  # #91dcea - Light blue
+                (164, 164, 213),  # #a4a4d5 - Lavender
+                (187, 201, 229)   # #bbc9e5 - Light purple
+            ]
+            return jewel_bright[:count]
+            
+        elif count <= 19:
+            # Hue Circle palette (from Tableau)
+            hue_circle = [
+                (27, 163, 198),   # #1ba3c6
+                (44, 181, 192),   # #2cb5c0
+                (48, 188, 173),   # #30bcad
+                (33, 176, 135),   # #21b087
+                (51, 166, 92),    # #33a65c
+                (87, 163, 55),    # #57a337
+                (162, 182, 39),   # #a2b627
+                (213, 187, 33),   # #d5bb21
+                (248, 182, 32),   # #f8b620
+                (248, 146, 23),   # #f89217
+                (240, 103, 25),   # #f06719
+                (224, 52, 38),    # #e03426
+                (246, 73, 113),   # #f64971
+                (252, 113, 158),  # #fc719e
+                (235, 115, 179),  # #eb73b3
+                (206, 105, 190),  # #ce69be
+                (162, 109, 194),  # #a26dc2
+                (120, 115, 192),  # #7873c0
+                (79, 124, 186)    # #4f7cba
+            ]
+            return hue_circle[:count]
             
         else:
-            # For large sets, use HSV color wheel for better distribution
+            # For large sets, evenly distribute around the color wheel
+            # with Tableau-like saturation and brightness
             colors = []
             for i in range(count):
-                # Use HSV with full saturation and value, varying hue
+                # Distribute hues evenly around the color wheel
                 h = float(i) / count
+                
+                # Set saturation and value to match Tableau's vibrant colors
+                s = 0.85  # High saturation but not 100%
+                v = 0.9   # High brightness but not 100%
+                
                 # Convert HSV to RGB
                 h_i = int(h * 6)
                 f = h * 6 - h_i
-                p = 0
-                q = int(255 * (1 - f))
-                t = int(255 * f)
-                v = 255
+                
+                # Calculate components with Tableau-like saturation and brightness
+                p = int(255 * v * (1 - s))
+                q = int(255 * v * (1 - s * f))
+                t = int(255 * v * (1 - s * (1 - f)))
+                v_scaled = int(255 * v)
                 
                 if h_i == 0:
-                    colors.append((v, t, p))
+                    colors.append((v_scaled, t, p))
                 elif h_i == 1:
-                    colors.append((q, v, p))
+                    colors.append((q, v_scaled, p))
                 elif h_i == 2:
-                    colors.append((p, v, t))
+                    colors.append((p, v_scaled, t))
                 elif h_i == 3:
-                    colors.append((p, q, v))
+                    colors.append((p, q, v_scaled))
                 elif h_i == 4:
-                    colors.append((t, p, v))
+                    colors.append((t, p, v_scaled))
                 else:
-                    colors.append((v, p, q))
+                    colors.append((v_scaled, p, q))
             
             return colors
-    
-    def get_parameter_value(self, para):
-        """Get parameter value as string."""
-        if not para.HasValue:
-            return "None"
-        
-        if para.StorageType == self.DB.StorageType.Double:
-            return para.AsValueString()
-        elif para.StorageType == self.DB.StorageType.ElementId:
-            id_val = para.AsElementId()
-            if self.get_elementid_value(id_val) >= 0:
-                return self.DB.Element.Name.GetValue(self.doc.GetElement(id_val))
-            else:
-                return "None"
-        elif para.StorageType == self.DB.StorageType.Integer:
-            if self.version > 2021:
-                param_type = para.Definition.GetDataType()
-                if self.DB.SpecTypeId.Boolean.YesNo == param_type:
-                    return "True" if para.AsInteger() == 1 else "False"
-                else:
-                    return para.AsValueString()
-            else:
-                param_type = para.Definition.ParameterType
-                if self.DB.ParameterType.YesNo == param_type:
-                    return "True" if para.AsInteger() == 1 else "False"
-                else:
-                    return para.AsValueString()
-        elif para.StorageType == self.DB.StorageType.String:
-            return para.AsString()
-        else:
-            return "None"
 
-    def on_show_elements_changed(self, sender, args):
-        """Handle show elements checkbox state change."""
+    def ValueCheckbox_Changed(self, sender, args):
+        """Handle checkbox state changes in the values list"""
         try:
-            # If checkbox is unchecked, clear Revit selection
+            # Skip if checkbox interaction is disabled
             if not self.showElementsCheckbox.IsChecked:
-                # Clear current selection
-                self.uidoc.Selection.SetElementIds(self.System.Collections.Generic.List[self.DB.ElementId]())
-                self.statusText.Text = "Element selection disabled."
-            else:
-                # If a value is selected, apply selection immediately
-                if self.valuesListBox.SelectedItem is not None:
-                    self.on_value_click(self.valuesListBox, None)
-                else:
-                    self.statusText.Text = "Element selection enabled. Click a value to select elements."
-        except Exception as ex:
-            self.statusText.Text = "Error changing selection mode: " + str(ex)
-            self.logger.error("Show elements checkbox error: %s", str(ex))
-
-    def on_override_projection_changed(self, sender, args):
-        """Handle override projection checkbox state change."""
-        try:
-            self.apply_colors_event.Raise()
-        except Exception as ex:
-            self.statusText.Text = "Error changing selection mode: " + str(ex)
-            self.logger.error("Show elements checkbox error: %s", str(ex))
-
-    def on_category_checkbox_changed(self, category_item):
-        """Handle category checkbox selection changed event."""
-        try:
-            # Skip processing if we're in the middle of restoring selection
-            if self._processing_restored_selection:
                 return
                 
-            # Directly process the selection which will handle the category storage if needed
-            self.process_category_selection()
-                
+            # Select elements based on all checked checkboxes
+            self.select_checked_elements()
         except Exception as ex:
-            self.statusText.Text = "Error handling category checkbox: " + str(ex)
-            self.logger.error("Category checkbox error: %s", str(ex))
-
-    def on_refresh_parameters(self, sender, args):
-        """Handle refresh parameters button click."""
+            self.statusText.Text = "Error handling checkbox change: " + str(ex)
+            self.logger.error("Checkbox change error: %s", str(ex))
+    
+    def select_checked_elements(self):
+        """Select all elements that have their checkboxes checked"""
         try:
-            # Store current selections
-            current_param_type_is_instance = self.instanceRadioButton.IsChecked
-            current_param_name = None
-            if self.parameterSelector.SelectedItem:
-                current_param_name = self.parameterSelector.SelectedItem.parameter_info.name
+            if not self.showElementsCheckbox.IsChecked or not self.valuesListBox.Items.Count:
+                return
                 
-            # Clear and reload parameters
-            self.parameterSelector.Items.Clear()
-            selected_categories = self.get_selected_categories()
+            # Create element ID collection for selection
+            element_ids = self.System.Collections.Generic.List[self.DB.ElementId]()
+            checked_count = 0
             
-            if not selected_categories:
-                self.statusText.Text = "No categories selected."
-                self.valuesListBox.Items.Clear()
-                self.reset_colors_event.Raise()
-                return
-                
-            # Get common parameters
-            param_type_code = 0 if current_param_type_is_instance else 1
-            common_params = [p for p in selected_categories[0].par if p.param_type == param_type_code]
+            # Add elements from all checked items to the selection
+            for value_item in self.valuesListBox.Items:
+                if value_item.IsChecked:
+                    checked_count += 1
+                    for element_id in value_item.ele_id:
+                        element_ids.Add(element_id)
             
-            for category in selected_categories[1:]:
-                category_params = [p for p in category.par if p.param_type == param_type_code]
-                category_param_names = [p.name for p in category_params]
-                common_params = [p for p in common_params if p.name in category_param_names]
-                
-            # Add parameters to dropdown
-            selected_index = -1
-            for i, param in enumerate(common_params):
-                self.parameterSelector.Items.Add(self.ParameterDisplayItem(param))
-                if current_param_name and param.name == current_param_name:
-                    selected_index = i
-                    
-            # Restore selection
-            if selected_index >= 0:
-                self.parameterSelector.SelectedIndex = selected_index
-                self.statusText.Text = "Refreshed parameters, maintained selection of '{0}'.".format(current_param_name)
-            elif self.parameterSelector.Items.Count > 0:
-                self.parameterSelector.SelectedIndex = 0
-                self.statusText.Text = "Refreshed {0} common parameters.".format(len(common_params))
+            # Set selection in the active document
+            self.uidoc.Selection.SetElementIds(element_ids)
+            
+            # Update status
+            if checked_count > 0:
+                self.statusText.Text = "Selected elements from {} checked values.".format(checked_count)
             else:
-                param_type = "instance" if current_param_type_is_instance else "type"
-                self.statusText.Text = "No common {0} parameters found.".format(param_type)
-                self.valuesListBox.Items.Clear()
-                return
-                
-            # Reload values
-            if self.parameterSelector.SelectedItem:
-                self.on_parameter_selected(self.parameterSelector, None)
+                self.statusText.Text = "No values checked. Select checkboxes to highlight elements."
                 
         except Exception as ex:
-            self.statusText.Text = "Error refreshing parameters: {0}".format(str(ex))
-            self.logger.error("Parameter refresh error: %s", str(ex))
-
-    def store_selected_categories(self):
-        """Store the names of currently selected categories for persistence between views."""
-        self.selected_category_names = []
-        for item in self.categoryListBox.Items:
-            if item.IsSelected:
-                self.selected_category_names.append(item.name)
-        return self.selected_category_names
+            self.statusText.Text = "Error selecting elements: " + str(ex)
+            self.logger.error("Selection error: %s", str(ex))
 
 # Main script execution
 if __name__ == "__main__":
