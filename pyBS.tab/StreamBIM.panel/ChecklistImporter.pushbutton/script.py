@@ -22,6 +22,14 @@ tab_dir = op.dirname(panel_dir)
 extension_dir = op.dirname(op.dirname(tab_dir))
 lib_path = op.join(extension_dir, 'lib')
 
+print("Current lib_path: {}".format(lib_path))
+print("Current sys.path: {}".format('\n'.join(sys.path)))
+
+# Check if the streambim directory exists
+print("Streambim directory exists: {}".format(op.exists(op.join(lib_path, 'streambim'))))
+print("Streambim init exists: {}".format(op.exists(op.join(lib_path, 'streambim', '__init__.py'))))
+print("Streambim api exists: {}".format(op.exists(op.join(lib_path, 'streambim', 'streambim_api.py'))))
+
 if lib_path not in sys.path:
     sys.path.append(lib_path)
     print("Added lib path to sys.path")
