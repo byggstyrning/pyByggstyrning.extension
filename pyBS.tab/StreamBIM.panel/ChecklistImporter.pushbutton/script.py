@@ -118,7 +118,11 @@ class MappingSchema(BaseSchema):
     @simple_field(value_type="string")
     def revit_parameter():
         """The selected Revit parameter"""
-        
+
+    @simple_field(value_type="bool")
+    def enableMapping():
+        """Whether to enable parameter mapping"""
+
     @simple_field(value_type="string")
     def mapping_config():
         """The mapping configuration as JSON string"""
@@ -592,7 +596,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
                     if value_mapping and checklist_value in value_mapping:
                         revit_value = value_mapping[checklist_value]
                     else:
-                        revit_value = checklist_value
+                        continue
                     
                     # Get the parameter
                     param = element.LookupParameter(revit_param)
@@ -639,13 +643,6 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.isolateButton.IsEnabled = updated > 0  # Enable isolate button if elements were updated
         self.progressBar.Visibility = Visibility.Collapsed
         self.progressText.Visibility = Visibility.Collapsed
-        
-        # Show results
-        MessageBox.Show(
-            "Import complete.\n\nProcessed: {} elements\nUpdated: {} elements".format(processed, updated),
-            "Import Results",
-            MessageBoxButton.OK
-        )
     
     def isolate_button_click(self, sender, args):
         """Handle isolate button click."""
@@ -752,14 +749,17 @@ class StreamBIMImporterUI(forms.WPFWindow):
         if not streambim_prop or not revit_param or not self.selected_checklist_id:
             self.update_status("Cannot save mapping: missing property or parameter selection")
             return False
+        
             
-        # Convert mappings to JSON
         mapping_data = []
-        for mapping in self.mappings:
-            mapping_data.append({
-                'ChecklistValue': mapping.ChecklistValue,
-                'RevitValue': mapping.RevitValue
-            })
+
+        if self.enableMappingCheckBox.IsChecked:
+            # Convert mappings to JSON
+            for mapping in self.mappings:
+                mapping_data.append({
+                    'ChecklistValue': mapping.ChecklistValue,
+                    'RevitValue': mapping.RevitValue
+                })
             
         mapping_json = json.dumps(mapping_data)
         logger.debug("Mapping JSON: {}".format(mapping_json))
@@ -772,7 +772,8 @@ class StreamBIMImporterUI(forms.WPFWindow):
             with MappingSchema(mapping_storage) as entity:
                 entity.set("checklist_id", self.selected_checklist_id)
                 entity.set("streambim_property", streambim_prop)
-                entity.set("revit_parameter", str(revit_param))  # Convert to string explicitly
+                entity.set("revit_parameter", str(revit_param))
+                entity.set("enable_mapping", self.enableMappingCheckBox.IsChecked)
                 entity.set("mapping_config", mapping_json)
                 
             self.mapping_storage = mapping_storage
