@@ -184,6 +184,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
         # Initialize mapping data
         self.mappings = ObservableCollection[object]()
         self.mapping_storage = None
+        self.is_loading_configuration = False  # Flag to prevent recursive loading
 
         # Set up event handlers
         self.loginButton.Click += self.login_button_click
