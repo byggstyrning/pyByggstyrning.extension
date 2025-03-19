@@ -216,7 +216,7 @@ class StreamBIMClient:
             # Create a query object and encode it
             query = {
                 "key": "object",
-                "sort": {"field": "title", "descending": False},
+                "sort": {"field": "status", "descending": False},
                 "page": {"skip": 0, "limit": limit if limit > 0 else 100000},  # Use large number for no limit
                 "filter": {"checklist": checklist_id},
                 "timeZone": "Europe/Stockholm",

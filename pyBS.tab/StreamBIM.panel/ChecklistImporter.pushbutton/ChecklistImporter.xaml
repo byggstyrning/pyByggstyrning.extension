@@ -1,6 +1,6 @@
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="StreamBIM Checklist Importer" Width="600" Height="650" WindowStartupLocation="CenterScreen">
+        Title="StreamBIM Checklist Importer" Width="600" Height="800" WindowStartupLocation="CenterScreen">
     <Grid Margin="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -76,12 +76,24 @@
                 <Grid Margin="10">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
                     <TextBlock Text="Select a StreamBIM Checklist:" Grid.Row="0" Margin="0,0,0,10"/>
-                    <ListView x:Name="checklistsListView" Grid.Row="1" Margin="0,0,0,10" SelectionMode="Single" MouseDoubleClick="checklists_list_double_click">
+                    
+                    <!-- Search Bar -->
+                    <Grid Grid.Row="1" Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Search:" Grid.Column="0" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <TextBox x:Name="checklistSearchBox" Grid.Column="1" Margin="0,0,0,0"/>
+                    </Grid>
+                    
+                    <ListView x:Name="checklistsListView" Grid.Row="2" Margin="0,0,0,10" SelectionMode="Single" MouseDoubleClick="checklists_list_double_click">
                         <ListView.View>
                             <GridView>
                                 <GridViewColumn Header="ID" DisplayMemberBinding="{Binding Id}" Width="50"/>
@@ -89,7 +101,7 @@
                             </GridView>
                         </ListView.View>
                     </ListView>
-                    <Button x:Name="selectChecklistButton" Content="Select Checklist" Grid.Row="2" HorizontalAlignment="Left" Width="120" Height="30"/>
+                    <Button x:Name="selectChecklistButton" Content="Select Checklist" Grid.Row="3" HorizontalAlignment="Left" Width="120" Height="30"/>
                 </Grid>
             </TabItem>
 
@@ -102,7 +114,10 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
@@ -110,26 +125,62 @@
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
 
-                    <TextBlock Text="StreamBIM Properties:" Grid.Row="0" Grid.Column="0" Margin="0,10,0,5"/>
-                    <ComboBox x:Name="streamBIMPropertiesComboBox" Grid.Row="0" Grid.Column="1" Margin="0,10,0,5"/>
+                    <TextBlock Text="Selected StreamBIM Checklist:" Grid.Row="0" Grid.Column="0" Margin="0,10,0,5"/>
+                    <TextBlock x:Name="selectedChecklistTextBlock" Grid.Row="0" Grid.Column="1" Margin="0,15,0,5" TextWrapping="Wrap" FontStyle="Italic"/>
                     
-                    <TextBlock Text="Preview Values:" Grid.Row="1" Grid.Column="0" Margin="0,15,0,5" FontStyle="Italic"/>
-                    <TextBlock x:Name="previewValuesTextBlock" Grid.Row="1" Grid.Column="1" Margin="0,15,0,5" TextWrapping="Wrap" FontStyle="Italic"/>
+                    <TextBlock Text="StreamBIM Properties:" Grid.Row="1" Grid.Column="0" Margin="0,10,0,5"/>
+                    <ComboBox x:Name="streamBIMPropertiesComboBox" Grid.Row="1" Grid.Column="1" Margin="0,10,0,5"/>
                     
-                    <TextBlock Text="Revit Instance Parameters:" Grid.Row="2" Grid.Column="0" Margin="0,15,0,5"/>
-                    <TextBlock Text="(From visible elements)" Grid.Row="2" Grid.Column="0" Margin="0,35,0,5" FontStyle="Italic"/>
-                    <ComboBox x:Name="revitParametersComboBox" Grid.Row="2" Grid.Column="1" Margin="0,15,0,5"/>
+                    <TextBlock Text="Preview Values:" Grid.Row="2" Grid.Column="0" Margin="0,15,0,5" FontStyle="Italic"/>
+                    <TextBlock x:Name="previewValuesTextBlock" Grid.Row="2" Grid.Column="1" Margin="0,15,0,5" TextWrapping="Wrap" FontStyle="Italic"/>
                     
-                    <CheckBox x:Name="onlyVisibleElementsCheckBox" Content="Only Apply to Visible Elements" Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,15,0,5" IsChecked="True" Visibility="Collapsed" />
+                    <TextBlock Text="Revit Instance Parameters:" Grid.Row="3" Grid.Column="0" Margin="0,15,0,5"/>
+                    <TextBlock Text="(From visible elements)" Grid.Row="3" Grid.Column="0" Margin="0,35,0,5" FontStyle="Italic"/>
+                    <ComboBox x:Name="revitParametersComboBox" Grid.Row="3" Grid.Column="1" Margin="0,15,0,5"/>
                     
-                    <TextBlock Text="Summary:" Grid.Row="4" Grid.Column="0" Margin="0,15,0,5"/>
-                    <TextBlock x:Name="summaryTextBlock" Grid.Row="4" Grid.Column="1" Margin="0,15,0,5" TextWrapping="Wrap" 
+                    
+                    
+                    <CheckBox x:Name="onlyVisibleElementsCheckBox" Content="Only Apply to Visible Elements" Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,15,0,5" IsChecked="True" Visibility="Collapsed" />
+                    
+                    <TextBlock Text="Summary:" Grid.Row="5" Grid.Column="0" Margin="0,15,0,5"/>
+                    <TextBlock x:Name="summaryTextBlock" Grid.Row="5" Grid.Column="1" Margin="0,15,0,5" TextWrapping="Wrap" 
                               Text="No parameters selected yet."/>
                     
-                    <ProgressBar x:Name="progressBar" Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" Height="20" Margin="0,15,0,5" Visibility="Collapsed"/>
-                    <TextBlock x:Name="progressText" Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,0,0" TextAlignment="Center" Visibility="Collapsed"/>
+                    <!-- Parameter Mapping Section -->
+                    <CheckBox x:Name="enableMappingCheckBox" Content="Enable Parameter Mapping" Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,15,0,5" IsChecked="False" />
+                    <Grid Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,40,0,0" x:Name="mappingGrid" Visibility="Collapsed">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        
+                        <TextBlock Text="Parameter Mapping" Grid.Row="0" FontWeight="Bold" Margin="0,0,0,5"/>
+                        
+                        <DataGrid x:Name="mappingDataGrid" Grid.Row="1" AutoGenerateColumns="False" Margin="0,5,0,5" 
+                                  CanUserAddRows="True" CanUserDeleteRows="True" Height="150">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Checklist Value" 
+                                                  Binding="{Binding ChecklistValue, UpdateSourceTrigger=PropertyChanged}" 
+                                                  Width="*"/>
+                                <DataGridTextColumn Header="Revit Value" 
+                                                  Binding="{Binding RevitValue, UpdateSourceTrigger=PropertyChanged}" 
+                                                  Width="*"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        
+                        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,5,0,0">
+                            <Button x:Name="addNewRowButton" Content="Add new row" Width="120" Height="30"/>
+                            <Button x:Name="saveMappingButton" Content="Save Mapping" Width="120" Height="30" Margin="10,0,0,0"/>
+                        </StackPanel>
+                    </Grid>
                     
-                    <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,15,0,0">
+                    <ProgressBar x:Name="progressBar" Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2" Height="20" Margin="0,15,0,5" Visibility="Collapsed"/>
+                    <TextBlock x:Name="progressText" Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,0,0" TextAlignment="Center" Visibility="Collapsed"/>
+
+                    <Separator Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="2" Height="2" Margin="0,10,0,10" HorizontalAlignment="Stretch" Background="Gray" />
+                    
+                    <StackPanel Grid.Row="9" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,15,0,0">
                         <Button x:Name="importButton" Content="Import Values" Width="120" Height="30" Margin="0,0,10,0"/>
                         <Button x:Name="isolateButton" Content="Isolate Updated Elements" Width="150" Height="30" IsEnabled="False"/>
                     </StackPanel>
