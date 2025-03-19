@@ -423,11 +423,12 @@ class StreamBIMImporterUI(forms.WPFWindow):
             self.parameterTab.IsEnabled = True
             self.tabControl.SelectedItem = self.parameterTab
             self.update_status("Retrieved checklist preview")
+            
+            # Now that parameters are loaded, try to load mapping configuration
+            self.load_mapping_configuration()
         else:
             error_msg = self.streambim_client.last_error or "No items found in this checklist"
             self.update_status(error_msg)
-
-        self.load_mapping_configuration()
         
         self.selectChecklistButton.IsEnabled = True
     
@@ -791,7 +792,6 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.is_loading_configuration = True
         try:
             streambim_prop = self.streamBIMPropertiesComboBox.SelectedItem
-            revit_param = self.revitParametersComboBox.SelectedItem
 
             # Clear the mappings list
             self.mappings.Clear()
@@ -823,8 +823,8 @@ class StreamBIMImporterUI(forms.WPFWindow):
                     logger.debug("- Revit parameter to restore: {}".format(revit_parameter))
                     logger.debug("- Enable mapping: {}".format(enable_mapping))
                     
-                    # Restore property selection
-                    if revit_parameter:
+                    # Only try to restore parameter selection if we have parameters loaded
+                    if revit_parameter and self.revitParametersComboBox.Items and self.revitParametersComboBox.Items.Count > 0:
                         logger.debug("Available Revit parameters:")
                         for index, item in enumerate(self.revitParametersComboBox.Items):
                             logger.debug("- Item: '{}' (type: {})".format(item, type(item)))
