@@ -78,11 +78,10 @@ def set_parameter_value(element, param_name, value):
 
 def isolate_elements(elements):
     """Isolate specific elements in the active view."""
+    from pyrevit import revit
+    
     doc = revit.doc
     current_view = doc.ActiveView
-    
-    # Use pyRevit's Transaction wrapper
-    from pyrevit import revit
     
     try:
         # Create a list of element IDs
@@ -316,7 +315,6 @@ def get_categories_in_view(doc, view, excluded_cats=None):
     Returns:
         Dictionary with category information and parameters
     """
-    from pyrevit.compat import get_elementid_value_func
     
     if excluded_cats is None:
         excluded_cats = []
@@ -378,3 +376,20 @@ def get_categories_in_view(doc, view, excluded_cats=None):
                     categories_dict[cat_id]['type_parameters'][param_name] = param
     
     return categories_dict 
+
+def get_elementid_value_func():
+    """Returns the ElementId value extraction function based on the Revit version.
+    
+    Follows API changes in Revit 2024.
+
+    Returns:
+        function: A function that returns the value of an ElementId.
+    """    
+    def get_value_post2024(item):
+        return item.Value
+
+    def get_value_pre2024(item):
+        return item.IntegerValue
+
+    version = int(HOST_APP.version)
+    return get_value_post2024 if version > 2023 else get_value_pre2024 

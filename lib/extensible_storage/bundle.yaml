@@ -1,0 +1,4 @@
+name: Extensible Storage
+author: Kris Horn
+description: A set of utilities for managing and interacting with Revit's extensible storage
+website: https://github.com/khorn06/extensible-storage-pyrevit

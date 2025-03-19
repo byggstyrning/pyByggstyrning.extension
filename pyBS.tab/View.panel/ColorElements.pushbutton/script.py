@@ -15,7 +15,11 @@ from traceback import extract_tb
 import re
 
 # Create coloringschemas directory if it doesn't exist
-script_dir = os.path.dirname(__file__)
+script_path = __file__
+panel_dir = os.path.dirname(script_path)
+tab_dir = os.path.dirname(panel_dir)
+extension_dir = os.path.dirname(os.path.dirname(tab_dir))
+script_dir = extension_dir
 schemas_dir = os.path.join(script_dir, "coloringschemas")
 if not os.path.exists(schemas_dir):
     os.makedirs(schemas_dir)
@@ -42,9 +46,9 @@ from System.Collections.Generic import List
 from pyrevit import HOST_APP, revit, DB, UI
 from pyrevit.forms import WPFWindow
 from pyrevit.framework import List
-from pyrevit.compat import get_elementid_value_func
 from pyrevit.script import get_logger
 import wpf
+from revit import revit_utils
 
 # Get logger
 logger = get_logger()
@@ -165,7 +169,7 @@ class CategoryInfo(object):
     def __init__(self, category, parameters):
         self.name = strip_accents(category.Name)
         self.cat = category
-        get_elementid_value = get_elementid_value_func()
+        get_elementid_value = revit_utils.get_elementid_value_func()
         self.int_id = get_elementid_value(category.Id)
         self.par = parameters
 
@@ -448,8 +452,8 @@ class RevitColorizerWindow(WPFWindow):
             self.selected_category_names = []
             
             # Store both the function and its result for use in different contexts
-            self.get_elementid_value_func_ref = get_elementid_value_func  # Store the function reference
-            self.get_elementid_value = get_elementid_value_func()  # Store the result of calling the function
+            self.get_elementid_value_func_ref = revit_utils.get_elementid_value_func  # Store the function reference
+            self.get_elementid_value = revit_utils.get_elementid_value_func()  # Store the result of calling the function
             
             # Create a custom ValuesInfo class
             self.ValuesInfo = self.create_custom_values_info_class()

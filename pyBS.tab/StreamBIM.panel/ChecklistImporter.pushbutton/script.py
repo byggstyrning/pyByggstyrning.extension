@@ -8,6 +8,13 @@ __title__ = "Checklist\nImporter"
 __author__ = "Byggstyrning AB"
 __doc__ = "Import StreamBIM checklist items data into Revit instance parameters"
 
+## todo:
+# - remember project selection
+# - remember checklist selection
+# - search on project and checklist name
+# - optional value mapping (e.g. "X" -> "500", "No" -> "Nej")
+
+
 import os
 import sys
 import clr
@@ -48,6 +55,9 @@ from pyrevit import revit
 from streambim import streambim_api
 from revit import revit_utils
 
+# Import extensible storage
+from extensible_storage import BaseSchema, simple_field
+
 # Initialize logger
 logger = script.get_logger()
 
@@ -55,6 +65,32 @@ logger = script.get_logger()
 Project = namedtuple('Project', ['Id', 'Name', 'Description'])
 Checklist = namedtuple('Checklist', ['Id', 'Name'])
 PropertyValue = namedtuple('PropertyValue', ['Name', 'Sample'])
+
+class StreamBIMSchema(BaseSchema):
+    """Schema for storing StreamBIM settings"""
+    
+    guid = "4ad08ded-abdc-4ff6-b601-b7f9b3916f32"  # Generate a new GUID
+    
+    @simple_field(value_type="string")
+    def project_id():
+        """The selected StreamBIM project ID"""
+
+def get_or_create_data_storage(doc):
+    """Get existing or create new data storage element."""
+    data_storage = FilteredElementCollector(doc)\
+        .OfClass(ExtensibleStorage.DataStorage)\
+        .ToElements()
+    
+    # Look for our storage with the schema
+    for ds in data_storage:
+        # Check if this storage has our schema
+        entity = ds.GetEntity(StreamBIMSchema.schema)
+        if entity.IsValid():
+            return ds
+    
+    # If not found, create a new one
+    with revit.Transaction("Create StreamBIM Storage", doc):
+        return ExtensibleStorage.DataStorage.Create(doc)
 
 class StreamBIMImporterUI(forms.WPFWindow):
     """StreamBIM Importer UI implementation."""
@@ -73,6 +109,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.checklist_items = []
         self.streambim_properties = []
         self.updated_elements = []  # Store updated elements for isolation
+        self.saved_project_id = None
 
         # Set up event handlers
         self.loginButton.Click += self.login_button_click
@@ -86,10 +123,14 @@ class StreamBIMImporterUI(forms.WPFWindow):
         # Initialize UI
         self.projectsListView.ItemsSource = self.projects
         self.checklistsListView.ItemsSource = self.checklists
+
+        # Load saved project ID
+        self.saved_project_id = self.load_saved_project_id()
+
+        # Try automatic login
         
-        # Try automatic login if we have saved tokens
         self.try_automatic_login()
-    
+
     def try_automatic_login(self):
         """Attempt to automatically log in using saved tokens."""
         if self.streambim_client.idToken:
@@ -135,15 +176,28 @@ class StreamBIMImporterUI(forms.WPFWindow):
         projects = self.streambim_client.get_projects()
         if projects:
             self.projects.Clear()
+            saved_project = None
+
             for project in projects:
                 # Handle new project-links data structure
                 attrs = project.get('attributes', {})
-                self.projects.Add(Project(
+                project_obj = Project(
                     Id=str(project.get('id')),
                     Name=attrs.get('name', 'Unknown'),
                     Description=attrs.get('description', '')
-                ))
+                )
+                self.projects.Add(project_obj)
+                
+                # Check if this is our saved project
+                if self.saved_project_id and str(project.get('id')) == self.saved_project_id:
+                    saved_project = project_obj
+            
             self.update_status("Retrieved {} projects".format(len(projects)))
+            
+            # If we have a saved project, automatically select it
+            if saved_project:
+                self.projectsListView.SelectedItem = saved_project
+                self.select_project_button_click(None, None)
         else:
             error_msg = self.streambim_client.last_error or "No projects found"
             self.update_status(error_msg)
@@ -219,6 +273,10 @@ class StreamBIMImporterUI(forms.WPFWindow):
         # Update UI
         self.selectProjectButton.IsEnabled = False
         self.update_status("Selecting project: " + selected_project.Name)
+        
+        # Save project ID
+        if self.save_project_id(selected_project.Id):
+            self.saved_project_id = selected_project.Id
         
         # Set current project
         self.streambim_client.set_current_project(selected_project.Id)
@@ -434,6 +492,10 @@ class StreamBIMImporterUI(forms.WPFWindow):
                     if not param:
                         continue
                         
+                    # Skip read-only parameters
+                    if param.IsReadOnly:
+                        continue
+                        
                     # Set parameter value directly within the transaction
                     try:
                         if param.StorageType == StorageType.String:
@@ -445,7 +507,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
                         updated += 1
                         self.updated_elements.append(element)
                     except Exception as e:
-                        logger.error("Error setting parameter value: {}".format(str(e)))
+                        logger.error("Error setting parameter value for element {}: {}".format(element.Id, str(e)))
                         
                 except Exception as e:
                     logger.error("Error processing element: {}".format(str(e)))
@@ -500,6 +562,41 @@ class StreamBIMImporterUI(forms.WPFWindow):
         """Handle double-click on checklists list view."""
         if self.checklistsListView.SelectedItem and self.selectChecklistButton.IsEnabled:
             self.select_checklist_button_click(sender, args)
+
+    def save_project_id(self, project_id):
+        """Save the project ID to extensible storage."""
+        try:
+            # Get or create data storage
+            data_storage = get_or_create_data_storage(revit.doc)
+            
+            # Get current stored value (if any)
+            schema = StreamBIMSchema(data_storage)
+            current_id = schema.get("project_id")
+            
+            # Only update if different
+            if current_id != project_id:
+                with StreamBIMSchema(data_storage) as entity:
+                    entity.set("project_id", project_id)
+                self.update_status("Saved project ID: {}".format(project_id))
+                
+            return True
+        except Exception as e:
+            logger.error("Failed to save project ID: {}".format(str(e)))
+            return False
+
+    def load_saved_project_id(self):
+        """Load the saved project ID from extensible storage."""
+        try:
+            data_storage = get_or_create_data_storage(revit.doc)
+            schema = StreamBIMSchema(data_storage)
+            
+            if schema.is_valid:
+                return schema.get("project_id")            
+            
+            return None
+        except Exception as e:
+            logger.error("Failed to load project ID: {}".format(str(e)))
+            return None
 
 # Main execution
 if __name__ == '__main__':
