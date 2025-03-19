@@ -119,9 +119,9 @@ class MappingSchema(BaseSchema):
     def revit_parameter():
         """The selected Revit parameter"""
 
-    @simple_field(value_type="bool")
+    @simple_field(value_type="string")
     def enableMapping():
-        """Whether to enable parameter mapping"""
+        """Whether to enable parameter mapping (stored as 'True' or 'False' string)"""
 
     @simple_field(value_type="string")
     def mapping_config():
@@ -749,7 +749,6 @@ class StreamBIMImporterUI(forms.WPFWindow):
         if not streambim_prop or not revit_param or not self.selected_checklist_id:
             self.update_status("Cannot save mapping: missing property or parameter selection")
             return False
-        
             
         mapping_data = []
 
@@ -773,7 +772,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
                 entity.set("checklist_id", self.selected_checklist_id)
                 entity.set("streambim_property", streambim_prop)
                 entity.set("revit_parameter", str(revit_param))
-                entity.set("enable_mapping", self.enableMappingCheckBox.IsChecked)
+                entity.set("enableMapping", str(self.enableMappingCheckBox.IsChecked))
                 entity.set("mapping_config", mapping_json)
                 
             self.mapping_storage = mapping_storage
@@ -785,16 +784,22 @@ class StreamBIMImporterUI(forms.WPFWindow):
             
     def load_mapping_configuration(self):
         """Load mapping configuration from extensible storage if available."""
-        streambim_prop = self.streamBIMPropertiesComboBox.SelectedItem
-        revit_param = self.revitParametersComboBox.SelectedItem
-
-        # Clear the mappings list
-        self.mappings.Clear()
-
-        if not streambim_prop or not self.selected_checklist_id:
+        if self.is_loading_configuration:
             return False
             
+        self.is_loading_configuration = True
         try:
+            streambim_prop = self.streamBIMPropertiesComboBox.SelectedItem
+            revit_param = self.revitParametersComboBox.SelectedItem
+
+            # Clear the mappings list
+            self.mappings.Clear()
+            self.enableMappingCheckBox.IsChecked = False
+            self.mappingGrid.Visibility = Visibility.Collapsed
+
+            if not streambim_prop or not self.selected_checklist_id:
+                return False
+                
             # Get mapping storage
             mapping_storage = get_or_create_mapping_storage(revit.doc)
             
@@ -809,11 +814,13 @@ class StreamBIMImporterUI(forms.WPFWindow):
                     # Found matching configuration
                     mapping_json = schema.get("mapping_config")
                     revit_parameter = schema.get("revit_parameter")
+                    enable_mapping = schema.get("enableMapping")
                     
                     logger.debug("Found matching configuration:")
                     logger.debug("- Checklist ID: {}".format(checklist_id))
                     logger.debug("- StreamBIM property: {}".format(prop))
                     logger.debug("- Revit parameter to restore: {}".format(revit_parameter))
+                    logger.debug("- Enable mapping: {}".format(enable_mapping))
                     
                     # Restore property selection
                     if revit_parameter:
@@ -835,9 +842,9 @@ class StreamBIMImporterUI(forms.WPFWindow):
                                 RevitValue=mapping.get('RevitValue', '')
                             ))
                     
-                    # Enable mapping checkbox
-                    self.enableMappingCheckBox.IsChecked = True
-                    self.mappingGrid.Visibility = Visibility.Visible
+                    # Enable mapping checkbox if it was enabled
+                    self.enableMappingCheckBox.IsChecked = enable_mapping.lower() == "true" if enable_mapping else False
+                    self.mappingGrid.Visibility = Visibility.Visible if self.enableMappingCheckBox.IsChecked else Visibility.Collapsed
                     self.update_status("Loaded mapping configuration")
                     logger.debug("Loaded mapping configuration: {}".format(mapping_json))
 
@@ -847,6 +854,8 @@ class StreamBIMImporterUI(forms.WPFWindow):
         except Exception as e:
             logger.error("Failed to load mapping configuration: {}".format(str(e)))
             return False
+        finally:
+            self.is_loading_configuration = False
 
     def revit_parameter_selected(self, sender, args):
         """Handle Revit parameter selection."""
