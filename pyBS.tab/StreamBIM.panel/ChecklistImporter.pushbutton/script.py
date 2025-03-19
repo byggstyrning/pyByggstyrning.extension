@@ -14,12 +14,20 @@ import clr
 import json
 from collections import namedtuple
 
-# Add the extension directory to the path
+# Add the extension directory to the path - FIXED PATH RESOLUTION
 import os.path as op
-extension_dir = op.dirname(op.dirname(op.dirname(op.dirname(__file__))))
+script_path = __file__
+panel_dir = op.dirname(script_path)
+tab_dir = op.dirname(panel_dir)
+extension_dir = op.dirname(op.dirname(tab_dir))
 lib_path = op.join(extension_dir, 'lib')
+
 if lib_path not in sys.path:
     sys.path.append(lib_path)
+    print("Added lib path to sys.path")
+
+# Try direct import from current directory's parent path
+sys.path.append(op.dirname(op.dirname(panel_dir)))
 
 # Add reference to WPF
 clr.AddReference("PresentationFramework")
