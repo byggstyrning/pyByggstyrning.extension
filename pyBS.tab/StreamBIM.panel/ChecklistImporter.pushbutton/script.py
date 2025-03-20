@@ -9,16 +9,17 @@ __author__ = "Byggstyrning AB"
 __doc__ = "Import StreamBIM checklist items data into Revit instance parameters"
 
 ## todo:
-# - remember project selection
-# - remember checklist selection
-# - search on project and checklist name
-# - optional value mapping (e.g. "X" -> "500", "No" -> "Nej")
+# - kunna edita konfigen
+# - kör-knapp för att köra alla importer
+# - köra suync på events
 
 
 import os
 import sys
 import clr
 import json
+import pickle
+import base64
 from collections import namedtuple
 
 # Add the extension directory to the path - FIXED PATH RESOLUTION
@@ -40,12 +41,16 @@ clr.AddReference("PresentationFramework")
 clr.AddReference("PresentationCore")
 clr.AddReference("WindowsBase")
 clr.AddReference('RevitAPI')
+clr.AddReference('RevitAPIUI')
 from Autodesk.Revit.DB import *
 
 from System import EventHandler
 from System.Collections.ObjectModel import ObservableCollection
 from System.Dynamic import ExpandoObject
 from System.Windows import MessageBox, MessageBoxButton, Visibility
+from System.Windows.Media import SolidColorBrush
+from System.Windows.Media.Animation import DoubleAnimation
+from System.Windows.Media import Colors
 
 from pyrevit import script
 from pyrevit import forms
@@ -57,6 +62,13 @@ from revit import revit_utils
 
 # Import extensible storage
 from extensible_storage import BaseSchema, simple_field
+
+# Import StreamBIMSettingsSchema and related functions directly from the module
+from streambim.streambim_api import StreamBIMSettingsSchema
+from streambim.streambim_api import get_or_create_settings_storage
+from streambim.streambim_api import load_configs_with_pickle
+from streambim.streambim_api import save_configs_with_pickle
+from streambim.streambim_api import get_saved_project_id
 
 # Initialize logger
 logger = script.get_logger()
@@ -93,23 +105,18 @@ class MappingEntry(object):
             self._checklist_value, self._revit_value
         )
 
-class StreamBIMSchema(BaseSchema):
-    """Schema for storing StreamBIM settings"""
-    
-    guid = "4ad08ded-abdc-4ff6-b601-b7f9b3916f32"
-    
-    @simple_field(value_type="string")
-    def project_id():
-        """The selected StreamBIM project ID"""
-
 class MappingSchema(BaseSchema):
     """Schema for storing parameter mapping configurations"""
     
-    guid = "8ee65b71-f13c-492a-9cf8-721ac98d4f7b"
+    guid = "f810d3a5-abe3-46e5-989b-b4da078b356b"
     
     @simple_field(value_type="string")
     def checklist_id():
         """The selected checklist ID"""
+
+    @simple_field(value_type="string")
+    def checklist_name():
+        """The selected checklist name"""
         
     @simple_field(value_type="string")
     def streambim_property():
@@ -136,7 +143,7 @@ def get_or_create_data_storage(doc):
     # Look for our storage with the schema
     for ds in data_storage:
         # Check if this storage has our schema
-        entity = ds.GetEntity(StreamBIMSchema.schema)
+        entity = ds.GetEntity(StreamBIMSettingsSchema.schema)
         if entity.IsValid():
             return ds
     
@@ -145,21 +152,39 @@ def get_or_create_data_storage(doc):
         return ExtensibleStorage.DataStorage.Create(doc)
 
 def get_or_create_mapping_storage(doc):
-    """Get existing or create new mapping data storage element."""
-    data_storage = FilteredElementCollector(doc)\
-        .OfClass(ExtensibleStorage.DataStorage)\
-        .ToElements()
-    
-    # Look for our storage with the schema
-    for ds in data_storage:
-        # Check if this storage has our schema
-        entity = ds.GetEntity(MappingSchema.schema)
-        if entity.IsValid():
-            return ds
-    
-    # If not found, create a new one
-    with revit.Transaction("Create StreamBIM Mapping Storage", doc):
-        return ExtensibleStorage.DataStorage.Create(doc)
+    """Get existing or create new data storage element."""
+    if not doc:
+        logger.error("No active document available")
+        return None
+        
+    try:
+        logger.debug("Searching for existing mapping storage...")
+        data_storage = FilteredElementCollector(doc)\
+            .OfClass(ExtensibleStorage.DataStorage)\
+            .ToElements()
+        
+        # Look for our storage with the schema
+        for ds in data_storage:
+            try:
+                # Check if this storage has our schema
+                entity = ds.GetEntity(MappingSchema.schema)
+                if entity.IsValid():
+                    logger.debug("Found existing mapping storage")
+                    return ds
+            except Exception as e:
+                logger.debug("Error checking storage entity: {}".format(str(e)))
+                continue
+        
+        logger.debug("No existing mapping storage found, creating new one...")
+        # If not found, create a new one
+        with revit.Transaction("Create StreamBIM Mapping Storage", doc):
+            new_storage = ExtensibleStorage.DataStorage.Create(doc)
+            logger.debug("Created new mapping storage")
+            return new_storage
+            
+    except Exception as e:
+        logger.error("Error in get_or_create_mapping_storage: {}".format(str(e)))
+        return None
 
 class StreamBIMImporterUI(forms.WPFWindow):
     """StreamBIM Importer UI implementation."""
@@ -251,7 +276,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
         # Update buttons
         self.loginButton.IsEnabled = False
         self.logoutButton.IsEnabled = True
-        self.passwordBox.Password = ""  # Clear password for security
+        self.passwordBox.IsEnabled = False
         
         # Enable project tab and switch to it
         self.projectTab.IsEnabled = True
@@ -411,7 +436,8 @@ class StreamBIMImporterUI(forms.WPFWindow):
         if checklist_items:
             self.checklist_items = checklist_items
             self.selected_checklist_id = selected_checklist.Id  # Store for later use
-            
+            self.selected_checklist_name = selected_checklist.Name
+
             # Extract available properties from checklist items
             self.extract_available_properties()
             
@@ -693,12 +719,12 @@ class StreamBIMImporterUI(forms.WPFWindow):
             data_storage = get_or_create_data_storage(revit.doc)
             
             # Get current stored value (if any)
-            schema = StreamBIMSchema(data_storage)
+            schema = StreamBIMSettingsSchema(data_storage)
             current_id = schema.get("project_id")
             
             # Only update if different
             if current_id != project_id:
-                with StreamBIMSchema(data_storage) as entity:
+                with StreamBIMSettingsSchema(data_storage) as entity:
                     entity.set("project_id", project_id)
                 self.update_status("Saved project ID: {}".format(project_id))
                 
@@ -711,7 +737,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
         """Load the saved project ID from extensible storage."""
         try:
             data_storage = get_or_create_data_storage(revit.doc)
-            schema = StreamBIMSchema(data_storage)
+            schema = StreamBIMSettingsSchema(data_storage)
             
             if schema.is_valid:
                 return schema.get("project_id")            
@@ -735,7 +761,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.update_status("Mapping configuration saved")
         
     def save_current_mapping(self):
-        """Save the current mapping configuration to extensible storage."""
+        """Save the current mapping configuration to storage."""
         streambim_prop = self.streamBIMPropertiesComboBox.SelectedItem
         revit_param = self.revitParametersComboBox.SelectedItem
         
@@ -743,7 +769,8 @@ class StreamBIMImporterUI(forms.WPFWindow):
         logger.debug("- StreamBIM property: {}".format(streambim_prop))
         logger.debug("- Revit parameter: {}".format(revit_param))
         logger.debug("- Selected checklist ID: {}".format(self.selected_checklist_id))
-        
+        logger.debug("- Selected checklist name: {}".format(self.selected_checklist_name))
+
         # Debug print each mapping entry
         for mapping in self.mappings:
             logger.debug("- Mapping: {}".format(mapping))
@@ -766,32 +793,67 @@ class StreamBIMImporterUI(forms.WPFWindow):
         logger.debug("Mapping JSON: {}".format(mapping_json))
         
         try:
-            # Get or create data storage
-            mapping_storage = get_or_create_mapping_storage(revit.doc)
+            # Create configuration dictionary for the new config
+            new_config = {
+                'checklist_id': self.selected_checklist_id,
+                'checklist_name': self.selected_checklist_name,
+                'streambim_property': streambim_prop,
+                'revit_parameter': str(revit_param),
+                'mapping_enabled': self.enableMappingCheckBox.IsChecked,
+                'mapping_config': mapping_json,
+                'id': None  # No element ID for new configurations
+            }
             
-            # Save mapping configuration
-            with MappingSchema(mapping_storage) as entity:
-                entity.set("checklist_id", self.selected_checklist_id)
-                entity.set("streambim_property", streambim_prop)
-                entity.set("revit_parameter", str(revit_param))
-                entity.set("enableMapping", str(self.enableMappingCheckBox.IsChecked))
-                entity.set("mapping_config", mapping_json)
+            # Load existing configurations
+            existing_configs = load_configs_with_pickle(revit.doc)
+            logger.debug("Loaded {} existing configurations".format(len(existing_configs)))
+            
+            # Check if we already have a config with the same checklist_id and property
+            updated_existing = False
+            for i, config in enumerate(existing_configs):
+                if (config.get('checklist_id') == self.selected_checklist_id and 
+                    config.get('streambim_property') == streambim_prop):
+                    # Update the existing config
+                    logger.debug("Updating existing configuration")
+                    existing_configs[i] = new_config
+                    updated_existing = True
+                    break
+            
+            # If we didn't update an existing config, append the new one
+            if not updated_existing:
+                logger.debug("Adding new configuration")
+                existing_configs.append(new_config)
+            
+            # Save all configurations
+            success = save_configs_with_pickle(revit.doc, existing_configs)
+            
+            if success:
+                self.update_status("Mapping configuration saved")
+                return True
+            else:
+                self.update_status("Failed to save mapping configuration")
+                return False
                 
-            self.mapping_storage = mapping_storage
-            self.update_status("Mapping configuration saved: {}".format(mapping_json))
-            return True
         except Exception as e:
             logger.error("Failed to save mapping configuration: {}".format(str(e)))
+            self.update_status("Error saving configuration: {}".format(str(e)))
             return False
-            
+
     def load_mapping_configuration(self):
         """Load mapping configuration from extensible storage if available."""
         if self.is_loading_configuration:
+            logger.debug("Already loading configuration, skipping")
             return False
             
         self.is_loading_configuration = True
         try:
+            # Check if we have a valid Revit document
+            if not revit.doc:
+                logger.error("No active Revit document")
+                return False
+                
             streambim_prop = self.streamBIMPropertiesComboBox.SelectedItem
+            logger.debug("Loading configuration for StreamBIM property: {}".format(streambim_prop))
 
             # Clear the mappings list
             self.mappings.Clear()
@@ -799,57 +861,71 @@ class StreamBIMImporterUI(forms.WPFWindow):
             self.mappingGrid.Visibility = Visibility.Collapsed
 
             if not streambim_prop or not self.selected_checklist_id:
+                logger.debug("No StreamBIM property or checklist ID selected")
                 return False
                 
-            # Get mapping storage
-            mapping_storage = get_or_create_mapping_storage(revit.doc)
+            # Load configurations from new pickle-based storage
+            loaded_configs = load_configs_with_pickle(revit.doc)
+            logger.debug("Loaded {} configurations from storage".format(len(loaded_configs)))
             
-            # Check if we have a matching configuration
-            schema = MappingSchema(mapping_storage)
-            
-            if schema.is_valid:
-                checklist_id = schema.get("checklist_id")
-                prop = schema.get("streambim_property")
+            # Find a matching configuration
+            matching_config = None
+            for config in loaded_configs:
+                logger.debug("Checking config: checklist_id={}, property={}".format(
+                    config.get('checklist_id'), config.get('streambim_property')))
                 
-                if checklist_id == self.selected_checklist_id and prop == streambim_prop:
-                    # Found matching configuration
-                    mapping_json = schema.get("mapping_config")
-                    revit_parameter = schema.get("revit_parameter")
-                    enable_mapping = schema.get("enableMapping")
-                    
-                    logger.debug("Found matching configuration:")
-                    logger.debug("- Checklist ID: {}".format(checklist_id))
-                    logger.debug("- StreamBIM property: {}".format(prop))
-                    logger.debug("- Revit parameter to restore: {}".format(revit_parameter))
-                    logger.debug("- Enable mapping: {}".format(enable_mapping))
-                    
-                    # Only try to restore parameter selection if we have parameters loaded
-                    if revit_parameter and self.revitParametersComboBox.Items and self.revitParametersComboBox.Items.Count > 0:
-                        logger.debug("Available Revit parameters:")
-                        for index, item in enumerate(self.revitParametersComboBox.Items):
-                            logger.debug("- Item: '{}' (type: {})".format(item, type(item)))
-                            if str(item).strip() == str(revit_parameter).strip():
-                                logger.debug("Found matching parameter: {} at index {}".format(item, index))
-                                self.revitParametersComboBox.SelectedIndex = index
-                                break
-                    
-                    # Restore mapping data
-                    self.mappings.Clear()
-                    if mapping_json:
-                        mapping_data = json.loads(mapping_json)
+                if (config.get('checklist_id') == self.selected_checklist_id and 
+                    config.get('streambim_property') == streambim_prop):
+                    matching_config = config
+                    logger.debug("Found matching configuration")
+                    break
+            
+            if matching_config:
+                # Found matching configuration
+                revit_parameter = matching_config.get('revit_parameter')
+                mapping_config = matching_config.get('mapping_config')
+                mapping_enabled = matching_config.get('mapping_enabled')
+
+                logger.debug("Found matching configuration:")
+                logger.debug("- Checklist ID: {}".format(matching_config.get('checklist_id')))
+                logger.debug("- Checklist name: {}".format(matching_config.get('checklist_name')))
+                logger.debug("- StreamBIM property: {}".format(matching_config.get('streambim_property')))
+                logger.debug("- Revit parameter to restore: {}".format(revit_parameter))
+                logger.debug("- Enable mapping: {}".format(mapping_enabled))
+                
+                # Only try to restore parameter selection if we have parameters loaded
+                if revit_parameter and self.revitParametersComboBox.Items and self.revitParametersComboBox.Items.Count > 0:
+                    logger.debug("Available Revit parameters:")
+                    for index, item in enumerate(self.revitParametersComboBox.Items):
+                        logger.debug("- Item: '{}' (type: {})".format(item, type(item)))
+                        if str(item).strip() == str(revit_parameter).strip():
+                            logger.debug("Found matching parameter: {} at index {}".format(item, index))
+                            self.revitParametersComboBox.SelectedIndex = index
+                            break
+                
+                # Restore mapping data
+                self.mappings.Clear()
+                if mapping_config:
+                    try:
+                        mapping_data = json.loads(mapping_config)
                         for mapping in mapping_data:
                             self.mappings.Add(MappingEntry(
                                 ChecklistValue=mapping.get('ChecklistValue', ''),
                                 RevitValue=mapping.get('RevitValue', '')
                             ))
-                    
-                    # Enable mapping checkbox if it was enabled
-                    self.enableMappingCheckBox.IsChecked = enable_mapping.lower() == "true" if enable_mapping else False
-                    self.mappingGrid.Visibility = Visibility.Visible if self.enableMappingCheckBox.IsChecked else Visibility.Collapsed
-                    self.update_status("Loaded mapping configuration")
-                    logger.debug("Loaded mapping configuration: {}".format(mapping_json))
+                        logger.debug("Restored {} mapping entries".format(len(mapping_data)))
+                    except Exception as e:
+                        logger.error("Error parsing mapping JSON: {}".format(str(e)))
+                
+                # Enable mapping checkbox if it was enabled
+                self.enableMappingCheckBox.IsChecked = mapping_enabled if mapping_enabled is not None else False
+                self.mappingGrid.Visibility = Visibility.Visible if self.enableMappingCheckBox.IsChecked else Visibility.Collapsed
+                self.update_status("Loaded mapping configuration")
+                logger.debug("Loaded mapping configuration")
 
-                    return True
+                return True
+            else:
+                logger.debug("No matching configuration found in new storage")
             
             return False
         except Exception as e:
@@ -877,6 +953,74 @@ class StreamBIMImporterUI(forms.WPFWindow):
         if self.mappingDataGrid.SelectedItem:
             self.mappings.Remove(self.mappingDataGrid.SelectedItem)
             self.update_status("Removed selected mapping row")
+
+    def save_button_click(self, sender, args):
+        """Save the current configuration when the Save button is clicked."""
+        if not self.current_checklist:
+            self.update_status("No checklist selected")
+            return
+            
+        if not self.selected_property:
+            self.update_status("No property selected")
+            return
+            
+        if not self.selected_parameter:
+            self.update_status("No parameter selected")
+            return
+            
+        # Handle mapping data
+        mapping_data = []
+        for mapping in self.mappings:
+            if mapping.ChecklistValue and mapping.RevitValue:
+                mapping_data.append({
+                    'ChecklistValue': mapping.ChecklistValue,
+                    'RevitValue': mapping.RevitValue
+                })
+        
+        self.mapping_config = json.dumps(mapping_data)
+        
+        try:
+            # Create configuration dictionary for the new config
+            new_config = {
+                'checklist_id': self.current_checklist['id'],
+                'checklist_name': self.current_checklist['attributes']['name'],
+                'streambim_property': self.selected_property,
+                'revit_parameter': self.selected_parameter,
+                'mapping_enabled': self.enableMappingCheckBox.IsChecked == True,
+                'mapping_config': self.mapping_config
+            }
+            
+            # Load existing configurations
+            existing_configs = load_configs_with_pickle(revit.doc)
+            logger.debug("Loaded {} existing configurations".format(len(existing_configs)))
+            
+            # Check if we already have a config with the same checklist_id and property
+            updated_existing = False
+            for i, config in enumerate(existing_configs):
+                if (config.get('checklist_id') == self.current_checklist['id'] and 
+                    config.get('streambim_property') == self.selected_property):
+                    # Update the existing config
+                    logger.debug("Updating existing configuration")
+                    existing_configs[i] = new_config
+                    updated_existing = True
+                    break
+            
+            # If we didn't update an existing config, append the new one
+            if not updated_existing:
+                logger.debug("Adding new configuration")
+                existing_configs.append(new_config)
+            
+            # Save all configurations
+            success = save_configs_with_pickle(revit.doc, existing_configs)
+            
+            if success:
+                self.update_status("Configuration saved")
+            else:
+                self.update_status("Error saving configuration")
+                
+        except Exception as e:
+            logger.error("Error saving configuration: {}".format(str(e)))
+            self.update_status("Error saving configuration: {}".format(str(e)))
 
 # Main execution
 if __name__ == '__main__':

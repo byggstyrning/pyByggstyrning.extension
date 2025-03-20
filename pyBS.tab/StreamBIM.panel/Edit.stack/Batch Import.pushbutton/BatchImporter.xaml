@@ -1,0 +1,47 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="StreamBIM Batch Importer" Width="700" Height="600" WindowStartupLocation="CenterScreen">
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0">
+            <TextBlock Text="StreamBIM Batch Importer" FontSize="16" FontWeight="Bold" Margin="0,0,0,10"/>
+            <TextBlock Text="Run all saved StreamBIM checklist configurations at once" Margin="0,0,0,15"/>
+        </StackPanel>
+
+        <TextBlock x:Name="summaryTextBlock" Grid.Row="1" Text="Found 0 configurations" FontWeight="Bold" Margin="0,0,0,10"/>
+
+        <ListView x:Name="configsListView" Grid.Row="2" Margin="0,0,0,10">
+            <ListView.View>
+                <GridView>
+                    <GridViewColumn Header="Checklist" DisplayMemberBinding="{Binding ChecklistName}" Width="150"/>
+                    <GridViewColumn Header="Mapping" DisplayMemberBinding="{Binding DisplayName}" Width="250"/>
+                    <GridViewColumn Header="Status" DisplayMemberBinding="{Binding Status}" Width="250"/>
+                </GridView>
+            </ListView.View>
+        </ListView>
+
+        <StackPanel Grid.Row="3" Margin="0,10,0,10">
+            <TextBlock Text="Overall Progress:" FontWeight="Bold" Margin="0,0,0,5"/>
+            <ProgressBar x:Name="mainProgressBar" Height="20" Minimum="0" Maximum="100" Value="0"/>
+        </StackPanel>
+
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,10">
+            <Button x:Name="runAllButton" Content="Run All Configurations" Width="150" Height="30" Margin="0,0,10,0"/>
+            <Button x:Name="runSelectedButton" Content="Run Selected" Width="150" Height="30" Margin="0,0,10,0"/>
+        </StackPanel>
+
+        <StatusBar Grid.Row="5">
+            <StatusBarItem>
+                <TextBlock x:Name="statusTextBlock" Text="Ready" />
+            </StatusBarItem>
+        </StatusBar>
+    </Grid>
+</Window> 

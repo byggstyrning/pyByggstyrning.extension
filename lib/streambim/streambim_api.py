@@ -3,7 +3,198 @@ import urllib2
 import base64
 from collections import namedtuple
 import os
+import pickle
 
+# Import Revit API and pyRevit modules
+import clr
+clr.AddReference('RevitAPI')
+from Autodesk.Revit.DB import *
+
+from pyrevit import script
+from pyrevit import revit
+
+# Import extensible storage
+# Add the parent directory to sys.path to ensure the extensible_storage module can be found
+import sys
+import os.path as op
+current_dir = op.dirname(__file__)
+lib_dir = op.dirname(current_dir)
+if lib_dir not in sys.path:
+    sys.path.append(lib_dir)
+
+try:
+    from extensible_storage import BaseSchema, simple_field
+except ImportError:
+    # Handle the import error gracefully
+    print("Warning: extensible_storage module could not be imported in streambim_api.py")
+    BaseSchema = object
+    def simple_field(**kwargs):
+        def decorator(func):
+            return func
+        return decorator
+
+# Initialize logger
+logger = script.get_logger()
+
+# Define the StreamBIMSettingsSchema
+class StreamBIMSettingsSchema(BaseSchema):
+    """Schema for storing StreamBIM settings and configurations using pickle serialization"""
+    
+    # Generate a completely new GUID to avoid conflicts with existing schemas
+    guid = "82c63e54-9b4c-45c8-a290-47d3b71e8a56"
+    
+    @simple_field(value_type="string")
+    def project_id():
+        """The selected StreamBIM project ID"""
+        
+    @simple_field(value_type="string")
+    def pickled_configs():
+        """Base64 encoded pickle of all checklist configurations"""
+
+def get_or_create_settings_storage(doc):
+    """Get existing or create new StreamBIM settings storage element."""
+    if not doc:
+        logger.error("No active document available")
+        return None
+        
+    try:
+        logger.debug("Searching for StreamBIM settings storage...")
+        data_storages = FilteredElementCollector(doc)\
+            .OfClass(ExtensibleStorage.DataStorage)\
+            .ToElements()
+        
+        # Look for our storage with the schema
+        for ds in data_storages:
+            try:
+                # Check if this storage has our schema
+                entity = ds.GetEntity(StreamBIMSettingsSchema.schema)
+                if entity.IsValid():
+                    logger.debug("Found existing StreamBIM settings storage")
+                    return ds
+            except Exception as e:
+                logger.debug("Error checking storage entity: {}".format(str(e)))
+                continue
+        
+        logger.debug("No existing StreamBIM settings storage found, creating new one...")
+        # If not found, create a new one
+        with revit.Transaction("Create StreamBIM Settings Storage", doc):
+            new_storage = ExtensibleStorage.DataStorage.Create(doc)
+            logger.debug("Created new StreamBIM settings storage")
+            return new_storage
+            
+    except Exception as e:
+        logger.error("Error in get_or_create_settings_storage: {}".format(str(e)))
+        return None
+
+def load_configs_with_pickle(doc):
+    """Load configurations from StreamBIM storage using pickle serialization."""
+    if not doc:
+        logger.error("No active document available")
+        return []
+        
+    try:
+        # Get storage
+        storage = get_or_create_settings_storage(doc)
+        if not storage:
+            logger.error("Failed to get or create StreamBIM storage")
+            return []
+            
+        # Load configurations
+        schema = StreamBIMSettingsSchema(storage)
+        if not schema.is_valid:
+            logger.debug("Invalid StreamBIM schema")
+            return []
+            
+        pickled_configs = schema.get("pickled_configs")
+        if not pickled_configs:
+            logger.debug("No configurations found in storage")
+            return []
+            
+        # Decode and unpickle
+        try:
+            decoded_data = base64.b64decode(pickled_configs)
+            configs = pickle.loads(decoded_data)
+            logger.debug("Successfully loaded {} configurations".format(len(configs)))
+            return configs
+        except Exception as e:
+            logger.error("Error unpickling configurations: {}".format(str(e)))
+            return []
+    except Exception as e:
+        logger.error("Error loading configurations: {}".format(str(e)))
+        return []
+
+def save_configs_with_pickle(doc, config_dicts):
+    """Save configurations to StreamBIM storage using pickle serialization."""
+    if not doc:
+        logger.error("No active document available")
+        return False
+        
+    try:
+        # Get or create data storage
+        storage = get_or_create_settings_storage(doc)
+        if not storage:
+            logger.error("Failed to get or create StreamBIM storage")
+            return False
+        
+        # Pickle and encode the data
+        try:
+            pickled_data = pickle.dumps(config_dicts)
+            encoded_data = base64.b64encode(pickled_data)
+            
+            # Save to storage
+            with revit.Transaction("Save StreamBIM Configurations", doc):
+                with StreamBIMSettingsSchema(storage) as entity:
+                    # Preserve existing project_id if present
+                    schema = StreamBIMSettingsSchema(storage)
+                    if schema.is_valid:
+                        project_id = schema.get("project_id")
+                        if project_id:
+                            entity.set("project_id", project_id)
+                            
+                    # Save configurations
+                    entity.set("pickled_configs", encoded_data)
+                    
+            logger.debug("Saved {} configurations to StreamBIM storage".format(len(config_dicts)))
+            return True
+        except Exception as e:
+            logger.error("Error pickling configurations: {}".format(str(e)))
+            return False
+    except Exception as e:
+        logger.error("Error saving configurations: {}".format(str(e)))
+        return False
+
+def get_saved_project_id(doc):
+    """Get the saved StreamBIM project ID from extensible storage."""
+    if not doc:
+        logger.error("No active document available")
+        return None
+        
+    try:
+        logger.debug("Searching for StreamBIM settings storage...")
+        data_storages = FilteredElementCollector(doc)\
+            .OfClass(ExtensibleStorage.DataStorage)\
+            .ToElements()
+        
+        for ds in data_storages:
+            try:
+                # Check if this storage has our schema
+                entity = ds.GetEntity(StreamBIMSettingsSchema.schema)
+                if entity.IsValid():
+                    schema = StreamBIMSettingsSchema(ds)
+                    if schema.is_valid:
+                        project_id = schema.get("project_id")
+                        if project_id:
+                            logger.debug("Found saved project ID: {0}".format(project_id))
+                            return project_id
+            except Exception as e:
+                logger.debug("Error checking storage entity: {0}".format(str(e)))
+                continue
+        
+        logger.debug("No saved project ID found")
+        return None
+    except Exception as e:
+        logger.error("Error in get_saved_project_id: {0}".format(str(e)))
+        return None
 
 # StreamBIM API client
 class StreamBIMClient:

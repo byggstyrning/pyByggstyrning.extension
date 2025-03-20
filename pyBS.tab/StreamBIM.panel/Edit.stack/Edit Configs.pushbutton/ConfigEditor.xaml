@@ -1,0 +1,112 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="StreamBIM Configuration Editor" Width="700" Height="600" WindowStartupLocation="CenterScreen">
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0">
+            <TextBlock Text="StreamBIM Configuration Editor" FontSize="16" FontWeight="Bold" Margin="0,0,0,10"/>
+            <TextBlock Text="Edit and manage checklist configuration mappings" Margin="0,0,0,15"/>
+        </StackPanel>
+
+        <!-- Main Content with TabControl -->
+        <TabControl Grid.Row="1" x:Name="tabControl">
+            <!-- Configurations List Tab -->
+            <TabItem Header="Configurations" x:Name="configsTab">
+                <Grid Margin="10">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <ListView x:Name="configsListView" Grid.Row="0" Margin="0,0,0,10" SelectionMode="Single">
+                        <ListView.View>
+                            <GridView>
+                                <GridViewColumn Header="Checklist" DisplayMemberBinding="{Binding ChecklistName}" Width="150"/>
+                                <GridViewColumn Header="Mapping" DisplayMemberBinding="{Binding DisplayName}" Width="300"/>
+                                <GridViewColumn Header="Details" DisplayMemberBinding="{Binding MappingDetails}" Width="150"/>
+                            </GridView>
+                        </ListView.View>
+                    </ListView>
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Left">
+                        <Button x:Name="editButton" Content="Edit Selected" Width="120" Height="30" Margin="0,0,10,0" IsEnabled="False"/>
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+
+            <!-- Edit Configuration Tab -->
+            <TabItem Header="Edit Configuration" x:Name="editConfigTab" IsEnabled="False">
+                <Grid Margin="10">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="150"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Text="Checklist:" Grid.Row="0" Grid.Column="0" Margin="0,10,0,5"/>
+                    <TextBlock x:Name="checklistNameTextBlock" Grid.Row="0" Grid.Column="1" Margin="0,10,0,5" TextWrapping="Wrap"/>
+                    
+                    <TextBlock Text="StreamBIM Property:" Grid.Row="1" Grid.Column="0" Margin="0,10,0,5"/>
+                    <TextBlock x:Name="streambimPropertyTextBlock" Grid.Row="1" Grid.Column="1" Margin="0,10,0,5" TextWrapping="Wrap"/>
+                    
+                    <TextBlock Text="Revit Parameter:" Grid.Row="2" Grid.Column="0" Margin="0,10,0,5"/>
+                    <TextBlock x:Name="revitParameterTextBlock" Grid.Row="2" Grid.Column="1" Margin="0,10,0,5" TextWrapping="Wrap"/>
+                    
+                    <CheckBox x:Name="enableMappingCheckBox" Content="Enable Parameter Mapping" Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,15,0,5" IsChecked="False" />
+                    
+                    <Grid Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" Grid.RowSpan="2" x:Name="mappingGrid" Visibility="Collapsed">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        
+                        <TextBlock Text="Parameter Mapping" Grid.Row="0" FontWeight="Bold" Margin="0,10,0,5"/>
+                        
+                        <DataGrid x:Name="mappingDataGrid" Grid.Row="1" AutoGenerateColumns="False" Margin="0,5,0,5" 
+                                  CanUserAddRows="True" CanUserDeleteRows="True">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Checklist Value" 
+                                                  Binding="{Binding ChecklistValue, UpdateSourceTrigger=PropertyChanged}" 
+                                                  Width="*"/>
+                                <DataGridTextColumn Header="Revit Value" 
+                                                  Binding="{Binding RevitValue, UpdateSourceTrigger=PropertyChanged}" 
+                                                  Width="*"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        
+                        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,5,0,0">
+                            <Button x:Name="addNewRowButton" Content="Add New Row" Width="120" Height="30" Margin="0,0,10,0"/>
+                            <Button x:Name="removeRowButton" Content="Remove Selected Row" Width="150" Height="30"/>
+                        </StackPanel>
+                    </Grid>
+                    
+                    <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,15,0,0">
+                        <Button x:Name="backButton" Content="Back" Width="100" Height="30" Margin="0,0,10,0"/>
+                        <Button x:Name="saveButton" Content="Save Changes" Width="120" Height="30" Margin="0,0,10,0"/>
+                        <Button x:Name="deleteButton" Content="Delete Configuration" Width="150" Height="30"/>
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+        </TabControl>
+        
+        <!-- Status Bar -->
+        <StatusBar Grid.Row="2">
+            <StatusBarItem>
+                <TextBlock x:Name="statusTextBlock" Text="Ready" />
+            </StatusBarItem>
+        </StatusBar>
+    </Grid>
+</Window>
