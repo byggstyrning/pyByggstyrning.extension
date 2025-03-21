@@ -1,5 +1,7 @@
 # pyByggstyrning
 
+![pyByggstyrning Logo](pyByggstyrning.png)
+
 ## Overview
 pyByggstyrning is a pyRevit extension designed to enhance your Revit workflow with specialized tools organized for use in model based construction into several panels:
 
