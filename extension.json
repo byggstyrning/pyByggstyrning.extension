@@ -1,13 +1,12 @@
 {
     "builtin": "False",
-    "default_enabled": "True",
     "type": "extension",
     "rocket_mode_compatible": "true",
     "name": "pyByggstyrning",
     "description": "Tools for model based construction.",
     "author": "Jonatan Jacobsson",
     "author_profile": "https://github.com/jonatanjacobsson",
-    "url": "https://github.com/byggstyrning/pyByggstyrning",
+    "url": "https://github.com/byggstyrning/pyByggstyrning.extension.git",
     "website": "https://www.byggstyrning.se",
     "image": "",
     "dependencies": [""]

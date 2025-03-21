@@ -408,7 +408,7 @@ class StreamBIMClient:
             # Create base query object
             query = {
                 "key": "object",
-                "sort": {"field": "status", "descending": False},
+                "sort": {"field": "title", "descending": False},
                 "page": {"skip": 0, "limit": limit if limit > 0 else 100000},
                 "filter": {
                     "checklist": checklist_id

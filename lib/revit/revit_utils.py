@@ -4,7 +4,6 @@ import Autodesk.Revit.DB as DB
 from Autodesk.Revit.DB import *
 from pyrevit import revit, HOST_APP
 from System.Collections.Generic import List
-import random
 from unicodedata import normalize
 from unicodedata import category as unicode_category
 
@@ -46,17 +45,38 @@ def get_element_by_ifc_guid(ifc_guid):
 
 def get_available_parameters():
     """Get all available parameters in the document."""
-    # Get all elements in active view
-    collector = FilteredElementCollector(revit.doc, revit.doc.ActiveView.Id)
-    elements = collector.WhereElementIsNotElementType().ToElements()
+    doc = revit.doc
+    # Use a more efficient collector setup - collect just the element ids first
+    collector = FilteredElementCollector(doc, doc.ActiveView.Id) \
+                .WhereElementIsNotElementType() \
+                .ToElementIds()
     
     # Collect unique instance parameters
     params = set()
-    for element in elements:
+    
+    # Use a dictionary to track processed categories to avoid redundant parameter scanning
+    processed_categories = {}
+    
+    # Process elements by category to reduce redundant work
+    for element_id in collector:
+        element = doc.GetElement(element_id)
+        
+        # Skip elements without categories or null elements
+        if not element or not element.Category:
+            continue
+            
+        # If we've already processed this category, skip the element
+        cat_id = element.Category.Id.IntegerValue
+        if cat_id in processed_categories:
+            continue
+            
+        # Process parameters for this category
+        processed_categories[cat_id] = True
+        
         for param in element.Parameters:
             if not param.IsReadOnly and param.StorageType in [StorageType.String, StorageType.Double, StorageType.Integer]:
                 params.add(param.Definition.Name)
-    
+
     return sorted(list(params))
 
 def set_parameter_value(element, param_name, value):
