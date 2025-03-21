@@ -820,7 +820,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
                     'RevitValue': mapping.RevitValue
                 })
             
-        mapping_json = json.dumps(mapping_data)
+        mapping_json = json.dumps(mapping_data, ensure_ascii=False)
         logger.debug("Mapping JSON: {}".format(mapping_json))
         
         try:

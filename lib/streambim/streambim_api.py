@@ -313,7 +313,7 @@ class StreamBIMClient:
         elif isinstance(data, str):
             try:
                 return data.decode('utf-8')
-            except UnicodeError:
+            except (UnicodeError, AttributeError):
                 return data
         elif isinstance(data, unicode):
             return data

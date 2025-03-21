@@ -851,7 +851,7 @@ class ConfigEditorUI(forms.WPFWindow):
                     'RevitValue': mapping.RevitValue
                 })
         
-        mapping_json = json.dumps(mapping_data)
+        mapping_json = json.dumps(mapping_data, ensure_ascii=False)
         
         try:
             # Get all existing configurations
