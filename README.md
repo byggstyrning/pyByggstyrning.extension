@@ -27,6 +27,14 @@ To use the extension follow the steps:
 
 Or via the built-in extension manager in pyRevit
 
+# Video demos
+
+## Color Elements
+https://github.com/user-attachments/assets/4628d6dd-39a4-44ff-af8b-22d1dab4f7a7
+
+## StreamBIM Checklist Importer
+https://github.com/user-attachments/assets/bf7c74ad-be95-4c0f-a815-b736b2d31a3a
+
 # Credits
 - [Ehsan Iran-Nejad](https://github.com/eirannejad) for developing pyRevit
 - [Icons8](https://icons8.com/) for its sweet icons
