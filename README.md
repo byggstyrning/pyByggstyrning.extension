@@ -30,6 +30,6 @@ Or via the built-in extension manager in pyRevit
 # Credits
 - [Ehsan Iran-Nejad](https://github.com/eirannejad) for developing pyRevit
 - [Icons8](https://icons8.com/) for its sweet icons
-- Erik Frits and the [LearnRevitAPI](https://learnrevitapi.com/) course
+- [Erik Frits](https://github.com/ErikFrits) and the [LearnRevitAPI](https://learnrevitapi.com/) course
 - [Giuseppe Dotto](https://github.com/GiuseppeDotto) for the Filters and Views dropdowns from the [pyM4B extension](https://github.com/GiuseppeDotto/pyM4B.extension).
 - [khorn06](https://github.com/khorn06/extensible-storage-pyrevit) for the extensible storage library
