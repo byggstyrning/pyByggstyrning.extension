@@ -2,8 +2,8 @@
 __title__ = "350"
 __author__ = ""
 __context__ = 'Selection'
-__doc__ = """Tvärvetenskapligt styrda detaljlösningar
-Multidisciplinär kontroll har genomförts och eventuella avvikelser har korrigerats till en acceptabel nivå.
+__doc__ = """Samordnat för granskning
+Objektet är samordnat med relevanta discipliner för att undvika kollisioner. Kan omfatta anbud. Alla relevanta kollisioner är hanterade. Huvuddesignen är låst. Kan omfatta förenklade 3D-objekt. Placering i plan, profil och höjd är definierad.
 
 Sets the MMI parameter value to 350 on selected elements.
 Based on MMI veilederen: https://mmi-veilederen.no/?page_id=85"""

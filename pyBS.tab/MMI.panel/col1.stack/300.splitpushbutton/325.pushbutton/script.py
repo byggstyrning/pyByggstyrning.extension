@@ -2,8 +2,8 @@
 __title__ = "325"
 __author__ = ""
 __context__ = 'Selection'
-__doc__ = """Etablerade detaljlösningar
-Konstruerbara lösningar har etablerats och ligger till grund för vidare samordning tills tvärvetenskaplig kontroll genomförs.
+__doc__ = """Etablerade detaljerade lösningar
+Byggbara lösningar är etablerade och utgör grund för vidare samordning fram till utförd tvärfacklig kontroll.
 
 Sets the MMI parameter value to 325 on selected elements.
 Based on MMI veilederen: https://mmi-veilederen.no/?page_id=85"""

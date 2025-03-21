@@ -2,8 +2,8 @@
 __title__ = "450"
 __author__ = ""
 __context__ = 'Selection'
-__doc__ = """Tvärvetenskapligt styrda produktionslösningar
-Multidisciplinär kontroll har genomförts och eventuella avvikelser har korrigerats till en acceptabel nivå.
+__doc__ = """Kontrollerat och inmätt
+Objektet stämmer med kontrollmätning och motsvarar gällande design i 3D. Avvikelser och ändringar hanteras.
 
 Sets the MMI parameter value to 450 on selected elements.
 Based on MMI veilederen: https://mmi-veilederen.no/?page_id=85"""

@@ -2,8 +2,8 @@
 __title__ = "425"
 __author__ = ""
 __context__ = 'Selection'
-__doc__ = """Etablerade produktionslösningar
-Konstruerbara lösningar har etablerats och ligger till grund för vidare samordning tills tvärvetenskaplig kontroll genomförs.
+__doc__ = """Utfört byggt
+Objektet är under uppförande. Kan omfatta ändringar på grund av förhållanden på byggarbetsplatsen. Objektet är fortfarande definierat i 3D. Geometri, toleranser och material etc. är definierade.
 
 Sets the MMI parameter value to 425 on selected elements.
 Based on MMI veilederen: https://mmi-veilederen.no/?page_id=85"""

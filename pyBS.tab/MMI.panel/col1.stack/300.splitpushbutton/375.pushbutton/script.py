@@ -2,8 +2,8 @@
 __title__ = "375"
 __author__ = ""
 __context__ = 'Selection'
-__doc__ = """Underlag för produktion
-Detaljerade lösningar har tagits fram och beslutats, utarbetade som underlag för produktion.
+__doc__ = """Detaljerade lösningar som underlag för anbud/beställning/prefabricering
+Godkänt underlag för beställning, prefabricering, leverantörsprojektering, anbudsunderlag (generalentreprenad).
 
 Sets the MMI parameter value to 375 on selected elements.
 Based on MMI veilederen: https://mmi-veilederen.no/?page_id=85"""

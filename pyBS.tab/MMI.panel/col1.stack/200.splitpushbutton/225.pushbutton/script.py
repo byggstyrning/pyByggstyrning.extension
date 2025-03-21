@@ -3,7 +3,7 @@ __title__ = "225"
 __author__ = ""
 __context__ = 'Selection'
 __doc__ = """Etablerade principiella lösningar
-Grundläggande lösningar har etablerats och ligger till grund för fortsatt samordning tills tvärvetenskaplig kontroll genomförs.
+Principiella lösningar är etablerade och utgör grund för vidare samordning fram till utförd tvärfacklig kontroll.
 
 Sets the MMI parameter value to 225 on selected elements.
 Based on MMI veilederen: https://mmi-veilederen.no/?page_id=85"""

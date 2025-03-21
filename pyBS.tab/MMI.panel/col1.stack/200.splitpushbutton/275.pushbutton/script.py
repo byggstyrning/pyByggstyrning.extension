@@ -3,7 +3,7 @@ __title__ = "275"
 __author__ = ""
 __context__ = 'Selection'
 __doc__ = """Valda principiella lösningar
-Huvudlösningar valda och förberedda för beslut om vidareutveckling
+Principiella lösningar har valts och är klara för beslut om vidare utveckling.
 RGB: (245,230,215) | HEX: #F5E6D7
 
 Sets the MMI parameter value to 275 on selected elements.

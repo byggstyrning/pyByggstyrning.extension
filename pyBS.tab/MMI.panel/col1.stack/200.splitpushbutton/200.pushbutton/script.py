@@ -3,7 +3,7 @@ __title__ = "200"
 __author__ = ""
 __context__ = 'Selection'
 __doc__ = """Färdigt koncept
-Konceptuella lösningar har beslutats, förberedda för utveckling av principiella lösningar
+Objektet kan ha en enhetlig 3D-modell baserad på huvudprincip. Objektet är reviderat mot enklaste modellform och byggkostnader. Mindre revideringar kan fortfarande förekomma. Kan omfatta enklare 2D- och 3D-modeller. Objektet kan vara placerat i plan. Övergripande referenser kan vara definierade.
 
 Sets the MMI parameter value to 200 on selected elements.
 Based on MMI veilederen: https://mmi-veilederen.no/?page_id=85"""

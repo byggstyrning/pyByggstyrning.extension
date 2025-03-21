@@ -3,7 +3,7 @@ __title__ = "400"
 __author__ = ""
 __context__ = 'Selection'
 __doc__ = """Produktionsunderlag
-Produktionsunderlag har tagits fram och beslutats, utarbetade som underlag för produktion.
+Objektet är klart för produktion eller byggarbetsplats. Objektet är definierat i plan, profil, höjd, geometri, form, toleranser, material och liknande. Innehåller detaljerad 3D-modell och genererar 2D-ritningar.
 
 Sets the MMI parameter value to 400 on selected elements.
 Based on MMI veilederen: https://mmi-veilederen.no/?page_id=85"""

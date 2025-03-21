@@ -2,8 +2,8 @@
 __title__ = "475"
 __author__ = ""
 __context__ = 'Selection'
-__doc__ = """Färdigt produktionsunderlag
-Produktionsunderlag har färdigställts och godkänts för produktion.
+__doc__ = """Godkänt utförande
+Faktiskt utförande är godkänt och all information levererad enligt krav, t.ex. i enlighet med systematisk färdigställande.
 
 Sets the MMI parameter value to 475 on selected elements.
 Based on MMI veilederen: https://mmi-veilederen.no/?page_id=85"""

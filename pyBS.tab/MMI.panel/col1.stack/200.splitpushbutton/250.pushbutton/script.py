@@ -2,8 +2,8 @@
 __title__ = "250"
 __author__ = ""
 __context__ = 'Selection'
-__doc__ = """Tvärvetenskapligt styrda principiella lösningar
-Multidisciplinär kontroll har genomförts och eventuella avvikelser har korrigerats till en acceptabel nivå.
+__doc__ = """Tvärfackligt kontrollerade principiella lösningar
+Tvärfacklig kontroll är genomförd och eventuella avvikelser är rättade till en acceptabel nivå.
 
 Sets the MMI parameter value to 250 on selected elements.
 Based on MMI veilederen: https://mmi-veilederen.no/?page_id=85"""

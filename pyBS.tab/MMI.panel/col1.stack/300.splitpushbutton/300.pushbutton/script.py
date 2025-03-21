@@ -2,8 +2,8 @@
 __title__ = "300"
 __author__ = ""
 __context__ = 'Selection'
-__doc__ = """Underlag för detaljering
-Huvudlösningar har tagits fram och beslutats, utarbetade som underlag för ytterligare detaljer.
+__doc__ = """Klar för utvärdering
+Objektet är vidareutvecklat för produktion och anbud. Mindre justeringar kan förekomma. Objektet är placerat i plan, profil och höjd. Objektet är nu i 3D. Tekniska data som geometri, form och toleranser kan vara definierade.
 
 Sets the MMI parameter value to 300 on selected elements.
 Based on MMI veilederen: https://mmi-veilederen.no/?page_id=85"""
