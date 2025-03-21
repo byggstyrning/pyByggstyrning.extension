@@ -7,6 +7,9 @@ folder_to_ignore/
 # The tempdirectory folder
 tempdirectory/
 
+# StreamBIM batch processing log folder
+pyBS.tab/StreamBIM.panel/Batch Importer Tool/log/*
+
 # Common Python ignores
 __pycache__/
 *.py[cod]

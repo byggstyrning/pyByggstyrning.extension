@@ -548,7 +548,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.update_status("Loading all checklist items...")
         
         # Get all checklist items
-        all_checklist_items = self.streambim_client.get_checklist_items(self.selected_checklist_id, limit=0)
+        all_checklist_items = self.streambim_client.get_checklist_items(self.selected_checklist_id, streambim_prop, limit=0)
         if not all_checklist_items:
             error_msg = self.streambim_client.last_error or "Failed to retrieve all checklist items"
             self.update_status(error_msg)
@@ -557,9 +557,12 @@ class StreamBIMImporterUI(forms.WPFWindow):
             self.progressText.Visibility = Visibility.Collapsed
             return
             
-        self.progressBar.Value = 50
-        self.progressText.Text = "Processing elements..."
-        self.update_status("Importing values...")
+        self.progressBar.Value = 25
+        self.progressText.Text = "Building element lookup dictionary..."
+        self.update_status("Building IFC GUID lookup dictionary...")
+        
+        logger.debug("Building IFC GUID element lookup dictionary...")
+        ifc_guid_dict = {}
         
         # Collect elements to update
         elements = []
@@ -569,18 +572,48 @@ class StreamBIMImporterUI(forms.WPFWindow):
             # Use all elements in the document
             elements = FilteredElementCollector(revit.doc).WhereElementIsNotElementType().ToElements()
         
+        # Track how many elements have IFC GUIDs
+        ifc_guid_count = 0
+        
+        # Build dictionary mapping IFC GUIDs to elements
+        for element in elements:
+            try:
+                # Check for different variations of the parameter name
+                ifc_guid_param = element.LookupParameter("IFCGuid")
+                if not ifc_guid_param:
+                    ifc_guid_param = element.LookupParameter("IfcGUID")
+                if not ifc_guid_param:
+                    ifc_guid_param = element.LookupParameter("IFC GUID")
+                
+                if ifc_guid_param and ifc_guid_param.HasValue and ifc_guid_param.StorageType == StorageType.String:
+                    guid_value = ifc_guid_param.AsString()
+                    if guid_value:
+                        ifc_guid_dict[guid_value] = element
+                        ifc_guid_count += 1
+            except:
+                continue
+        
+        logger.debug("Found {} elements with IFC GUIDs".format(ifc_guid_count))
+        
+        self.progressBar.Value = 40
+        self.progressText.Text = "Processing checklist items..."
+        
         # Create mapping from IFC GUID to checklist item
         guid_to_item = {}
         for item in all_checklist_items:
             if 'object' in item:
                 guid_to_item[item['object']] = item
-        
+                
         # Create value mapping dictionary if enabled
         value_mapping = {}
         if self.enableMappingCheckBox.IsChecked and self.mappings:
             for mapping in self.mappings:
                 if mapping.ChecklistValue and mapping.RevitValue:
                     value_mapping[mapping.ChecklistValue] = mapping.RevitValue
+        
+        self.progressBar.Value = 50
+        self.progressText.Text = "Updating element parameters..."
+        self.update_status("Importing values...")
         
         # Track progress
         processed = 0
@@ -592,39 +625,36 @@ class StreamBIMImporterUI(forms.WPFWindow):
         t.Start()
         
         try:
-            # Process elements
-            total_elements = len(elements)
-            for i, element in enumerate(elements):
+            # Process checklist items directly (MUCH FASTER)
+            total_items = len(guid_to_item)
+            item_count = 0
+            
+            for guid, item in guid_to_item.items():
+                item_count += 1
                 processed += 1
                 
                 try:
-                    # Try to get IFC GUID from element - check different parameter names
-                    ifc_guid_param = element.LookupParameter("IFCGuid")
-                    if not ifc_guid_param:
-                        ifc_guid_param = element.LookupParameter("IfcGUID")
-                    if not ifc_guid_param:
-                        ifc_guid_param = element.LookupParameter("IFC GUID")
-                    
-                    if not ifc_guid_param:
-                        continue
-                    
-                    ifc_guid = ifc_guid_param.AsString()
-                    if not ifc_guid or ifc_guid not in guid_to_item:
-                        continue
-                    
-                    # Get item data
-                    item = guid_to_item[ifc_guid]
-                    if 'items' not in item or streambim_prop not in item['items']:
+                    # Get the element directly from our dictionary (FAST LOOKUP)
+                    element = ifc_guid_dict.get(guid)
+                    if not element:
                         continue
                     
                     # Get property value
+                    if 'items' not in item or streambim_prop not in item['items']:
+                        continue
+                        
                     checklist_value = item['items'][streambim_prop]
+                    if not checklist_value:
+                        continue
                     
                     # Apply value mapping if enabled and value exists in mapping
-                    if value_mapping and checklist_value in value_mapping:
-                        revit_value = value_mapping[checklist_value]
+                    if value_mapping:
+                        if checklist_value in value_mapping:
+                            revit_value = value_mapping[checklist_value]
+                        else:
+                            continue
                     else:
-                        continue
+                        revit_value = checklist_value
                     
                     # Get the parameter
                     param = element.LookupParameter(revit_param)
@@ -652,9 +682,10 @@ class StreamBIMImporterUI(forms.WPFWindow):
                     logger.error("Error processing element: {}".format(str(e)))
                 
                 # Update progress
-                progress = 50 + (i / total_elements * 50)
-                self.progressBar.Value = progress
-                self.progressText.Text = "Processing elements... ({}/{})".format(i + 1, total_elements)
+                if item_count % 10 == 0:  # Update progress every 10 items
+                    progress = 50 + (item_count / total_items * 50)
+                    self.progressBar.Value = progress
+                    self.progressText.Text = "Processing items... ({}/{})".format(item_count, total_items)
             
             # Commit all changes
             t.Commit()

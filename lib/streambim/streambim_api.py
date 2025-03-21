@@ -392,11 +392,12 @@ class StreamBIMClient:
             print("Error getting checklists: {}".format(str(e)))
             return []
     
-    def get_checklist_items(self, checklist_id, limit=10000):
+    def get_checklist_items(self, checklist_id, checklist_item=None, limit=10000):
         """Get checklist items for a specific checklist
         
         Args:
             checklist_id: ID of the checklist to fetch items from
+            checklist_item: Optional specific checklist item/property to filter by
             limit: Maximum number of items to fetch. Use 0 for no limit.
         """
         if not self.idToken or not self.current_project:
@@ -404,19 +405,35 @@ class StreamBIMClient:
             return []
         
         try:
-            # Create a query object and encode it
+            # Create base query object
             query = {
                 "key": "object",
                 "sort": {"field": "status", "descending": False},
-                "page": {"skip": 0, "limit": limit if limit > 0 else 100000},  # Use large number for no limit
-                "filter": {"checklist": checklist_id},
+                "page": {"skip": 0, "limit": limit if limit > 0 else 100000},
+                "filter": {
+                    "checklist": checklist_id
+                },
                 "timeZone": "Europe/Stockholm",
                 "format": "json",
                 "filename": ""
             }
+
+            # Add checklist item filter if specified
+            if checklist_item:
+                # Convert checklist_item to UTF-8 if it's not already
+                if isinstance(checklist_item, str):
+                    checklist_item = checklist_item.decode('utf-8') if not isinstance(checklist_item, unicode) else checklist_item
+                
+                # Add to filter but don't override existing checklist filter
+                query["filter"].update({
+                    "properties": {checklist_item: {"$exists": True}}
+                })
+            
+            # Convert the entire query to UTF-8 JSON
+            query_json = json.dumps(query, ensure_ascii=False).encode('utf-8')
             
             # Encode the query as a base64 string
-            encoded_query = base64.b64encode(json.dumps(query))
+            encoded_query = base64.b64encode(query_json)
             
             url = "{}/project-{}/api/v1/checklists/export/json/?query={}".format(
                 self.base_url, self.current_project, encoded_query
@@ -427,7 +444,7 @@ class StreamBIMClient:
             req.add_header('Accept', '*/*')
             
             response = urllib2.urlopen(req)
-            result = json.loads(response.read())
+            result = json.loads(response.read().decode('utf-8'))
             
             # Decode UTF-8 strings in the response
             result = self._decode_utf8(result)
@@ -437,9 +454,15 @@ class StreamBIMClient:
             error_message = "HTTP Error: {} - {}".format(e.code, e.reason)
             if e.code == 401:
                 error_message = "Authentication failed. Please log in again."
+            elif e.code == 500:
+                error_message = "Server error. The query might be malformed: {}".format(e.read())
                 
             self.last_error = error_message
             print("Error getting checklist items: {}".format(error_message))
+            return []
+        except UnicodeError as e:
+            self.last_error = "Unicode error: {}".format(str(e))
+            print("Unicode error in checklist items: {}".format(str(e)))
             return []
         except Exception as e:
             self.last_error = str(e)

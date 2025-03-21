@@ -68,21 +68,6 @@ from streambim.streambim_api import get_saved_project_id
 # Initialize logger
 logger = script.get_logger()
 
-def convert_configs_to_dicts(configs):
-    """Convert ConfigItem objects to dictionaries for storage."""
-    config_data = []
-    for config in configs:
-        config_dict = {
-            'id': config.id,
-            'checklist_id': config.checklist_id,
-            'checklist_name': config.checklist_name,
-            'streambim_property': config.streambim_property,
-            'revit_parameter': config.revit_parameter,
-            'mapping_enabled': config.mapping_enabled,
-            'mapping_config': config.mapping_config
-        }
-        config_data.append(config_dict)
-    return config_data
 
 # Define a Configuration class for displaying in the list
 class ConfigItem(object):
@@ -615,60 +600,6 @@ class BatchImportUI(forms.WPFWindow):
                 config.elements_updated = 0
                 return (0, 0)
             
-            # Get all element IDs from checklist items first
-            element_ids = set()
-            for item in checklist_items:
-                # Check both 'object' and attributes.elementId paths
-                element_id = item.get('object')
-                if not element_id:
-                    element_id = item.get('attributes', {}).get('elementId')
-                
-                if element_id:
-                    element_ids.add(element_id)
-            
-            logger.debug("Found {} unique element IDs in checklist items".format(len(element_ids)))
-            
-            # Early exit if no element IDs found
-            if not element_ids:
-                logger.debug("No element IDs found in checklist items - nothing to process")
-                config.elements_processed = 0
-                config.elements_updated = 0
-                return (0, 0)
-            
-            # Pre-build a lookup dictionary of elements by IfcGUID
-            self.update_status("Building element lookup for {} elements...".format(len(element_ids)))
-            logger.debug("Building element lookup dictionary for {} GUIDs".format(len(element_ids)))
-            
-            elements_by_guid = {}
-            
-            # Use FilteredElementCollector to get all elements with parameters
-            collector = FilteredElementCollector(revit.doc).WhereElementIsNotElementType().ToElements()
-            
-            # Process UI events
-            self.process_ui_events()
-            
-            # Build the lookup dictionary
-            for element in collector:
-                try:
-                    # Try different parameter names for IFC GUID
-                    guid_param = element.LookupParameter("IFCGuid")
-                    if not guid_param:
-                        guid_param = element.LookupParameter("IfcGUID")
-                    if not guid_param:
-                        guid_param = element.LookupParameter("IFC GUID")
-                    
-                    if guid_param and guid_param.HasValue:
-                        guid = guid_param.AsString()
-                        # Only add if it's in our target set of GUIDs
-                        if guid in element_ids:
-                            elements_by_guid[guid] = element
-                except Exception as e:
-                    # Just skip elements with errors
-                    continue
-            
-            logger.debug("Built lookup dictionary with {} elements".format(len(elements_by_guid)))
-            self.update_status("Found {} matching elements".format(len(elements_by_guid)))
-            
             # Create value mapping dictionary if enabled
             value_mapping = {}
             if config.mapping_enabled and config.mapping_config:
@@ -695,12 +626,12 @@ class BatchImportUI(forms.WPFWindow):
                 config.elements_total = len(checklist_items)
                 self.update_config_progress(config)
                 
-                # Process each checklist item directly using our lookup dictionary
+                # Process each checklist item directly
                 for idx, item in enumerate(checklist_items):
                     # Process UI events periodically
                     if idx % 10 == 0:
                         self.process_ui_events()
-                    
+                                        
                     processed_count += 1
                     
                     try:
@@ -712,8 +643,8 @@ class BatchImportUI(forms.WPFWindow):
                         if not element_id:
                             continue
                         
-                        # Get element from our pre-built lookup dictionary
-                        element = elements_by_guid.get(element_id)
+                        # Find the element by IFC GUID
+                        element = get_element_by_ifc_guid(element_id)
                         if not element:
                             continue
                         
@@ -721,20 +652,13 @@ class BatchImportUI(forms.WPFWindow):
                         checklist_value = self.get_property_value(item, config.streambim_property)
                         
                         if checklist_value is None:
-                            logger.debug("Element {}: No value found for property {}".format(
-                                element_id, config.streambim_property))
                             continue
-                        
-                        logger.debug("Element {}: Found property value '{}' for {}".format(
-                            element_id, checklist_value, config.streambim_property))
-                        
+                                                
                         # Apply value mapping if enabled
                         if config.mapping_enabled:
                             if checklist_value in value_mapping:
                                 original_value = checklist_value
                                 checklist_value = value_mapping[checklist_value]
-                                logger.debug("Element {}: Mapped value '{}' to '{}'".format(
-                                    element_id, original_value, checklist_value))
                             else:
                                 # Skip if mapping enabled but value not in mapping
                                 continue
@@ -742,14 +666,10 @@ class BatchImportUI(forms.WPFWindow):
                         # Get the parameter
                         param = element.LookupParameter(config.revit_parameter)
                         if not param:
-                            logger.debug("Element {}: Parameter '{}' not found".format(
-                                element_id, config.revit_parameter))
                             continue
                         
                         # Skip read-only parameters
                         if param.IsReadOnly:
-                            logger.debug("Element {}: Parameter '{}' is read-only".format(
-                                element_id, config.revit_parameter))
                             continue
                         
                         # Set parameter value based on type
@@ -759,11 +679,6 @@ class BatchImportUI(forms.WPFWindow):
                         set_value_result = self.set_parameter_value(param, checklist_value, param_storage_type)
                         if set_value_result:
                             updated_count += 1
-                            logger.debug("Element {}: Successfully updated {} to value '{}'".format(
-                                element_id, config.revit_parameter, checklist_value))
-                        else:
-                            logger.debug("Element {}: Failed to update {} with value '{}'".format(
-                                element_id, config.revit_parameter, checklist_value))
                             
                     except Exception as e:
                         logger.error("Error processing element: {}".format(str(e)))

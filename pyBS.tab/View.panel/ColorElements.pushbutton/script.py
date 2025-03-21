@@ -647,6 +647,7 @@ class RevitColorizerWindow(WPFWindow):
         # Connect the checkbox events in the values list
         # These are defined in the XAML file
         self.ValueCheckbox_Changed = self.ValueCheckbox_Changed
+        self.HeaderCheckBox_Changed = self.HeaderCheckBox_Changed 
 
         # Checkbox events
         self.showElementsCheckbox.Checked += self.on_show_elements_changed
@@ -1002,7 +1003,14 @@ class RevitColorizerWindow(WPFWindow):
             # Clear current values list
             if hasattr(self, 'valuesListBox') and self.valuesListBox:
                 self.valuesListBox.ItemsSource = None
-            
+
+            # Clear listbox checkboxes and header checkbox
+            self.valuesListBox.Items.Clear()
+            self.headerCheckBox.IsChecked = False
+
+            # Set selection to none
+            self.uidoc.Selection.SetElementIds(self.System.Collections.Generic.List[self.DB.ElementId]())
+
             # Get selected parameter and category
             selected_param = self.get_selected_parameter()
             if not selected_param:
@@ -1753,6 +1761,42 @@ class RevitColorizerWindow(WPFWindow):
         except Exception as ex:
             self.statusText.Text = "Error selecting elements: " + str(ex)
             self.logger.error("Selection error: %s", str(ex))
+
+    def HeaderCheckBox_Changed(self, sender, args):
+        """Handle header checkbox state changes to check/uncheck all values."""
+        try:
+            # Get the state of the header checkbox
+            is_checked = sender.IsChecked
+            
+            # Update all value items
+            if self.valuesListBox.Items:
+                # Store original handler reference
+                original_handler = self.ValueCheckbox_Changed
+                
+                # Temporarily set the handler to None to prevent it from firing
+                self.ValueCheckbox_Changed = None
+                
+                # Update all checkboxes
+                for value_item in self.valuesListBox.Items:
+                    value_item.IsChecked = is_checked
+                
+                # Refresh the list view
+                self.valuesListBox.Items.Refresh()
+
+                # Restore the original handler
+                self.ValueCheckbox_Changed = original_handler
+                
+                # Update selection in Revit if show elements is enabled
+                if self.showElementsCheckbox.IsChecked:
+                    self.select_checked_elements()
+                
+                # Update status
+                action = "checked" if is_checked else "unchecked"
+                self.statusText.Text = "All values {}.".format(action)
+                
+        except Exception as ex:
+            self.statusText.Text = "Error updating checkboxes: " + str(ex)
+            self.logger.error("Header checkbox error: %s", str(ex))
 
 # Main script execution
 if __name__ == "__main__":

@@ -175,7 +175,7 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="70"/>
                             </Grid.ColumnDefinitions>
-                            <CheckBox Grid.Column="0" Margin="10,5"/>
+                            <CheckBox Grid.Column="0" Margin="10,5" x:Name="headerCheckBox" Checked="HeaderCheckBox_Changed" Unchecked="HeaderCheckBox_Changed"/>
                             <TextBlock Grid.Column="1" Text="Value" Margin="5"/>
                             <TextBlock Grid.Column="2" Text="Color" Margin="5"/>
                         </Grid>
