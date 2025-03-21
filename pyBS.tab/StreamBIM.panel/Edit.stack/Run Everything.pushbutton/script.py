@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 __title__ = "Run\nEverything"
 __author__ = "Byggstyrning AB"
-__doc__ = """Run all saved StreamBIM checklist configurations automatically.
+__doc__ = """Run all saved StreamBIM checklist configurations.
 
 This tool applies all saved mapping configurations to all elements
 in the model that have an IfcGUID parameter without any user interaction."""

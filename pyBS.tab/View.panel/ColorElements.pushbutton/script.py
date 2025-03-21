@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Color Elements by Parameter values.
+__title__ = "Color\nElements"
+__author__ = "Byggstyrning AB"
+__doc__ = """Color Elements and selected elements by Parameter values.
 Allows you to colorize elements in Revit views based on parameter values.
 """
 # pylint: disable=import-error,unused-argument,missing-docstring,invalid-name,broad-except

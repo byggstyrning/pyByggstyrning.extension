@@ -3,7 +3,7 @@ import clr
 clr.AddReference('RevitAPI')
 from Autodesk.Revit.DB import *
 
-__title__ = "Reset colors"
+__title__ = "Reset"
 __author__ = ""
 __doc__ = """This is Reset colors Button.
 Click on it to reset colors in the active view."""
