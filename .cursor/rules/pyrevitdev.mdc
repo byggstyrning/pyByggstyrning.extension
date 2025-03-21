@@ -3,11 +3,6 @@ description:
 globs: 
 alwaysApply: true
 ---
----
-description: This rule is to make sure that the llm always uses ironpython 2.7 and follows pyRevit best practices
-globs: *.py
-alwaysApply: false
----
 # PyRevit Development Best Practices
 
 ## 1. Code Structure
@@ -22,9 +17,6 @@ Organizing your PyRevit extension code is crucial for maintainability. PyRevit p
 
 - **Shared Code in `lib` Folder**  
   For common functions or classes, use a `lib/` subfolder in your extension or panel bundle. PyRevit adds the bundle’s `lib` directory to the search path, so you can import modules easily. This promotes modularity and code reuse.
-
-- **Self-Contained Dependencies**  
-  If your scripts rely on external .NET assemblies, include them in a `bin/` folder inside the bundle. This helps prevent assembly version conflicts and ensures each extension can carry its own dependencies.
 
 - **Follow PyRevit Script Conventions**  
   At the top of each script, define metadata like `__doc__`, `__title__`, and `__author__`. These become tool tooltips and labels in Revit. Use `__context__` if needed to control command availability.
@@ -109,6 +101,13 @@ Since PyRevit uses IronPython 2.7, you must consider its particularities:
 
 - **Handling Legacy Issues**  
   Be prepared to address legacy library quirks or missing modules in IronPython. Sometimes you may need to include pure-Python modules directly in your extension’s lib folder.
+
+- **String Formatting Safety**
+  Very important!
+  Avoid %-style formatting which can cause errors and remember that to use ironpython compatible formatting.
+  
+  Preferred: use .format() for safer, more readable formatting
+  message = "Value is {} and code is {}".format(value, code)
 
 ## 5. IronPython Scopes and Events for WPF Windows
 

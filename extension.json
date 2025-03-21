@@ -4,7 +4,7 @@
     "type": "extension",
     "rocket_mode_compatible": "true",
     "name": "pyByggstyrning",
-    "description": "Tools and scripts made by Byggstyrning",
+    "description": "Tools for model based construction.",
     "author": "Jonatan Jacobsson",
     "author_profile": "https://github.com/jonatanjacobsson",
     "url": "https://github.com/byggstyrning/pyByggstyrning",
