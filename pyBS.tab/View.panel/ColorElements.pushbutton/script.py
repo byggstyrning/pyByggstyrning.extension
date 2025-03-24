@@ -708,10 +708,6 @@ class RevitColorizerWindow(WPFWindow):
                         categories_selected = True
                         selected_count += 1
                                     
-            # If no categories were selected and we have items, select the first one
-            if not categories_selected and self.categoryListBox.Items.Count > 0:
-                # Important: Set the first category as selected explicitly
-                self.categoryListBox.Items[0].IsSelected = True
             
             # Process the selection to load parameters etc.
             if self.categoryListBox.Items.Count > 0:
