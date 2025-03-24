@@ -418,6 +418,8 @@ class StreamBIMClient:
                 "filename": ""
             }
 
+            logger.debug("Query: {}".format(query))
+
             # Add checklist item filter if specified
             if checklist_item:
                 # Convert checklist_item to UTF-8 if it's not already
@@ -428,6 +430,8 @@ class StreamBIMClient:
                 query["filter"].update({
                     "properties": {checklist_item: {"$exists": True}}
                 })
+
+            logger.debug("Query: {}".format(query))
             
             # Convert the entire query to UTF-8 JSON
             query_json = json.dumps(query, ensure_ascii=False).encode('utf-8')
@@ -438,6 +442,8 @@ class StreamBIMClient:
             url = "{}/project-{}/api/v1/checklists/export/json/?query={}".format(
                 self.base_url, self.current_project, encoded_query
             )
+
+            logger.debug("URL: {}".format(url))
             
             req = urllib2.Request(url)
             req.add_header('Authorization', 'Bearer {}'.format(self.idToken))
@@ -448,6 +454,8 @@ class StreamBIMClient:
             
             # Decode UTF-8 strings in the response
             result = self._decode_utf8(result)
+
+            logger.debug("Result: {}".format(result))
             
             return result.get('data', [])
         except urllib2.HTTPError as e:
