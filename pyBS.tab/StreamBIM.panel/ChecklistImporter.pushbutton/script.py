@@ -432,7 +432,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.selectedChecklistTextBlock.Text = selected_checklist.Name
         
         # Get checklist items (limited for preview)
-        checklist_items = self.streambim_client.get_checklist_items(selected_checklist.Id, limit=1)
+        checklist_items = self.streambim_client.get_checklist_items(selected_checklist.Id, limit=5)
         if checklist_items:
             self.checklist_items = checklist_items
             self.selected_checklist_id = selected_checklist.Id  # Store for later use

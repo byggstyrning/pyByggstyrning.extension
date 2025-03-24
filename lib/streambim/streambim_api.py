@@ -438,6 +438,8 @@ class StreamBIMClient:
             
             # Encode the query as a base64 string
             encoded_query = base64.b64encode(query_json)
+
+            logger.debug("Encoded query: {}".format(encoded_query))
             
             url = "{}/project-{}/api/v1/checklists/export/json/?query={}".format(
                 self.base_url, self.current_project, encoded_query
