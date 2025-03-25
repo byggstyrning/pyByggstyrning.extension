@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Place 3D View Reference families at location and extent of selected views."""
-
-__title__ = "Generate 3D View References"
-__author__ = "PyRevit Extensions"
+__title__ = "Create References"
+__author__ = "Jonatan Jacobsson"
 __doc__ = """This tool places workplane-based families at the location and extent of selected views.
 The family instance parameters "View Height" and "View Width" are set based on the view's bounding box.
 """
@@ -44,10 +42,8 @@ app = __revit__.Application
 uidoc = __revit__.ActiveUIDocument
 
 # Set up enhanced logging
-logger.info("Starting Generate 3D View References tool")
 logger.debug("Script directory: {}".format(script_dir))
 logger.debug("Active document: {}".format(doc.Title))
-
 
 class ViewItemData(forms.Reactive):
     """Class for view data binding with WPF UI."""
@@ -143,7 +139,7 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
     
     def __init__(self):
         """Initialize the window."""
-        logger.info("Initializing Generate 3D View References window")
+        logger.debug("Initializing Generate 3D View References window")
         xaml_file = os.path.join(script_dir, "Generate3DViewReferencesWindow.xaml")
         forms.WPFWindow.__init__(self, xaml_file)
         
@@ -154,7 +150,7 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         self.views_data = ObservableCollection[ViewItemData]()
         
         # Check for required family
-        logger.info("Checking for 3D View Reference family on initialization")
+        logger.debug("Checking for 3D View Reference family on initialization")
         try:
             self.family_symbol = self._get_family_symbol()
             
@@ -176,7 +172,7 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
                 except Exception as ex:
                     logger.debug("Error accessing Name: {}".format(ex))
                     
-                logger.info("Found required family: {} - {}".format(family_name, symbol_name))
+                logger.debug("Found required family: {} - {}".format(family_name, symbol_name))
             else:
                 logger.warning("Could not find 3D View Reference family with Standard Reference type during initialization")
                 forms.alert(
@@ -196,18 +192,14 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         
         # Bind views to DataGrid
         self.viewsDataGrid.ItemsSource = self.views_data
-        logger.info("UI setup complete. Found {} views.".format(self.views_data.Count))
+        logger.debug("UI setup complete. Found {} views.".format(self.views_data.Count))
         
     def _setup_view_categories(self):
         """Set up view category checkboxes."""
         # Define relevant view categories
         view_categories = [
             ("Sections", ViewType.Section),
-            ("Elevations", ViewType.Elevation),
-            ("Callouts", ViewType.Detail),
-            ("Floor Plans", ViewType.FloorPlan),
-            ("Ceiling Plans", ViewType.CeilingPlan),
-            ("3D Views", ViewType.ThreeD)
+            ("Callouts", ViewType.FloorPlan)
         ]
         
         # Create a dictionary to store view types
@@ -244,6 +236,10 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
             # Filter out template views and schedules
             if view.IsTemplate or view.ViewType == ViewType.Schedule:
                 continue
+
+            # Filter out floor plans that are parents of other views
+            if view.ViewType == ViewType.FloorPlan and not view.IsCallout:
+                continue
                 
             # Check if view type is in checked types
             if view.ViewType in checked_view_types:
@@ -251,7 +247,7 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
                 self.views_data.Add(ViewItemData(view))
                 view_count += 1
                 
-        logger.info("Added {} views to data grid".format(view_count))
+        logger.debug("Added {} views to data grid".format(view_count))
     
     def ViewCategory_CheckedChanged(self, sender, args):
         """Handle view category checkbox changes."""
@@ -279,9 +275,7 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
             view_data.IsSelected = False
     
     def CreateViewReferences_Click(self, sender, args):
-        """Handle create button click."""
-        logger.info("Create 3D View References button clicked")
-        
+        """Handle create button click."""        
         # Get selected views
         selected_views = [view_data for view_data in self.views_data if view_data.IsSelected]
         logger.debug("Selected views count: {}".format(len(selected_views)))
@@ -294,7 +288,6 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         # Check if family was found during initialization
         if not self.family_symbol:
             # Try one more time to find it
-            logger.info("Trying again to find 3D View Reference family")
             self.family_symbol = self._get_family_symbol()
             
             if not self.family_symbol:
@@ -341,7 +334,6 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         self.created_elements = []
         
         # Start transaction
-        logger.info("Starting transaction to create view references")
         with revit.Transaction("Create 3D View References"):
             # Ensure family symbol is active - with safety check
             try:
@@ -358,8 +350,11 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
             
             # Create family instances for each selected view
             success_count = 0
+            index = 0
             for view_data in selected_views:
                 view = view_data.view
+                logger.debug("####### Processing view index: {}".format(index))
+                index += 1
                 logger.debug("Processing view: {}".format(view.Name))
                 
                 try:
@@ -375,10 +370,8 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
                     height = bbox.Max.Y - bbox.Min.Y
                     logger.debug("View dimensions - Width: {:.2f}, Height: {:.2f}".format(width, height))
                     
-                    # Get center point
-                    center_point = XYZ((bbox.Min.X + bbox.Max.X) / 2, 
-                                       (bbox.Min.Y + bbox.Max.Y) / 2, 
-                                       0)
+                    # Get the proper center point of the view
+                    center_point = self._get_view_center_point(view, bbox)
                     logger.debug("Center point: ({:.2f}, {:.2f}, {:.2f})".format(
                         center_point.X, center_point.Y, center_point.Z))
                     
@@ -387,40 +380,76 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
                     try:
                         if hasattr(view, "ViewDirection") and view.ViewDirection is not None:
                             view_dir = view.ViewDirection
+                            logger.debug("View direction: {}".format(view_dir))
+                        else:
+                            logger.warning("Could not get view direction for view: {}".format(view.Name))
                     except Exception as ex:
-                        logger.debug("Error getting view direction: {}".format(ex))
+                        logger.warning("Error getting view direction: {}".format(ex))
                         
                     try:
                         # Create instance safely
                         logger.debug("Creating family instance for view: {}".format(view.Name))
                         
-                        # Fallback for StructuralType in case import doesn't resolve the issue
+                        # Get a normal vector (perpendicular to view direction)
+                        if abs(view_dir.Z) < 0.99:  # Not looking directly up/down
+                            up_direction = XYZ(0, 0, 1)
+                            normal_vector = view_dir.CrossProduct(up_direction).Normalize()
+                        else:
+                            # For plan views (looking up/down), use X axis as normal
+                            normal_vector = XYZ(1, 0, 0)
+                        
+                        logger.debug("View normal: ({:.6f}, {:.6f}, {:.6f})".format(
+                            view_dir.X, view_dir.Y, view_dir.Z))
+                        logger.debug("Normal vector: ({:.6f}, {:.6f}, {:.6f})".format(
+                            normal_vector.X, normal_vector.Y, normal_vector.Z))
+                        
+                        # Place family instance directly - skipping reference plane creation
+                        new_instance = None
+                        
+                        # Method 2: Try using the active view's sketch plane
                         try:
-                            structural_type = StructuralType.NonStructural
-                        except NameError:
-                            # If StructuralType is not defined, try alternative approach
-                            logger.debug("Using alternative approach for StructuralType")
-                            try:
-                                from Autodesk.Revit.DB.Structure import StructuralType
-                                structural_type = StructuralType.NonStructural
-                            except:
-                                # Final fallback - use the integer value that corresponds to NonStructural
-                                logger.debug("Using integer value for StructuralType.NonStructural")
-                                structural_type = 0  # 0 is the integer value for NonStructural
+                            # Create a sketch plane aligned with the view
+                            plane = Plane.CreateByNormalAndOrigin(view_dir, center_point)
+                            sketch_plane = SketchPlane.Create(doc, plane)
+                            
+                            new_instance = doc.Create.NewFamilyInstance(
+                                center_point, 
+                                family_symbol, 
+                                sketch_plane,
+                                StructuralType.NonStructural
+                            )
+                            logger.debug("Successfully placed family instance using sketch plane method")
+                        except Exception as ex:
+                            logger.debug("Error with sketch plane method: {}. Trying face-based method.".format(ex))
+                            
                         
-                        # Create the family instance
-                        new_instance = doc.Create.NewFamilyInstance(
-                            center_point, family_symbol, view_dir, 
-                            doc.ActiveView, structural_type
-                        )
-                        
-                        # Set parameters
-                        self._set_instance_parameters(new_instance, width, height)
-                        
-                        # Add to created elements list
-                        self.created_elements.append(new_instance.Id)
-                        success_count += 1
-                        logger.debug("Successfully created reference for view: {}".format(view.Name))
+                        # Set parameters if instance was created
+                        if new_instance:
+                            # Determine if we need to swap width/height based on view direction
+                            swap_dimensions = False
+                            
+                            # Check if it's a North/South view (dominant Y-axis direction)
+                            if abs(view_dir.Y) > abs(view_dir.X) and abs(view_dir.Y) > abs(view_dir.Z):
+                                logger.debug("North/South orientation detected - swapping width and height")
+                                swap_dimensions = True
+                            
+                            # Apply the swap if needed
+                            if swap_dimensions:
+                                logger.debug("Swapping dimensions: original width={:.2f}, height={:.2f}".format(width, height))
+                                temp = width
+                                width = height
+                                height = temp
+                                logger.debug("After swap: width={:.2f}, height={:.2f}".format(width, height))
+                            
+                            # Set parameters with possibly swapped dimensions
+                            self._set_instance_parameters(new_instance, width, height, view.Name)
+                            
+                            # Add to created elements list
+                            self.created_elements.append(new_instance.Id)
+                            success_count += 1
+                            logger.debug("Successfully created reference for view: {}".format(view.Name))
+                        else:
+                            logger.error("Failed to create family instance for view: {}".format(view.Name))
                     except Exception as ex:
                         logger.error("Error creating family instance: {}".format(ex))
                     
@@ -435,7 +464,6 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         
         # Show results
         result_message = "Created {} 3D View References successfully.".format(len(self.created_elements))
-        logger.info(result_message)
         forms.alert(result_message, title="Success")
     
     def _get_family_symbol(self):
@@ -462,10 +490,8 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
                 
                 # Look for exact family named "3D View Reference"
                 if family_name == "3D View Reference":
-                    logger.info("Found family named '3D View Reference'")
-                    
                     # Return the first symbol from this family
-                    logger.info("Found exact match for 3D View Reference family")
+                    logger.debug("Found exact match for 3D View Reference family")
                     return symbol
                 
             except Exception as ex:
@@ -526,7 +552,130 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         bbox.Max = XYZ(5, 5, 0)
         return bbox
     
-    def _set_instance_parameters(self, instance, width, height):
+    def _get_view_center_point(self, view, bbox):
+        """Get the actual center point of the view in model space."""
+        try:
+            # For consistency between Sections and Elevations, we'll use the same approach
+            # for all view types, prioritizing the crop box center transformed to model coordinates
+            
+            # Get view direction for consistent placement on appropriate plane
+            view_dir = XYZ(0, 0, 1)  # Default direction
+            try:
+                if hasattr(view, "ViewDirection") and view.ViewDirection is not None:
+                    view_dir = view.ViewDirection
+                    logger.debug("Getting view direction for center point calculation: {}".format(view_dir))
+            except Exception as ex:
+                logger.debug("Could not get view direction for center point: {}".format(ex))
+            
+            # Check if the view is a callout - they need special handling
+            is_callout = False
+            try:
+                if hasattr(view, "IsCallout") and view.IsCallout:
+                    is_callout = True
+                    logger.debug("View is a callout - will use cut plane for Z coordinate")
+            except Exception as ex:
+                logger.debug("Could not determine if view is callout: {}".format(ex))
+            
+            # First try: Get crop box in model coordinates (most reliable approach)
+            try:
+                if hasattr(view, "CropBox") and view.CropBoxActive:
+                    crop_box = view.CropBox
+                    transform = view.CropBox.Transform
+                    
+                    # Use the transform to get model coordinates
+                    min_point_transformed = transform.OfPoint(crop_box.Min)
+                    max_point_transformed = transform.OfPoint(crop_box.Max)
+                    
+                    # Calculate center
+                    center_x = (min_point_transformed.X + max_point_transformed.X) / 2
+                    center_y = (min_point_transformed.Y + max_point_transformed.Y) / 2
+                    
+                    # Get Z coordinate - handle callouts differently
+                    center_z = (min_point_transformed.Z + max_point_transformed.Z) / 2
+                    
+                    # For callouts, use the view's cut plane elevation for Z
+                    if is_callout:
+                        try:
+                            # Try to get from view range
+                            view_range = view.GetViewRange()
+                            if view_range:
+                                # Try to get the cut plane elevation
+                                cut_plane_param = view_range.GetOffset(PlanViewPlane.CutPlane)
+                                if cut_plane_param != None:
+                                    cut_plane_z = cut_plane_param
+                                    logger.debug("Using callout cut plane for Z: {:.2f}".format(cut_plane_z))
+                                    center_z = cut_plane_z
+                        except Exception as ex:
+                            logger.debug("Could not get callout cut plane elevation: {}. Using crop box Z.".format(ex))
+                    
+                    center = XYZ(center_x, center_y, center_z)
+                    
+                    # For consistent Z value, project to the appropriate plane based on view direction
+                    if abs(view_dir.X) > 0.7:  # East-West facing view
+                        # Use the view direction's X component to determine which side of the model
+                        x_offset = 0  # No offset by default
+                        if view_dir.X > 0:  # East-facing
+                            x_offset = 5  # Small offset to ensure visibility
+                        else:  # West-facing
+                            x_offset = -5  # Small offset to ensure visibility
+                        
+                        center = XYZ(center.X + x_offset, center.Y, center.Z)
+                    elif abs(view_dir.Y) > 0.7:  # North-South facing view
+                        # Use the view direction's Y component to determine which side of the model
+                        y_offset = 0  # No offset by default
+                        if view_dir.Y > 0:  # North-facing
+                            y_offset = 5  # Small offset to ensure visibility
+                        else:  # South-facing
+                            y_offset = -5  # Small offset to ensure visibility
+                        
+                        center = XYZ(center.X, center.Y + y_offset, center.Z)
+                    
+                    logger.debug("Using transformed crop box center with consistent Z: ({:.2f}, {:.2f}, {:.2f})".format(
+                        center.X, center.Y, center.Z))
+                    return center
+            except Exception as ex:
+                logger.debug("Could not use crop box for center: {}".format(ex))
+            
+            # Second try: Use section box if available
+            try:
+                if hasattr(view, "GetSectionBox"):
+                    section_box = view.GetSectionBox()
+                    if section_box:
+                        # The section box gives us the actual position in model space
+                        center = XYZ(
+                            (section_box.Min.X + section_box.Max.X) / 2, 
+                            (section_box.Min.Y + section_box.Max.Y) / 2, 
+                            (section_box.Min.Z + section_box.Max.Z) / 2
+                        )
+                        logger.debug("Using section box center: ({:.2f}, {:.2f}, {:.2f})".format(
+                            center.X, center.Y, center.Z))
+                        return center
+            except Exception as ex:
+                logger.debug("Could not get section box: {}".format(ex))
+            
+            # Third try: Try to get the origin directly from the view
+            # (less consistent between view types, but better than nothing)
+            try:
+                if hasattr(view, "Origin") and view.Origin:
+                    origin = view.Origin
+                    logger.debug("Using view's Origin property: ({:.2f}, {:.2f}, {:.2f})".format(
+                        origin.X, origin.Y, origin.Z))
+                    return origin
+            except Exception as ex:
+                logger.debug("Could not access view Origin: {}".format(ex))
+            
+            # Final fallback: Use bounding box with consistent Z (0)
+            logger.debug("Using default center point calculation from bbox with Z=0")
+            return XYZ((bbox.Min.X + bbox.Max.X) / 2, (bbox.Min.Y + bbox.Max.Y) / 2, 0)
+            
+        except Exception as ex:
+            logger.warning("Error calculating view center point: {}".format(ex))
+        
+        # Ultimate fallback
+        logger.debug("Using simple default center point calculation")
+        return XYZ((bbox.Min.X + bbox.Max.X) / 2, (bbox.Min.Y + bbox.Max.Y) / 2, 0)
+    
+    def _set_instance_parameters(self, instance, width, height, view_name):
         """Set instance parameters for width and height."""
         logger.debug("Setting parameters for instance {}: Width={:.2f}, Height={:.2f}".format(
             instance.Id, width, height))
@@ -547,13 +696,23 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
                 logger.debug("Set View Height parameter to {:.2f}".format(height))
             else:
                 logger.warning("View Height parameter not found on instance")
+            
+            # Set View Name parameter
+            name_param = instance.LookupParameter("View Name")
+            if name_param:
+                # Ensure view name is not empty
+                safe_view_name = view_name if view_name else "Unnamed View"
+                name_param.Set(safe_view_name)
+                logger.debug("Set View Name parameter to '{}'".format(safe_view_name))
+            else:
+                logger.warning("View Name parameter not found on instance")
                 
         except Exception as ex:
             logger.error("Error setting parameters: {}".format(ex))
     
     def IsolateElements_Click(self, sender, args):
         """Isolate created elements in current view."""
-        logger.info("Isolate elements button clicked")
+        logger.debug("Isolate elements button clicked")
         
         if not self.created_elements:
             logger.warning("No created elements to isolate")
@@ -573,20 +732,19 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
             # Isolate elements
             with revit.Transaction("Isolate View References"):
                 current_view.IsolateElementsTemporary(element_ids)
-                logger.info("Successfully isolated {} elements".format(len(element_ids)))
                 
         except Exception as ex:
             logger.error("Error isolating elements: {}".format(ex))
     
     def Cancel_Click(self, sender, args):
         """Handle cancel button click."""
-        logger.info("Cancel button clicked, closing window")
+        logger.debug("Cancel button clicked, closing window")
         self.Close()
 
 
 # Run the window
 if __name__ == '__main__':
-    logger.info("Launching Generate 3D View References window")
+    logger.debug("Launching Generate 3D View References window")
     window = Generate3DViewReferencesWindow()
     window.ShowDialog()
-    logger.info("Generate 3D View References tool completed")
+    logger.debug("Generate 3D View References tool completed")
