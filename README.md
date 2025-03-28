@@ -53,7 +53,7 @@ https://github.com/user-attachments/assets/bf7c74ad-be95-4c0f-a815-b736b2d31a3a
 
 ## Switchback Functionality
 
-https://github.com/user-attachments/assets/47d5767a-9401-4f56-b6ab-375d4c9418db
+https://github.com/user-attachments/assets/ce8b4bb5-0ae3-49b4-9656-75130f450b33
 
 # Credits
 
