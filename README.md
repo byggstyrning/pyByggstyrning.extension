@@ -14,14 +14,15 @@ pyByggstyrning is a pyRevit extension designed to enhance Revit workflows with s
 # Extra features
 
 - **Quick access to MMI in the Modify tab**: The [startup.py](https://github.com/byggstyrning/pyByggstyrning.extension/blob/master/startup.py) script clones the MMI Panel into the Modify tab in Revit upon startup and document opening, providing easy access when elements are selected.
+- **StreamBIM API utilities**: Utilities for interacting with StreamBIM API, including authentication, project management, and checklist item retrieval. [StreamBIM utilities](https://github.com/byggstyrning/pyByggstyrning.extension/tree/master/lib/streambim).
+- **Batch Importer tool**: The StreamBIM Checklist import can be automated using the 'pyrevit run' command to start revit and execute the 'Run Everything' script, this can be schedules using the .bat located in the tool folder. For more, checkout the [Batch Importer Tool](https://github.com/byggstyrning/pyByggstyrning.extension/tree/master/pyBS.tab/StreamBIM.panel/Batch%20Importer%20Tool).
 - **HTTP API for Element Selection (Switchback)**: The `startup.py` also sets up an HTTP endpoint using pyRevit Routes. This allows external applications or developers to select and zoom to a specific element in Revit by its ID via a simple web request.
   - **Usage (GET Request):** `http://<revit-machine-ip>:<port>/switchback/id/<element_id>`
   - **Example:** `http://localhost:48884/switchback/id/2099173` (Port may vary based on pyRevit configuration) 
   - **Documentation:** For more details on pyRevit Routes, see the [official documentation](https://pyrevitlabs.notion.site/pyRevit-Routes-HTTP-API-79ef6d4a77b04aca9be6f4e46ffa728e).
-- **StreamBIM API utilities**: Utilities for interacting with StreamBIM API, including authentication, project management, and checklist item retrieval. [StreamBIM utilities](https://github.com/byggstyrning/pyByggstyrning.extension/tree/master/lib/streambim).
-- **Batch Importer tool**: The StreamBIM Checklist import can be automated using the 'pyrevit run' command to start revit and execute the 'Run Everything' script, this can be schedules using the .bat located in the tool folder. For more, checkout the [Batch Importer Tool](https://github.com/byggstyrning/pyByggstyrning.extension/tree/master/pyBS.tab/StreamBIM.panel/Batch%20Importer%20Tool).
 
-# Extension installation
+# Installation instructions
+## Extension installation
 
 To use the extension follow the steps:
 
@@ -33,9 +34,12 @@ To use the extension follow the steps:
 
 Or via the built-in extension manager in pyRevit
 
-# Switchback-feature installation
+## Switchback-feature installation
 Type following command to add support for Switchback: `pyrevit configs routes port 48884`
+
 Or via pyRevit settings:
+
+![Revit_EOHMDpo0vB](https://github.com/user-attachments/assets/2419e075-0aa5-4b5c-a947-5ce216df159d)
 
 # Video demos
 
