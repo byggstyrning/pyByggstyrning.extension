@@ -51,6 +51,10 @@ https://github.com/user-attachments/assets/4628d6dd-39a4-44ff-af8b-22d1dab4f7a7
 
 https://github.com/user-attachments/assets/bf7c74ad-be95-4c0f-a815-b736b2d31a3a
 
+## Switchback Functionality
+
+https://github.com/user-attachments/assets/47d5767a-9401-4f56-b6ab-375d4c9418db
+
 # Credits
 
 - [Ehsan Iran-Nejad](https://github.com/eirannejad) for developing pyRevit
