@@ -9,6 +9,10 @@ import clr
 clr.AddReference('AdWindows')
 import Autodesk.Windows as AdWindows
 
+# Add Windows Forms reference for window focusing
+clr.AddReference('System.Windows.Forms')
+from System.Windows.Forms import SendKeys
+
 from pyrevit import HOST_APP, routes
 from System import EventHandler
 from Autodesk.Revit.DB import (
@@ -177,7 +181,7 @@ def select_by_id(doc, request, element_id_param):
                 script_logger.warning("Element {} has no bounding box...".format(element_id_long))
             else:
                 # 2b. Apply Section Box
-                padding = 3
+                padding = 2
                 min_pt = bbox.Min - XYZ(padding, padding, padding)
                 max_pt = bbox.Max + XYZ(padding, padding, padding)
                 padded_bbox = BoundingBoxXYZ()
@@ -213,6 +217,14 @@ def select_by_id(doc, request, element_id_param):
             uidoc.ShowElements(element_id) # Operates on the now active view
         except Exception as zoom_ex:
             script_logger.warning("Failed to zoom to element: {}".format(zoom_ex))
+            
+        # --- Step 5: Focus Revit Window ---
+        try:
+            # Simple Alt+Tab to switch back to Revit
+            SendKeys.SendWait('%{TAB}')
+            script_logger.debug("Attempted to focus Revit window")
+        except Exception as focus_ex:
+            script_logger.warning("Failed to focus Revit window: {}".format(focus_ex))
 
         # Success
         return routes.make_response(
