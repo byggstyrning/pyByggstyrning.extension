@@ -79,6 +79,27 @@ def get_available_parameters():
 
     return sorted(list(params))
 
+def get_available_parameters2():
+    """Get all available parameters that could be used for MMI."""
+    try:
+        # Get all project parameters
+        param_bindings = revit.doc.ParameterBindings
+        iterator = param_bindings.ForwardIterator()
+        
+        # Create a list to store parameter names
+        parameters = []
+        
+        while iterator.MoveNext():
+            parameter_name = iterator.Key.Name
+            parameters.append(parameter_name)
+        
+        # Sort parameters alphabetically
+        parameters.sort()
+        return parameters
+    except Exception as e:
+        logger.error("Error getting available parameters: {}".format(str(e)))
+        return []
+    
 def set_parameter_value(element, param_name, value):
     """Set parameter value on an element."""
     param = element.LookupParameter(param_name)

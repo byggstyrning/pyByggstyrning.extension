@@ -1,11 +1,16 @@
 # -*- coding: utf-8 -*-
-__title__ = "225"
+"""Template for creating new MMI pushbuttons.
+
+Copy this file to your new pushbutton folder and customize as needed.
+"""
+
+__title__ = "Template"  # Replace with the actual MMI value
 __author__ = ""
 __context__ = 'Selection'
-__doc__ = """Etablerade principiella lösningar
-Principiella lösningar är etablerade och utgör grund för vidare samordning fram till utförd tvärfacklig kontroll.
+__doc__ = """MMI Value Description Here
+Add a detailed description of what this MMI value means.
 
-Sets the MMI parameter value to 225 on selected elements.
+Sets the MMI parameter value to X on selected elements.
 Based on MMI veilederen: https://mmi-veilederen.no/?page_id=85"""
 
 # Add the lib directory to sys.path for importing
@@ -27,7 +32,8 @@ from pyrevit import revit
 from mmi.core import set_selection_mmi_value
 
 # Set the MMI value on selected elements
-set_selection_mmi_value(revit.doc, "225")
+# Replace "XXX" with the actual MMI value for this button
+set_selection_mmi_value(revit.doc, "XXX")
 
 # --------------------------------------------------
 # 💡 pyRevit with VSCode: Use pyrvt or pyrvtmin snippet

@@ -17,13 +17,12 @@ from pyrevit import HOST_APP, routes
 from System import EventHandler
 from Autodesk.Revit.DB import (
     Events, ElementId, Transaction, View3D, ViewFamilyType,
-    FilteredElementCollector, BuiltInCategory, BoundingBoxXYZ,
+    FilteredElementCollector, BoundingBoxXYZ,
     ViewFamily, XYZ
 )
-from Autodesk.Revit.UI import UIDocument, Selection
+from Autodesk.Revit.UI import UIDocument
 from System.Collections.Generic import List
 from pyrevit.coreutils import logger
-import time # Keep time for total duration calculation
 
 # Create a logger instance for this script
 script_logger = logger.get_logger('switchback_api')
@@ -46,7 +45,7 @@ def find_and_clone_mmi_panel():
         if not tab.IsVisible:
             continue
         for panel in tab.Panels:
-            if panel.Source and "MMI" in panel.Source.Title:
+            if panel.Source and "MMI" == panel.Source.Title:
                 source_panel = panel
                 break
         if source_panel:

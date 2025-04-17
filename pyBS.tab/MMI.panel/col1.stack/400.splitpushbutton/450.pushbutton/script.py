@@ -8,39 +8,26 @@ Objektet stämmer med kontrollmätning och motsvarar gällande design i 3D. Avvi
 Sets the MMI parameter value to 450 on selected elements.
 Based on MMI veilederen: https://mmi-veilederen.no/?page_id=85"""
 
-from Autodesk.Revit.DB import Transaction, ElementId, FilteredElementCollector, BuiltInCategory
-from pyrevit import revit, DB, forms
+# Add the lib directory to sys.path for importing
+import sys
+import os.path as op
+script_path = __file__
+pushbutton_dir = op.dirname(script_path)
+splitpushbutton_dir = op.dirname(pushbutton_dir)
+stack_dir = op.dirname(splitpushbutton_dir)
+panel_dir = op.dirname(stack_dir)
+tab_dir = op.dirname(panel_dir)
+extension_dir = op.dirname(tab_dir)
+lib_path = op.join(extension_dir, 'lib')
 
-# Get the current document and selection
-doc = revit.doc
-selection = revit.get_selection()
+if lib_path not in sys.path:
+    sys.path.append(lib_path)
 
-if not selection:
-    forms.alert('Please select at least one element.', exitscript=True)
+from pyrevit import revit
+from mmi.core import set_selection_mmi_value
 
-# Start a transaction
-t = Transaction(doc, 'Set MMI Parameter to 450')
-t.Start()
-
-try:
-    # Set MMI parameter for each selected element
-    for element_id in selection.element_ids:
-        element = doc.GetElement(element_id)
-        if element:
-            # Try to set the parameter value
-            param = element.LookupParameter('MMI')
-            if param and not param.IsReadOnly:
-                param.Set('450')
-            else:
-                print("Could not set MMI parameter on element {}".format(element_id))
-    
-    # No success alert as requested
-except Exception as e:
-    print("Error: {}".format(e))
-    forms.alert('Error: {}'.format(e), title='Error')
-finally:
-    # Commit the transaction
-    t.Commit()
+# Set the MMI value on selected elements
+set_selection_mmi_value(revit.doc, "450")
 
 # --------------------------------------------------
 # 💡 pyRevit with VSCode: Use pyrvt or pyrvtmin snippet

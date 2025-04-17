@@ -1,0 +1,502 @@
+# -*- coding: utf-8 -*-
+"""Toggles the MMI Monitor on and off.
+
+When active, the monitor watches for relevant changes based on configuration.
+When inactive, it does nothing.
+"""
+
+__title__ = "Monitor"
+__author__ = "Byggstyrning AB"
+__doc__ = "Toggle MMI Monitor on/off for the current session"
+__highlight__ = 'new'
+
+# Import standard libraries
+import sys
+import os
+import re
+import datetime
+
+# Import Revit API
+import clr
+clr.AddReference('RevitAPI')
+clr.AddReference('RevitAPIUI')
+from Autodesk.Revit.DB import *
+from Autodesk.Revit.UI import *
+from System import EventHandler
+from Autodesk.Revit.DB.Events import DocumentChangedEventArgs
+
+# Import pyRevit modules
+from pyrevit import script
+from pyrevit import forms
+from pyrevit import revit
+from pyrevit.userconfig import user_config
+from pyrevit.coreutils.ribbon import ICON_MEDIUM
+from pyrevit.revit import ui
+import pyrevit.extensions as exts
+
+# Add the extension directory to the path - FIXED PATH RESOLUTION
+import os.path as op
+script_path = __file__
+pushbutton_dir = op.dirname(script_path)
+splitpushbutton_dir = op.dirname(pushbutton_dir)
+stack_dir = op.dirname(splitpushbutton_dir)
+panel_dir = op.dirname(stack_dir)
+tab_dir = op.dirname(panel_dir)
+extension_dir = op.dirname(tab_dir)
+lib_path = op.join(extension_dir, 'lib')
+
+if lib_path not in sys.path:
+    sys.path.append(lib_path)
+
+# Try direct import from current directory's parent path
+sys.path.append(op.dirname(op.dirname(panel_dir)))
+
+# Initialize logger
+logger = script.get_logger()
+
+# Import MMI libraries
+from mmi.config import CONFIG_SECTION, CONFIG_KEY_ACTIVE, MMI_THRESHOLD
+from mmi.config import is_monitor_active, set_monitor_active
+from mmi.core import get_mmi_parameter_name, load_monitor_config
+from mmi.utils import get_element_location, get_element_mmi_value, validate_mmi_value
+
+# Import MMI Schema
+try:
+    from mmi.schema import MMIParameterSchema
+except Exception as ex:
+    logger.error("Failed to import MMI Schema: {}".format(ex))
+
+# Event Handler for external events
+class MMIEventHandler(IExternalEventHandler):
+    def __init__(self):
+        self.elements_to_pin = []
+        self.notify_message = None
+        self.mmi_threshold = MMI_THRESHOLD
+        self.elements_to_validate = []
+        self.validate_corrections = {}
+        
+    def Execute(self, uiapp):
+        try:
+            logger.debug("MMI Event Handler Executing")
+            doc = uiapp.ActiveUIDocument.Document
+            
+            # Process validation corrections if any
+            if self.elements_to_validate and self.validate_corrections:
+                logger.debug("Processing MMI validation for {} elements".format(len(self.elements_to_validate)))
+                with Transaction(doc, "Correct MMI Values") as t:
+                    t.Start()
+                    
+                    corrected_count = 0
+                    correction_details = []
+                    
+                    for element_id, correction in self.validate_corrections.items():
+                        element = doc.GetElement(element_id)
+                        if not element:
+                            continue
+                            
+                        orig_value = correction["original"]
+                        fixed_value = correction["fixed"]
+                        param_name = correction["param"]
+                        
+                        # Get the parameter
+                        param = element.LookupParameter(param_name)
+                        if not param:
+                            # Try element type parameter
+                            try:
+                                type_id = element.GetTypeId()
+                                if type_id and type_id != ElementId.InvalidElementId:
+                                    element_type = doc.GetElement(type_id)
+                                    if element_type:
+                                        param = element_type.LookupParameter(param_name)
+                            except Exception as e:
+                                logger.debug("Error getting type parameter: {}".format(e))
+                                
+                        # Update the value if parameter exists
+                        if param and param.HasValue and param.StorageType == StorageType.String:
+                            param.Set(fixed_value)
+                            corrected_count += 1
+                            correction_details.append("'{}' → '{}'".format(orig_value, fixed_value))
+                            logger.debug("Corrected MMI value from '{}' to '{}' for element {}".format(
+                                orig_value, fixed_value, element_id))
+                    
+                    t.Commit()
+                    
+                    # Notify user of corrections
+                    if corrected_count > 0:
+                        forms.show_balloon(
+                            header="MMI Value Correction",
+                            text="{} MMI values automatically corrected".format(corrected_count),
+                            tooltip="Details:\n" + "\n".join(correction_details[:5]) + 
+                                   ("\n..." if len(correction_details) > 5 else ""),
+                            is_new=True
+                        )
+                
+                # Clear validation data
+                self.elements_to_validate = []
+                self.validate_corrections = {}
+            
+            # Process element pinning
+            if self.elements_to_pin:
+                logger.debug("Processing pin operation for {} elements".format(len(self.elements_to_pin)))
+                
+                # Pin the elements in a transaction
+                with Transaction(doc, "Pin High MMI Elements") as t:
+                    t.Start()
+                    
+                    pin_count = 0
+                    for element in self.elements_to_pin:
+                        element_id = element
+                        
+                        # Get the element from its ID
+                        try:
+                            element = doc.GetElement(element_id)
+                            if element and hasattr(element, "Pinned") and not element.Pinned:
+                                element.Pinned = True
+                                pin_count += 1
+                                logger.debug("Pinned element {}".format(element_id))
+                        except Exception as elem_ex:
+                            logger.error("Error pinning element {}: {}".format(element_id, elem_ex))
+                        
+                    t.Commit()
+                
+                # Show notification if requested
+                if pin_count > 0 and self.notify_message:
+                    # Use show_balloon instead of forms.alert
+                    message = self.notify_message.format(pin_count, self.mmi_threshold)
+                    forms.show_balloon(
+                        header="MMI Monitor",
+                        text=message,
+                        tooltip="Elements with MMI value > {} were automatically pinned".format(self.mmi_threshold),
+                        is_new=True
+                    )
+                
+                # Clear the queue
+                self.elements_to_pin = []
+                self.notify_message = None
+            
+        except Exception as ex:
+            logger.error("Error in MMI Event Handler: {}".format(ex))
+            
+    def GetName(self):
+        return "MMI Monitor Event Handler"
+        
+    def pin_elements_deferred(self, element_ids, threshold, notify=True):
+        """Queue elements for pinning in a deferred execution"""
+        self.elements_to_pin = element_ids
+        self.mmi_threshold = threshold
+        
+        if notify:
+            self.notify_message = "Pinned {} elements with MMI value > {}"
+        else:
+            self.notify_message = None
+            
+    def validate_mmi_values_deferred(self, elements_to_validate, corrections):
+        """Queue elements for MMI value validation and correction"""
+        self.elements_to_validate = elements_to_validate
+        self.validate_corrections = corrections
+
+# Global handlers and events
+mmi_event_handler = None
+external_event = None
+doc_changed_handler = None
+element_location_cache = {}  # Cache to store element locations for move detection
+
+
+def update_element_location_cache(element_id, location):
+    """Update the element location cache."""
+    global element_location_cache
+    element_location_cache[element_id.IntegerValue] = {
+        "location": location,
+        "timestamp": datetime.datetime.now()
+    }
+
+def clean_element_location_cache():
+    """Clean old entries from the element location cache."""
+    global element_location_cache
+    now = datetime.datetime.now()
+    # Keep entries not older than 5 minutes
+    element_location_cache = {
+        id: data for id, data in element_location_cache.items()
+        if (now - data["timestamp"]).total_seconds() < 300
+    }
+
+def document_changed_handler(sender, args):
+    """Handler for document changed event."""
+    try:
+        # Check if we should monitor
+        if not is_monitor_active():
+            return
+            
+        # Get the modified elements
+        modified_element_ids = args.GetModifiedElementIds()
+        
+        if modified_element_ids.Count == 0:
+            return
+            
+        # Get the document
+        doc = args.GetDocument()
+        
+        # Get MMI parameter name
+        mmi_param_name = get_mmi_parameter_name(doc)
+        if not mmi_param_name:
+            logger.warning("No MMI parameter name configured. Use MMI Config tool first.")
+            return
+         
+        # Get monitor settings
+        monitor_settings = load_monitor_config(doc, use_display_names=False)
+        logger.info(monitor_settings)
+        
+        # Check which features are enabled
+        validate_enabled = monitor_settings["validate_mmi"]
+        warn_on_move_enabled = monitor_settings["warn_on_move"]
+        pin_elements_enabled = monitor_settings["pin_elements"]
+        
+        if not (validate_enabled or warn_on_move_enabled or pin_elements_enabled):
+            logger.debug("No MMI monitor features are enabled. Skipping processing.")
+            return
+        
+        logger.debug("Processing {} modified elements with MMI parameter: {}".format(
+            modified_element_ids.Count, mmi_param_name))
+        
+        # Track elements for different operations
+        elements_to_validate = []
+        validation_corrections = {}
+        elements_to_pin = []
+        moved_high_mmi_elements = []
+        
+        # Clean old entries from element location cache
+        clean_element_location_cache()
+        
+        # First pass: Process all elements for validation and move detection
+        for element_id in modified_element_ids:
+            element = doc.GetElement(element_id)
+            
+            # Skip null elements or elements that can't be pinned
+            if element is None or not hasattr(element, "Pinned"):
+                continue
+                
+            # Get the MMI value for the element
+            mmi_value, value_str, param = get_element_mmi_value(element, mmi_param_name, doc)
+            
+            if mmi_value is not None:
+                # ===== STEP 1: VALIDATE =====
+                if validate_enabled and param:
+                    orig_value, fixed_value = validate_mmi_value(value_str)
+                    if orig_value and fixed_value:
+                        elements_to_validate.append(element_id)
+                        validation_corrections[element_id] = {
+                            "original": orig_value,
+                            "fixed": fixed_value,
+                            "param": mmi_param_name
+                        }
+                        logger.debug("Element {} needs MMI value correction: '{}' to '{}'".format(
+                            element_id, orig_value, fixed_value))
+                
+                # ===== STEP 2: WARN ON MOVE =====
+                if warn_on_move_enabled and mmi_value > MMI_THRESHOLD:
+                    # Get current location
+                    current_location = get_element_location(element)
+                    if current_location:
+                        # Check if we have a previous location
+                        if element_id.IntegerValue in element_location_cache:
+                            prev_location = element_location_cache[element_id.IntegerValue]["location"]
+                            # Calculate distance moved
+                            distance = current_location.DistanceTo(prev_location)
+                            # If moved more than a small threshold (0.1 meters)
+                            if distance > 0.1:
+                                moved_high_mmi_elements.append({
+                                    "id": element_id,
+                                    "mmi": mmi_value,
+                                    "distance": distance
+                                })
+                                logger.debug("High MMI Element {} moved {:.2f} meters".format(
+                                    element_id, distance))
+                        
+                        # Update location cache for future checks
+                        update_element_location_cache(element_id, current_location)
+                
+                # ===== STEP 3: PIN ELEMENTS =====
+                if pin_elements_enabled and mmi_value > MMI_THRESHOLD:
+                    # Only pin if not already pinned
+                    if not element.Pinned:
+                        elements_to_pin.append(element_id)
+                        logger.debug("Element {} with MMI value {} queued for pinning".format(
+                            element_id, mmi_value))
+        
+        # Process validation if needed
+        if elements_to_validate and validation_corrections and mmi_event_handler and external_event:
+            mmi_event_handler.validate_mmi_values_deferred(elements_to_validate, validation_corrections)
+            external_event.Raise()
+            logger.debug("Queued {} elements for MMI validation correction".format(len(elements_to_validate)))
+        
+        # Process move warnings if needed
+        if moved_high_mmi_elements:
+            # Group and limit to top 5 highest MMI elements
+            moved_high_mmi_elements.sort(key=lambda x: x["mmi"], reverse=True)
+            count = len(moved_high_mmi_elements)
+            top_elements = moved_high_mmi_elements[:5]
+            
+            details = []
+            for item in top_elements:
+                details.append("Element ID: {} (MMI: {}, Distance: {:.2f}m)".format(
+                    item["id"].IntegerValue, item["mmi"], item["distance"]))
+            
+            tooltip = "High MMI elements should be carefully managed:\n" + "\n".join(details)
+            if count > 5:
+                tooltip += "\n... and {} more".format(count - 5)
+            
+            forms.show_balloon(
+                header="High MMI Element Move",
+                text="{} elements with MMI > {} were moved".format(count, MMI_THRESHOLD),
+                tooltip=tooltip,
+                is_new=True
+            )
+            logger.debug("Warned about {} moved high MMI elements".format(count))
+        
+        # Process pinning if needed
+        if elements_to_pin and mmi_event_handler and external_event:
+            # If already doing validation, avoid raising another external event immediately
+            # The pin operation will be scheduled after validation completes
+            if not elements_to_validate:
+                mmi_event_handler.pin_elements_deferred(elements_to_pin, MMI_THRESHOLD)
+                external_event.Raise()
+                logger.debug("Queued {} elements for pinning using external event".format(len(elements_to_pin)))
+            else:
+                # Store the pinning request - it will be processed after validation
+                mmi_event_handler.pin_elements_deferred(elements_to_pin, MMI_THRESHOLD)
+                logger.debug("Pinning of {} elements will occur after validation".format(len(elements_to_pin)))
+    
+    except Exception as ex:
+        logger.error("Error in document changed handler: {}".format(ex))
+
+def register_event_handlers():
+    """Register the necessary event handlers for monitoring."""
+    global mmi_event_handler, external_event, doc_changed_handler
+    try:
+        # Create external event handler (for manual operations)
+        if mmi_event_handler is None:
+            mmi_event_handler = MMIEventHandler()
+            external_event = ExternalEvent.Create(mmi_event_handler)
+            logger.debug("MMI Event Handler Created.")
+
+        # Register for document changed events
+        if doc_changed_handler is None:
+            doc_changed_handler = EventHandler[DocumentChangedEventArgs](document_changed_handler)
+            # Note: Application is better than Document for app-level monitoring
+            revit.doc.Application.DocumentChanged += doc_changed_handler
+            logger.debug("Document Changed Handler registered.")
+        
+        logger.debug("MMI Monitor event registration completed.")
+        return True
+    except Exception as e:
+        logger.error("Failed to register MMI Monitor events: {}".format(e))
+        return False
+
+def deregister_event_handlers():
+    """Deregister event handlers."""
+    global mmi_event_handler, external_event, doc_changed_handler
+    try:
+        # Unregister document changed event handler
+        if doc_changed_handler is not None:
+            revit.doc.Application.DocumentChanged -= doc_changed_handler
+            doc_changed_handler = None
+            logger.debug("Document Changed Handler unregistered.")
+        
+        # Dispose the external event if created
+        if external_event is not None:
+            external_event = None # Mark as inactive
+            mmi_event_handler = None
+            logger.debug("MMI ExternalEvent marked as inactive.")
+
+        logger.debug("MMI Monitor event deregistration completed.")
+        return True
+    except Exception as e:
+        logger.error("Failed to deregister MMI Monitor events: {}".format(e))
+        return False
+
+# --- Button Initialization --- 
+
+def __selfinit__(script_cmp, ui_button_cmp, __rvt__):
+    """Initialize the button icon based on the current active state."""
+    try:
+        # Use the same approach as Tab Coloring script
+        on_icon = ui.resolve_icon_file(script_cmp.directory, exts.DEFAULT_ON_ICON_FILE)
+        off_icon = ui.resolve_icon_file(script_cmp.directory, exts.DEFAULT_OFF_ICON_FILE)
+
+        button_icon = script_cmp.get_bundle_file(
+            on_icon if is_monitor_active() else off_icon
+        )
+        ui_button_cmp.set_icon(button_icon, icon_size=ICON_MEDIUM)
+    except Exception as e:
+        logger.error("Error initializing MMI Monitor button: {}".format(e))
+
+# --- Main Execution --- 
+
+if __name__ == '__main__':
+    was_active = is_monitor_active()
+    new_active_state = not was_active
+
+    success = False
+    if new_active_state:
+        # Activate: Register handlers
+        logger.debug("Activating MMI Monitor...")
+        if register_event_handlers():
+            set_monitor_active(True)
+            script.toggle_icon(new_active_state)  # Toggle icon to active state
+           
+            # Get the current settings
+            monitor_settings = load_monitor_config(revit.doc, use_display_names=False)
+            mmi_param_name = get_mmi_parameter_name(revit.doc) or "Not set"
+            
+            # Create a readable list of enabled features
+            enabled_features = []
+            if monitor_settings["pin_elements"]:
+                enabled_features.append("Pin elements >={}".format(MMI_THRESHOLD))
+            if monitor_settings["warn_on_move"]:
+                enabled_features.append("Warn when moving elements >{}".format(MMI_THRESHOLD))
+            if monitor_settings["validate_mmi"]:
+                enabled_features.append("Validate MMI format")
+                
+            if not enabled_features:
+                enabled_features.append("No features enabled (configure in Settings)")
+            
+            # Show the activation balloon with all enabled features
+            forms.show_balloon(
+                header="MMI Monitor", 
+                text="Monitor activated \n\nActive features:\n• {}\n\nParameter: {}".format(
+                    "\n• ".join(enabled_features),
+                    mmi_param_name
+                ),
+                is_new=True
+            )
+            success = True
+        else:
+            forms.show_balloon(
+                header="Error", 
+                text="Failed to activate MMI Monitor",
+                tooltip="Check logs for details",
+                is_new=True
+            )
+    else:
+        # Deactivate: Deregister handlers
+        logger.debug("Deactivating MMI Monitor...")
+        if deregister_event_handlers():
+            set_monitor_active(False)
+            script.toggle_icon(new_active_state)  # Toggle icon to inactive state
+            success = True
+        else:
+            forms.show_balloon(
+                header="Error", 
+                text="Failed to deactivate MMI Monitor",
+                tooltip="Check logs for details",
+                is_new=True
+            )
+
+    if success:
+        logger.debug("MMI Monitor state toggled to: {}".format("ON" if new_active_state else "OFF"))
+    else:
+        logger.error("Failed to toggle MMI Monitor state.")
+
+# --------------------------------------------------
+# 💡 pyRevit with VSCode: Use pyrvt or pyrvtmin snippet
+# 📄 Template has been developed by Baptiste LECHAT and inspired by Erik FRITS.

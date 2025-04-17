@@ -59,10 +59,16 @@ class Entity(revit.BaseWrapper):
         This method will look up the field by name"""
         logger.debug("Getting field '{}'".format(field))
 
+        field_name = field if type(field) is str else field.FieldName
+        
         if type(field) is str:
             field = self.schema.GetField(field)
         if isinstance(field, Field):
             field = field.unwrap()
+
+        if field is None:
+            logger.warning("Field '{}' not found in schema for this entity. Returning None.".format(field_name))
+            return None
 
         if unit_type_id is None:
             unit_type_id = get_default_unit_type_id(field)
@@ -89,11 +95,17 @@ class Entity(revit.BaseWrapper):
         or another Entity
         """
         logger.debug("Setting field '{}' to {}".format(field, value))
+        
+        field_name = field if type(field) is str else field.FieldName
 
         if type(field) is str:
             field = self.schema.GetField(field)
         if isinstance(field, Field):
             field = field.unwrap()
+
+        if field is None:
+            logger.error("Field '{}' not found in schema for this entity. Cannot set value.".format(field_name))
+            return
 
         if unit_type_id is None:
             unit_type_id = get_default_unit_type_id(field)
