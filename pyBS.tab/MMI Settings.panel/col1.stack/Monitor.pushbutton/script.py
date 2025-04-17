@@ -244,7 +244,6 @@ def document_changed_handler(sender, args):
          
         # Get monitor settings
         monitor_settings = load_monitor_config(doc, use_display_names=False)
-        logger.info(monitor_settings)
         
         # Check which features are enabled
         validate_enabled = monitor_settings["validate_mmi"]
