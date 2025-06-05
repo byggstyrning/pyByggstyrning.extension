@@ -4,7 +4,7 @@
 
 pyByggstyrning is a pyRevit extension designed to enhance Revit workflows with some specialized tools for use in model based construction.
 
-- **MMI Panel**: Tools for quickly setting MMI statuses on selected elements. Includes Settings for configuring MMI parameters and Monitor for automatic MMI validation and element protection.
+- **MMI Panel**: Tools for quickly setting MMI statuses on selected elements. Includes Settings for configuring MMI parameters and Monitor for automatic MMI validation, element protection, and post-sync MMI verification.
 - **Project Browser Panel**: Enhanced tools for navigating and managing views and filters, credits to Giuseppe Dotto.
 - **StreamBIM Panel**: Tools for StreamBIM projects for importing checklist values from site to Revit.
 - **View Panel**: Color Elements tool that can help you quickly identify and select elements based on parameter values.
@@ -14,8 +14,9 @@ pyByggstyrning is a pyRevit extension designed to enhance Revit workflows with s
 # Extra features
 
 - **Quick access to MMI in the Modify tab**: The [startup.py](https://github.com/byggstyrning/pyByggstyrning.extension/blob/master/startup.py) script clones the MMI Panel into the Modify tab in Revit upon startup and document opening, providing easy access when elements are selected.
-- **MMI Settings Tool**: Configure which parameter is used for MMI values and adjust monitoring options including automatic validation, element pinning, and movement warnings for elements with high MMI values.
-- **MMI Monitor**: Live background monitor that can automatically validate and correct MMI values, pin elements with MMI values above 400, and warn users when they attempt to move elements with high MMI status.
+- **MMI Settings Tool**: Configure which parameter is used for MMI values and adjust monitoring options including automatic validation, element pinning, movement warnings for elements with high MMI values, and post-synchronization MMI verification.
+- **MMI Monitor**: Live background monitor that can automatically validate and correct MMI values, pin elements with MMI values above 400, warn users when they attempt to move elements with high MMI status, and verify MMI compliance on user-owned elements after synchronization with central.
+- **Post-Sync MMI Verification**: Automatically checks MMI parameters on user-owned model elements after synchronizing with central in workshared models. Creates a dedicated 3D view highlighting elements with missing or invalid MMI values, ensuring quality control in collaborative workflows.
 - **StreamBIM API utilities**: Utilities for interacting with StreamBIM API, including authentication, project management, and checklist item retrieval. [StreamBIM utilities](https://github.com/byggstyrning/pyByggstyrning.extension/tree/master/lib/streambim).
 - **Batch Importer tool**: The StreamBIM Checklist import can be automated using the 'pyrevit run' command to start revit and execute the 'Run Everything' script, this can be schedules using the .bat located in the tool folder. For more, checkout the [Batch Importer Tool](https://github.com/byggstyrning/pyByggstyrning.extension/tree/master/pyBS.tab/StreamBIM.panel/Batch%20Importer%20Tool).
 - **HTTP API for Element Selection (Switchback)**: The `startup.py` also sets up an HTTP endpoint using pyRevit Routes. This allows external applications or developers to select and zoom to a specific element in Revit by its ID via a simple web request.

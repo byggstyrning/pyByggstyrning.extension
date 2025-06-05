@@ -5,6 +5,7 @@ from Autodesk.Revit.DB import Transaction, ElementId, FilteredElementCollector
 from Autodesk.Revit.DB import ExtensibleStorage, StorageType
 from pyrevit import revit, forms, script
 import datetime
+import System
 
 # Import the MMI schema
 from mmi.schema import MMIParameterSchema
@@ -153,16 +154,31 @@ def get_or_create_mmi_storage(doc):
             .OfClass(ExtensibleStorage.DataStorage)\
             .ToElements()
         
+        # Check for current schema version first
         for ds in data_storage_elements:
             try:
                 entity = ds.GetEntity(schema)
                 # Check both validity and matching schema GUID to be safe
                 if entity.IsValid() and entity.Schema.GUID == schema.GUID:
-                    logger.debug("Found existing MMI settings storage (ElementId: {})".format(ds.Id))
+                    logger.debug("Found existing MMI settings storage with current schema (ElementId: {})".format(ds.Id))
                     return ds
             except Exception as e:
                 # Log potential errors during checking but continue searching
                 logger.debug("Error checking storage entity (ElementId: {}): {}".format(ds.Id if ds else 'None', str(e)))
+                continue
+        
+        # Check for old schema version and migrate if found
+        old_schema_guid = System.Guid("8844cb2d-4234-4bf0-8361-b3da4d64234c")  # Previous version GUID
+        for ds in data_storage_elements:
+            try:
+                # Try to get entity with old schema GUID
+                old_schemas = ds.GetEntitySchemaGuids()
+                if old_schema_guid in old_schemas:
+                    logger.debug("Found old schema storage, migrating to new version (ElementId: {})".format(ds.Id))
+                    # Migrate the data
+                    return migrate_mmi_storage(doc, ds, schema)
+            except Exception as e:
+                logger.debug("Error checking for old schema (ElementId: {}): {}".format(ds.Id if ds else 'None', str(e)))
                 continue
         
         # If not found, create a new one and initialize it
@@ -177,6 +193,81 @@ def get_or_create_mmi_storage(doc):
             
     except Exception as e:
         logger.error("Error in get_or_create_mmi_storage: {}".format(str(e)))
+        return None
+
+def migrate_mmi_storage(doc, old_storage, new_schema):
+    """Migrate old MMI storage to new schema version."""
+    try:
+        # Get the old schema GUID
+        old_schema_guid = System.Guid("8844cb2d-4234-4bf0-8361-b3da4d64234c")
+        
+        # Try to read old data
+        old_data = {}
+        try:
+            old_schemas = old_storage.GetEntitySchemaGuids()
+            if old_schema_guid in old_schemas:
+                old_entity = old_storage.GetEntity(old_schema_guid)
+                if old_entity.IsValid():
+                    # Extract old field values
+                    try:
+                        old_data["mmi_parameter_name"] = old_entity.Get[str]("mmi_parameter_name") or ""
+                    except:
+                        old_data["mmi_parameter_name"] = ""
+                    
+                    try:
+                        old_data["last_used_date"] = old_entity.Get[str]("last_used_date") or ""
+                    except:
+                        old_data["last_used_date"] = ""
+                        
+                    try:
+                        old_data["is_validated"] = old_entity.Get[bool]("is_validated")
+                    except:
+                        old_data["is_validated"] = False
+                        
+                    try:
+                        old_data["validate_mmi"] = old_entity.Get[bool]("validate_mmi")
+                    except:
+                        old_data["validate_mmi"] = False
+                        
+                    try:
+                        old_data["pin_elements"] = old_entity.Get[bool]("pin_elements")
+                    except:
+                        old_data["pin_elements"] = False
+                        
+                    try:
+                        old_data["warn_on_move"] = old_entity.Get[bool]("warn_on_move")
+                    except:
+                        old_data["warn_on_move"] = False
+                        
+                    logger.debug("Extracted old data: {}".format(old_data))
+        except Exception as e:
+            logger.warning("Could not extract old data, using defaults: {}".format(e))
+        
+        # Create new storage with migrated data
+        with revit.Transaction("Migrate MMI Settings Storage", doc):
+            # Delete old storage
+            doc.Delete(old_storage.Id)
+            
+            # Create new storage
+            new_storage = ExtensibleStorage.DataStorage.Create(doc)
+            
+            # Create entity with new schema and migrated data
+            with MMIParameterSchema(new_storage, update=True) as entity:
+                # Set migrated values
+                entity.set("mmi_parameter_name", old_data.get("mmi_parameter_name", ""))
+                entity.set("last_used_date", old_data.get("last_used_date", ""))
+                entity.set("is_validated", old_data.get("is_validated", False))
+                entity.set("validate_mmi", old_data.get("validate_mmi", False))
+                entity.set("pin_elements", old_data.get("pin_elements", False))
+                entity.set("warn_on_move", old_data.get("warn_on_move", False))
+                # Set default for new field
+                entity.set("check_mmi_after_sync", False)
+                
+            logger.debug("Successfully migrated MMI storage to new schema (ElementId: {})".format(new_storage.Id))
+            return new_storage
+            
+    except Exception as e:
+        logger.error("Error migrating MMI storage: {}".format(str(e)))
         return None
 
 def save_mmi_parameter(doc, parameter_name):
@@ -228,25 +319,35 @@ def save_monitor_config(doc, selected_config):
             for display_name, new_value in selected_config.items():
                 schema_key = CONFIG_KEYS.get(display_name)
                 if schema_key:
-                    # Get current value *before* setting
-                    current_value = entity.get(schema_key)
-                    logger.debug("Comparing for key '{}': current='{}' (type: {}), new='{}' (type: {})".format(
-                        schema_key, current_value, type(current_value), new_value, type(new_value)
-                    ))
-                    
-                    # Explicitly handle potential None values from initial storage reads
-                    if current_value is None:
-                         current_value = False # Default to False if not set
+                    try:
+                        # Get current value *before* setting
+                        current_value = entity.get(schema_key)
+                        logger.debug("Comparing for key '{}': current='{}' (type: {}), new='{}' (type: {})".format(
+                            schema_key, current_value, type(current_value), new_value, type(new_value)
+                        ))
+                        
+                        # Explicitly handle potential None values from initial storage reads
+                        if current_value is None:
+                             current_value = False # Default to False if not set
 
-                    # Ensure comparison is boolean vs boolean
-                    if bool(current_value) != bool(new_value):
-                        logger.debug("Change detected for '{}'! Setting to {}".format(schema_key, new_value))
-                        entity.set(schema_key, bool(new_value)) # Ensure boolean type is set
-                        # Use the correct field name from the schema
-                        entity.set("last_used_date", timestamp) # Update timestamp on change
-                        changes_made = True
-                    else:
-                        logger.debug("No change needed for '{}'".format(schema_key))
+                        # Ensure comparison is boolean vs boolean
+                        if bool(current_value) != bool(new_value):
+                            logger.debug("Change detected for '{}'! Setting to {}".format(schema_key, new_value))
+                            entity.set(schema_key, bool(new_value)) # Ensure boolean type is set
+                            # Use the correct field name from the schema
+                            entity.set("last_used_date", timestamp) # Update timestamp on change
+                            changes_made = True
+                        else:
+                            logger.debug("No change needed for '{}'".format(schema_key))
+                    except Exception as field_error:
+                        # Handle missing fields by setting the value (this will create the field)
+                        logger.debug("Field '{}' not found in existing storage, creating it with value: {}".format(schema_key, new_value))
+                        try:
+                            entity.set(schema_key, bool(new_value))
+                            entity.set("last_used_date", timestamp)
+                            changes_made = True
+                        except Exception as set_error:
+                            logger.warning("Could not create/set field '{}': {}".format(schema_key, set_error))
             
             logger.debug("Exiting MMIParameterSchema context manager. Changes made flag: {}".format(changes_made))
         
@@ -261,7 +362,6 @@ def save_monitor_config(doc, selected_config):
         return False
 
 def load_monitor_config(doc, use_display_names=False):
-
     """Load the MMI monitor configuration from extensible storage."""
     config = {}
     try:
@@ -276,7 +376,13 @@ def load_monitor_config(doc, use_display_names=False):
         schema = MMIParameterSchema(data_storage)
         if schema.is_valid:
             for display_name, schema_key in CONFIG_KEYS.items():
-                value = schema.get(schema_key) or False  # Default to False if None
+                try:
+                    value = schema.get(schema_key) or False  # Default to False if None
+                except Exception as field_error:
+                    # Handle missing fields gracefully (e.g., new fields in updated schema)
+                    logger.debug("Field '{}' not found, using default: {}".format(schema_key, field_error))
+                    value = False
+                    
                 # Store with either display name or schema key based on parameter
                 if use_display_names:
                     config[display_name] = value

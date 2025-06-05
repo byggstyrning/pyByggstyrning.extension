@@ -23,7 +23,7 @@ clr.AddReference('RevitAPIUI')
 from Autodesk.Revit.DB import *
 from Autodesk.Revit.UI import *
 from System import EventHandler
-from Autodesk.Revit.DB.Events import DocumentChangedEventArgs
+from Autodesk.Revit.DB.Events import DocumentChangedEventArgs, DocumentSynchronizingWithCentralEventArgs, DocumentSynchronizedWithCentralEventArgs
 
 # Import pyRevit modules
 from pyrevit import script
@@ -199,6 +199,8 @@ class MMIEventHandler(IExternalEventHandler):
 mmi_event_handler = None
 external_event = None
 doc_changed_handler = None
+doc_synchronizing_handler = None
+doc_synchronized_handler = None
 element_location_cache = {}  # Cache to store element locations for move detection
 
 
@@ -368,9 +370,79 @@ def document_changed_handler(sender, args):
     except Exception as ex:
         logger.error("Error in document changed handler: {}".format(ex))
 
+def document_synchronizing_handler(sender, args):
+    """Handler for document synchronizing event - capture pre-sync state."""
+    try:
+        # Check if sync checking is enabled
+        if not is_monitor_active():
+            return
+            
+        # For sync events, sender is Application, get document from args or active document
+        try:
+            # Try to get document from event args first
+            doc = args.Document
+        except:
+            # Fall back to active document from application
+            app = sender  # sender is Application for sync events
+            doc = app.ActiveUIDocument.Document if app.ActiveUIDocument else None
+            
+        if not doc:
+            logger.warning("Could not get document from sync event")
+            return
+            
+        monitor_settings = load_monitor_config(doc, use_display_names=False)
+        
+        if not monitor_settings.get("check_mmi_after_sync", False):
+            logger.debug("Post-sync MMI checking is disabled")
+            return
+            
+        logger.debug("Document synchronizing - tracking user elements for post-sync check")
+        
+        # Import sync checker and track elements
+        from mmi.sync_checker import track_modified_elements_before_sync
+        track_modified_elements_before_sync(doc)
+        
+    except Exception as ex:
+        logger.error("Error in document synchronizing handler: {}".format(ex))
+
+def document_synchronized_handler(sender, args):
+    """Handler for document synchronized event - check MMI post-sync."""
+    try:
+        # Check if sync checking is enabled
+        if not is_monitor_active():
+            return
+            
+        # For sync events, sender is Application, get document from args or active document
+        try:
+            # Try to get document from event args first
+            doc = args.Document
+        except:
+            # Fall back to active document from application
+            app = sender  # sender is Application for sync events
+            doc = app.ActiveUIDocument.Document if app.ActiveUIDocument else None
+            
+        if not doc:
+            logger.warning("Could not get document from sync event")
+            return
+            
+        monitor_settings = load_monitor_config(doc, use_display_names=False)
+        
+        if not monitor_settings.get("check_mmi_after_sync", False):
+            logger.debug("Post-sync MMI checking is disabled")
+            return
+            
+        logger.debug("Document synchronized - processing post-sync MMI check")
+        
+        # Import sync checker and process check
+        from mmi.sync_checker import process_post_sync_check
+        process_post_sync_check(doc)
+        
+    except Exception as ex:
+        logger.error("Error in document synchronized handler: {}".format(ex))
+
 def register_event_handlers():
     """Register the necessary event handlers for monitoring."""
-    global mmi_event_handler, external_event, doc_changed_handler
+    global mmi_event_handler, external_event, doc_changed_handler, doc_synchronizing_handler, doc_synchronized_handler
     try:
         # Create external event handler (for manual operations)
         if mmi_event_handler is None:
@@ -385,6 +457,18 @@ def register_event_handlers():
             revit.doc.Application.DocumentChanged += doc_changed_handler
             logger.debug("Document Changed Handler registered.")
         
+        # Register for document synchronizing events
+        if doc_synchronizing_handler is None:
+            doc_synchronizing_handler = EventHandler[DocumentSynchronizingWithCentralEventArgs](document_synchronizing_handler)
+            revit.doc.Application.DocumentSynchronizingWithCentral += doc_synchronizing_handler
+            logger.debug("Document Synchronizing Handler registered.")
+            
+        # Register for document synchronized events  
+        if doc_synchronized_handler is None:
+            doc_synchronized_handler = EventHandler[DocumentSynchronizedWithCentralEventArgs](document_synchronized_handler)
+            revit.doc.Application.DocumentSynchronizedWithCentral += doc_synchronized_handler
+            logger.debug("Document Synchronized Handler registered.")
+        
         logger.debug("MMI Monitor event registration completed.")
         return True
     except Exception as e:
@@ -393,13 +477,25 @@ def register_event_handlers():
 
 def deregister_event_handlers():
     """Deregister event handlers."""
-    global mmi_event_handler, external_event, doc_changed_handler
+    global mmi_event_handler, external_event, doc_changed_handler, doc_synchronizing_handler, doc_synchronized_handler
     try:
         # Unregister document changed event handler
         if doc_changed_handler is not None:
             revit.doc.Application.DocumentChanged -= doc_changed_handler
             doc_changed_handler = None
             logger.debug("Document Changed Handler unregistered.")
+        
+        # Unregister document synchronizing event handler
+        if doc_synchronizing_handler is not None:
+            revit.doc.Application.DocumentSynchronizingWithCentral -= doc_synchronizing_handler
+            doc_synchronizing_handler = None
+            logger.debug("Document Synchronizing Handler unregistered.")
+            
+        # Unregister document synchronized event handler
+        if doc_synchronized_handler is not None:
+            revit.doc.Application.DocumentSynchronizedWithCentral -= doc_synchronized_handler
+            doc_synchronized_handler = None
+            logger.debug("Document Synchronized Handler unregistered.")
         
         # Dispose the external event if created
         if external_event is not None:
@@ -455,6 +551,8 @@ if __name__ == '__main__':
                 enabled_features.append("Warn when moving elements >{}".format(MMI_THRESHOLD))
             if monitor_settings["validate_mmi"]:
                 enabled_features.append("Validate MMI format")
+            if monitor_settings["check_mmi_after_sync"]:
+                enabled_features.append("Check MMI after sync")
                 
             if not enabled_features:
                 enabled_features.append("No features enabled (configure in Settings)")

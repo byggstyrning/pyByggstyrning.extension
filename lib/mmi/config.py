@@ -16,7 +16,8 @@ MMI_THRESHOLD = 400
 CONFIG_KEYS = {
     "✅ Validate MMI": "validate_mmi",
     "🔒 Pin elements >=400": "pin_elements",
-    "⚠️ Warn when moving elements >400": "warn_on_move"
+    "⚠️ Warn when moving elements >400": "warn_on_move",
+    "🔄 Check MMI after sync": "check_mmi_after_sync"
 }
 
 def is_monitor_active():
