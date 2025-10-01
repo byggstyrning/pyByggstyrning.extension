@@ -450,6 +450,9 @@ class RevitColorizerWindow(WPFWindow):
             # Flag to prevent selection storage during restore process
             self._processing_restored_selection = False
             
+            # Flag to prevent recursive updates when handling select all checkbox
+            self._updating_select_all = False
+            
             # Variable to store selected category names for persistence between views
             self.selected_category_names = []
             
@@ -657,6 +660,9 @@ class RevitColorizerWindow(WPFWindow):
         self.overrideProjectionCheckbox.Checked += self.on_override_projection_changed
         self.overrideProjectionCheckbox.Unchecked += self.on_override_projection_changed
         
+        # Select All Categories checkbox events
+        self.SelectAllCategories_Changed = self.SelectAllCategories_Changed
+        
         # Setting initial values for checkboxes
         self.overrideProjectionCheckbox.IsChecked = False
         self.showElementsCheckbox.IsChecked = True
@@ -719,6 +725,9 @@ class RevitColorizerWindow(WPFWindow):
                 
                 # Now that all categories are restored, store them again to ensure consistency
                 self.store_selected_categories()
+                
+                # Update the select all checkbox state to reflect the current selection
+                self.update_select_all_checkbox_state()
                 
                 # Removed final selections verification logging
                             
@@ -906,6 +915,8 @@ class RevitColorizerWindow(WPFWindow):
             # But only if we're not in the middle of a restore operation
             if not self._processing_restored_selection:
                 self.store_selected_categories()
+                # Also update the select all checkbox state when not restoring
+                self.update_select_all_checkbox_state()
             
         except Exception as ex:
             self.statusText.Text = "Error processing category selection: " + str(ex)
@@ -942,18 +953,39 @@ class RevitColorizerWindow(WPFWindow):
             
             param_type_code = 0 if is_instance else 1
             
-            # Start with parameters from the first category
-            first_category = selected_categories[0]
-            common_params = [p for p in first_category.par if p.param_type == param_type_code]
+            # Check if all categories are selected
+            total_categories = self.categoryListBox.Items.Count
+            all_categories_selected = len(selected_categories) == total_categories
             
-            # Find common parameters across all selected categories
-            for category in selected_categories[1:]:
-                # Get filtered parameters for this category
-                category_params = [p for p in category.par if p.param_type == param_type_code]
+            if all_categories_selected:
+                # When all categories are selected, show unique parameters from all categories
+                unique_params = {}  # Use dict to avoid duplicates by name
                 
-                # Filter down to parameters that exist in both lists (by name)
-                category_param_names = [p.name for p in category_params]
-                common_params = [p for p in common_params if p.name in category_param_names]
+                for category in selected_categories:
+                    category_params = [p for p in category.par if p.param_type == param_type_code]
+                    for param in category_params:
+                        # Use parameter name as key to avoid duplicates
+                        if param.name not in unique_params:
+                            unique_params[param.name] = param
+                
+                # Convert back to list and sort
+                common_params = list(unique_params.values())
+                common_params.sort(key=lambda x: x.name.upper())
+                
+            else:
+                # When not all categories are selected, use common parameters logic
+                # Start with parameters from the first category
+                first_category = selected_categories[0]
+                common_params = [p for p in first_category.par if p.param_type == param_type_code]
+                
+                # Find common parameters across all selected categories
+                for category in selected_categories[1:]:
+                    # Get filtered parameters for this category
+                    category_params = [p for p in category.par if p.param_type == param_type_code]
+                    
+                    # Filter down to parameters that exist in both lists (by name)
+                    category_param_names = [p.name for p in category_params]
+                    common_params = [p for p in common_params if p.name in category_param_names]
             
             # Add common parameters to dropdown with display wrapper
             selected_index = -1
@@ -965,21 +997,33 @@ class RevitColorizerWindow(WPFWindow):
             
             # Restore selection if possible, otherwise select first parameter
             if selected_index >= 0:
-                self.parameterSelector.SelectedIndex = selected_index
-                self.statusText.Text = "Loaded {} common parameters, maintained selection of '{}'.".format(
-                    len(common_params), preserve_param_name)
+                param_description = "unique" if all_categories_selected else "common"
+                self.statusText.Text = "Loaded {} {} parameters, maintained selection of '{}'.".format(
+                    len(common_params), param_description, preserve_param_name)
             elif self.parameterSelector.Items.Count > 0:
                 self.parameterSelector.SelectedIndex = 0
                 param_type_name = "instance" if is_instance else "type"
-                if preserve_param_name:
-                    self.statusText.Text = "Loaded {} common {} parameters. Parameter '{}' is not common to selected categories.".format(
-                        len(common_params), param_type_name, preserve_param_name)
+                
+                if all_categories_selected:
+                    # Special message for when all categories are selected
+                    if preserve_param_name:
+                        self.statusText.Text = "Loaded {} unique {} parameters from all categories. Parameter '{}' may not exist in all categories.".format(
+                            len(common_params), param_type_name, preserve_param_name)
+                    else:
+                        self.statusText.Text = "Loaded {} unique {} parameters from all {} categories.".format(
+                            len(common_params), param_type_name, len(selected_categories))
                 else:
-                    self.statusText.Text = "Loaded {} common {} parameters for {} selected categories.".format(
-                        len(common_params), param_type_name, len(selected_categories))
+                    # Standard message for partial selection
+                    if preserve_param_name:
+                        self.statusText.Text = "Loaded {} common {} parameters. Parameter '{}' is not common to selected categories.".format(
+                            len(common_params), param_type_name, preserve_param_name)
+                    else:
+                        self.statusText.Text = "Loaded {} common {} parameters for {} selected categories.".format(
+                            len(common_params), param_type_name, len(selected_categories))
             else:
-                self.statusText.Text = "No common {} parameters found for the selected categories.".format(
-                    "instance" if is_instance else "type")
+                param_description = "unique" if all_categories_selected else "common"
+                self.statusText.Text = "No {} {} parameters found for the selected categories.".format(
+                    param_description, "instance" if is_instance else "type")
                 self.valuesListBox.Items.Clear()
                 
         except Exception as ex:
@@ -1030,7 +1074,18 @@ class RevitColorizerWindow(WPFWindow):
             
             # Update UI status
             param_source_txt = "Instance" if self.instanceRadioButton.IsChecked else "Type"
-            self.statusText.Text = "Loaded {} values for {} parameter {}".format(len(values) if values else 0, param_source_txt, selected_param.name)
+            
+            # Check if all categories are selected to add helpful context
+            selected_categories = self.get_selected_categories()
+            total_categories = self.categoryListBox.Items.Count
+            all_categories_selected = len(selected_categories) == total_categories
+            
+            if all_categories_selected and total_categories > 1:
+                self.statusText.Text = "Loaded {} values for {} parameter {} (unique parameter mode - may not exist in all categories)".format(
+                    len(values) if values else 0, param_source_txt, selected_param.name)
+            else:
+                self.statusText.Text = "Loaded {} values for {} parameter {}".format(
+                    len(values) if values else 0, param_source_txt, selected_param.name)
 
             self.apply_colors_event.Raise()
         except Exception as ex:
@@ -1249,12 +1304,97 @@ class RevitColorizerWindow(WPFWindow):
             self.statusText.Text = "Error changing selection mode: " + str(ex)
             self.logger.error("Show elements checkbox error: %s", str(ex))
 
+    def SelectAllCategories_Changed(self, sender, args):
+        """Handle select all categories checkbox state change."""
+        try:
+            # Skip processing if we're in the middle of restoring selection or processing category changes
+            if self._processing_restored_selection or getattr(self, '_updating_select_all', False):
+                return
+            
+            # Set flag to prevent recursive updates
+            self._updating_select_all = True
+            
+            # Get the state of the select all checkbox
+            checkbox_state = self.selectAllCategoriesCheckBox.IsChecked
+            
+            # Determine the action based on checkbox state
+            # If checkbox is indeterminate (None), we select all
+            # If checkbox is checked (True), we keep all selected 
+            # If checkbox is unchecked (False), we deselect all
+            if checkbox_state is None:  # Indeterminate state - select all
+                is_checked = True
+                # Force checkbox to checked state after handling indeterminate click
+                self.selectAllCategoriesCheckBox.IsChecked = True
+            elif checkbox_state == True:  # Checked state - keep all selected
+                is_checked = True
+            else:  # Unchecked state (False) - deselect all
+                is_checked = False
+            
+            # Update all category items
+            if self.categoryListBox.Items:
+                # Update all category checkboxes
+                for category_item in self.categoryListBox.Items:
+                    category_item.IsSelected = is_checked
+                
+                # Force refresh of the list box
+                self.categoryListBox.UpdateLayout()
+                
+                # Process the category selection after all are updated
+                self.process_category_selection()
+                
+                # Update status
+                action = "selected" if is_checked else "deselected"
+                count = self.categoryListBox.Items.Count
+                self.statusText.Text = "All {} categories {}.".format(count, action)
+            
+            # Clear the flag
+            self._updating_select_all = False
+                
+        except Exception as ex:
+            self._updating_select_all = False  # Make sure to clear flag on error
+            self.statusText.Text = "Error updating category selection: " + str(ex)
+            self.logger.error("Select all categories error: %s", str(ex))
+
+    def update_select_all_checkbox_state(self):
+        """Update the select all checkbox state based on individual category selections."""
+        try:
+            if not self.categoryListBox.Items.Count:
+                return
+            
+            # Count selected categories
+            selected_count = sum(1 for item in self.categoryListBox.Items if item.IsSelected)
+            total_count = self.categoryListBox.Items.Count
+            
+            # Temporarily disable event handling to prevent recursion
+            self._updating_select_all = True
+            
+            # Update select all checkbox state
+            if selected_count == 0:
+                self.selectAllCategoriesCheckBox.IsChecked = False
+            elif selected_count == total_count:
+                self.selectAllCategoriesCheckBox.IsChecked = True
+            else:
+                # WPF checkboxes support indeterminate state (three-state)
+                # This shows a filled square when some but not all items are selected
+                self.selectAllCategoriesCheckBox.IsThreeState = True
+                self.selectAllCategoriesCheckBox.IsChecked = None  # None represents indeterminate state
+            
+            # Re-enable event handling
+            self._updating_select_all = False
+            
+        except Exception as ex:
+            self._updating_select_all = False  # Make sure to clear flag on error
+            self.logger.error("Error updating select all checkbox state: %s", str(ex))
+
     def on_category_checkbox_changed(self, category_item):
         """Handle category checkbox selection changed event."""
         try:
-            # Skip processing if we're in the middle of restoring selection
-            if self._processing_restored_selection:
+            # Skip processing if we're in the middle of restoring selection or updating select all
+            if self._processing_restored_selection or getattr(self, '_updating_select_all', False):
                 return
+                
+            # Update the select all checkbox state based on individual category selections
+            self.update_select_all_checkbox_state()
                 
             # Directly process the selection which will handle the category storage if needed
             self.process_category_selection()
@@ -1282,14 +1422,33 @@ class RevitColorizerWindow(WPFWindow):
                 self.reset_colors_event.Raise()
                 return
                 
-            # Get common parameters
+            # Get parameters (common or unique based on selection)
             param_type_code = 0 if current_param_type_is_instance else 1
-            common_params = [p for p in selected_categories[0].par if p.param_type == param_type_code]
+            total_categories = self.categoryListBox.Items.Count
+            all_categories_selected = len(selected_categories) == total_categories
             
-            for category in selected_categories[1:]:
-                category_params = [p for p in category.par if p.param_type == param_type_code]
-                category_param_names = [p.name for p in category_params]
-                common_params = [p for p in common_params if p.name in category_param_names]
+            if all_categories_selected:
+                # When all categories are selected, show unique parameters from all categories
+                unique_params = {}  # Use dict to avoid duplicates by name
+                
+                for category in selected_categories:
+                    category_params = [p for p in category.par if p.param_type == param_type_code]
+                    for param in category_params:
+                        # Use parameter name as key to avoid duplicates
+                        if param.name not in unique_params:
+                            unique_params[param.name] = param
+                
+                # Convert back to list and sort
+                common_params = list(unique_params.values())
+                common_params.sort(key=lambda x: x.name.upper())
+            else:
+                # When not all categories are selected, use common parameters logic
+                common_params = [p for p in selected_categories[0].par if p.param_type == param_type_code]
+                
+                for category in selected_categories[1:]:
+                    category_params = [p for p in category.par if p.param_type == param_type_code]
+                    category_param_names = [p.name for p in category_params]
+                    common_params = [p for p in common_params if p.name in category_param_names]
                 
             # Add parameters to dropdown
             selected_index = -1
@@ -1300,14 +1459,16 @@ class RevitColorizerWindow(WPFWindow):
                     
             # Restore selection
             if selected_index >= 0:
-                self.parameterSelector.SelectedIndex = selected_index
-                self.statusText.Text = "Refreshed parameters, maintained selection of '{0}'.".format(current_param_name)
+                param_description = "unique" if all_categories_selected else "common"
+                self.statusText.Text = "Refreshed {} parameters, maintained selection of '{}'.".format(param_description, current_param_name)
             elif self.parameterSelector.Items.Count > 0:
                 self.parameterSelector.SelectedIndex = 0
-                self.statusText.Text = "Refreshed {0} common parameters.".format(len(common_params))
+                param_description = "unique" if all_categories_selected else "common"
+                self.statusText.Text = "Refreshed {} {} parameters.".format(len(common_params), param_description)
             else:
                 param_type = "instance" if current_param_type_is_instance else "type"
-                self.statusText.Text = "No common {0} parameters found.".format(param_type)
+                param_description = "unique" if all_categories_selected else "common"
+                self.statusText.Text = "No {} {} parameters found.".format(param_description, param_type)
                 self.valuesListBox.Items.Clear()
                 return
                 

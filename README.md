@@ -5,7 +5,7 @@
 pyByggstyrning is a pyRevit extension designed to enhance Revit workflows with some specialized tools for use in model based construction.
 
 - **MMI Panel**: Tools for quickly setting MMI statuses on selected elements. Includes Settings for configuring MMI parameters and Monitor for automatic MMI validation, element protection, and post-sync MMI verification.
-- **Project Browser Panel**: Enhanced tools for navigating and managing views and filters, credits to Giuseppe Dotto.
+- **Project Browser Panel**: Enhanced tools for navigating and managing views and filters, credits to Giuseppe Dotto. Includes IFC Classification tools for automated element type classification using webcrawling, machine learning and rule-based defaults.
 - **StreamBIM Panel**: Tools for StreamBIM projects for importing checklist values from site to Revit.
 - **View Panel**: Color Elements tool that can help you quickly identify and select elements based on parameter values.
 
@@ -23,6 +23,11 @@ pyByggstyrning is a pyRevit extension designed to enhance Revit workflows with s
   - **Usage (GET Request):** `http://<revit-machine-ip>:<port>/switchback/id/<element_id>`
   - **Example:** `http://localhost:48884/switchback/id/2099173` (Port may vary based on pyRevit configuration) 
   - **Documentation:** For more details on pyRevit Routes, see the [official documentation](https://pyrevitlabs.notion.site/pyRevit-Routes-HTTP-API-79ef6d4a77b04aca9be6f4e46ffa728e).
+- **IFC Classification Tools**: Automated tools for classifying Revit element types to IFC classes, making IFC export preparation faster and more accurate.
+  - **Load Type Defaults**: Applies standard IFC classifications from an Excel file to element types based on their Revit category, providing a quick way to set up baseline IFC mappings. This tool runs entirely locally without external API calls.
+  - **Quick Class**: Uses machine learning (CatBoost API) to intelligently classify element types based on category, family, type name, and manufacturer information. Falls back to rule-based classification if the API is unavailable.
+  - **Class Crawler**: Sends element types from the active view to Byggstyrning's classification service that uses n8n together with Perplexity search to analyze and displays detailed classification results.
+  - **⚠️ Data Privacy Note**: Both Quick Class and Class Crawler send family type metadata (Category name, Family name, Type name, and manufacturer) to external classification APIs (`n8n.byggstyrning.se`). No project-specific information, geometry, locations, quantities, or other data is transmitted. Only generic family type information is used for IFC classification purposes.
 
 # Installation instructions
 ## Extension installation

@@ -49,3 +49,6 @@ Thumbs.db
 
 # Installer
 installer.ps1
+
+# pyRevit LLM.txt
+.cursor/pyrevit-llms.txt

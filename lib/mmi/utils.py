@@ -279,7 +279,10 @@ def get_element_mmi_value(element, mmi_param_name, doc):
         doc: The active Revit document
         
     Returns:
-        tuple: (numeric_value, value_string, parameter) or (None, None, None) if not found
+        tuple: (numeric_value, value_string, parameter) or (None, None, None) if parameter not found
+        - If parameter exists but has no/invalid value: returns (None, value_string, param)
+        - If parameter exists with valid MMI: returns (int_value, value_string, param)
+        - If parameter doesn't exist: returns (None, None, None)
     """
     try:
         # Check if element has the MMI parameter
@@ -296,19 +299,28 @@ def get_element_mmi_value(element, mmi_param_name, doc):
             except Exception as e:
                 logger.debug("Error getting type parameter: {}".format(e))
         
-        # Check if parameter has a value
-        if param and param.HasValue and param.StorageType == StorageType.String:
-            value_str = param.AsString()
+        # If parameter doesn't exist at all, return None for everything
+        if not param:
+            return None, None, None
+        
+        # Parameter exists - check if it has a value
+        if param.StorageType == StorageType.String:
+            # Get the string value (might be empty or whitespace)
+            value_str = param.AsString() if param.HasValue else ""
             
             # Try to extract numeric value from string
-            try:
-                # Extract numbers from string (e.g., "MMI-425" -> 425)
-                numbers = re.findall(r'\d+', value_str)
-                if numbers:
-                    return int(numbers[0]), value_str, param
-            except Exception as ex:
-                logger.warning("Couldn't parse MMI value from '{}': {}".format(
-                    value_str, ex))
+            if value_str:
+                try:
+                    # Extract numbers from string (e.g., "MMI-425" -> 425)
+                    numbers = re.findall(r'\d+', value_str)
+                    if numbers:
+                        return int(numbers[0]), value_str, param
+                except Exception as ex:
+                    logger.warning("Couldn't parse MMI value from '{}': {}".format(
+                        value_str, ex))
+            
+            # Parameter exists but has no valid numeric value
+            return None, value_str, param
                 
         return None, None, None
     except Exception as ex:

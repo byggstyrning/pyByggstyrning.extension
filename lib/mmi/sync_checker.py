@@ -153,7 +153,14 @@ def validate_post_sync_mmi(doc):
                     element, mmi_param_name, doc)
                 
                 # Check if element is missing MMI value
-                if current_param is None or not current_value_str or current_value_str.strip() == "":
+                # Handle all empty cases: param doesn't exist, value is None, empty string, or whitespace-only
+                is_missing = (
+                    current_param is None or 
+                    current_value_str is None or 
+                    (isinstance(current_value_str, str) and current_value_str.strip() == "")
+                )
+                
+                if is_missing:
                     elements_missing_mmi.append({
                         "element_id": element_id,
                         "element": element,

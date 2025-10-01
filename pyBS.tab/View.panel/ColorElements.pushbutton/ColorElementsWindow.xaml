@@ -105,6 +105,7 @@
             <Border BorderThickness="1" BorderBrush="#CCCCCC" Margin="10,5,5,5">
                 <DockPanel>
                     <TextBlock Text="Category" FontWeight="SemiBold" Margin="5" DockPanel.Dock="Top"/>
+                    <CheckBox x:Name="selectAllCategoriesCheckBox" Content="Select All" Margin="5,0,5,5" DockPanel.Dock="Top" IsThreeState="True" Checked="SelectAllCategories_Changed" Unchecked="SelectAllCategories_Changed" Indeterminate="SelectAllCategories_Changed"/>
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <ListBox x:Name="categoryListBox" BorderThickness="0">
                             <ListBox.ItemTemplate>
