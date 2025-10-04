@@ -211,80 +211,84 @@ class ClashAPIClient:
             logger.error("API request error: {}".format(str(e)))
             return None
     
-    def get_clash_tests(self, project_id=None):
-        """Get list of clash tests for a project.
+    def get_clash_sets(self, project_id=None):
+        """Get list of clash sets from ifcclash JSON format.
+        
+        Expected format: list[ClashSet] where each ClashSet contains:
+        - name: str
+        - mode: "intersection" | "collision" | "clearance"
+        - a: list of sources
+        - b: optional list of sources
+        - clashes: dict of "guid_a-guid_b" -> ClashResult
         
         Args:
             project_id: Optional project ID filter
             
         Returns:
-            List of clash test objects
+            List of clash set objects
         """
-        endpoint = "/api/v1/clash-tests"
+        endpoint = "/api/v1/clash-sets"
         if project_id:
             endpoint = "{}?project_id={}".format(endpoint, project_id)
             
         result = self._make_request(endpoint)
         if result:
+            # ifcclash returns a list directly, not wrapped in 'data'
+            if isinstance(result, list):
+                return result
             return result.get('data', [])
         return []
     
-    def get_clash_results(self, clash_test_id):
-        """Get clash results for a specific clash test.
+    def get_clash_set(self, clash_set_name):
+        """Get a specific clash set by name.
         
         Args:
-            clash_test_id: ID of the clash test
+            clash_set_name: Name of the clash set
             
         Returns:
-            List of clash result groups
+            ClashSet object or None
         """
-        endpoint = "/api/v1/clash-tests/{}/results".format(clash_test_id)
+        endpoint = "/api/v1/clash-sets/{}".format(clash_set_name)
         result = self._make_request(endpoint)
         if result:
-            return result.get('data', [])
-        return []
+            return result
+        return None
     
-    def get_clash_groups(self, clash_test_id):
-        """Get clash groups for a specific clash test, sorted by count.
+    def get_smart_grouped_clashes(self, max_clustering_distance=3.0):
+        """Get smart-grouped clashes from ifcclash.
+        
+        The smart_group_clashes format returns:
+        {
+            "ClashSetName": [
+                {
+                    "ClashSetName - 1": [["guid_a", "guid_b"], ...],
+                    "ClashSetName - 2": [["guid_a", "guid_b"], ...]
+                }
+            ]
+        }
         
         Args:
-            clash_test_id: ID of the clash test
+            max_clustering_distance: Maximum distance for grouping clashes
             
         Returns:
-            List of clash groups sorted by clash count (descending)
+            Dictionary of grouped clashes
         """
-        endpoint = "/api/v1/clash-tests/{}/groups".format(clash_test_id)
+        endpoint = "/api/v1/clash-sets/smart-groups?max_distance={}".format(max_clustering_distance)
         result = self._make_request(endpoint)
         if result:
-            groups = result.get('data', [])
-            # Sort by count in descending order
-            groups.sort(key=lambda x: x.get('clash_count', 0), reverse=True)
-            return groups
-        return []
-    
-    def get_clash_details(self, clash_id):
-        """Get detailed information for a specific clash.
-        
-        Args:
-            clash_id: ID of the clash
-            
-        Returns:
-            Clash details object
-        """
-        endpoint = "/api/v1/clashes/{}".format(clash_id)
-        result = self._make_request(endpoint)
-        if result:
-            return result.get('data', {})
+            return result
         return {}
     
     def get_clashes_by_guids(self, guids):
         """Get clashes involving specific element GUIDs.
         
+        Searches through clash results for matching a_global_id or b_global_id.
+        
         Args:
             guids: List of IFC GUIDs to search for
             
         Returns:
-            List of clash groups containing these GUIDs
+            List of clashes containing these GUIDs
         """
         endpoint = "/api/v1/clashes/search"
         data = {'guids': guids}

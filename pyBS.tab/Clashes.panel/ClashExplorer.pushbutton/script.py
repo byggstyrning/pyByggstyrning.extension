@@ -4,10 +4,12 @@
 This tool connects to a clash detection API to display clash tests, groups,
 and individual clashes with advanced filtering, grouping, and highlighting
 capabilities in Revit.
+
+Compatible with ifcclash JSON format.
 """
 __title__ = "Clash\nExplorer"
 __author__ = "Byggstyrning AB"
-__doc__ = "Visualize and interact with clash detection results from external APIs"
+__doc__ = "Visualize and interact with clash detection results from ifcclash"
 
 import os
 import sys
@@ -48,9 +50,9 @@ from clashes import clash_utils
 logger = script.get_logger()
 
 # Define data classes using namedtuple for IronPython compatibility
-ClashTest = namedtuple('ClashTest', ['Id', 'Name', 'TotalClashes', 'Status', 'LastRun'])
+ClashSet = namedtuple('ClashSet', ['Name', 'Mode', 'TotalClashes', 'Data'])
 ClashGroup = namedtuple('ClashGroup', ['Id', 'GroupName', 'ClashCount', 'CategoryA', 'CategoryB', 'LevelA', 'LevelB', 'Data'])
-ClashDetail = namedtuple('ClashDetail', ['ClashId', 'ElementA', 'ElementB', 'CategoryA', 'CategoryB', 'Distance', 'Data'])
+ClashDetail = namedtuple('ClashDetail', ['ClashKey', 'ElementA', 'ElementB', 'CategoryA', 'CategoryB', 'Distance', 'Data'])
 
 class ClashExplorerUI(forms.WPFWindow):
     """Clash Explorer UI implementation."""
@@ -64,13 +66,13 @@ class ClashExplorerUI(forms.WPFWindow):
         self.clash_api_client = None
         
         # Initialize data collections
-        self.clash_tests = ObservableCollection[object]()
+        self.clash_sets = ObservableCollection[object]()
         self.clash_groups = ObservableCollection[object]()
         self.clash_details = ObservableCollection[object]()
         self.all_clash_groups = []  # Store unfiltered groups
         
         # Current selections
-        self.current_test = None
+        self.current_clash_set = None
         self.current_group = None
         
         # GUID lookup dictionary
@@ -78,18 +80,18 @@ class ClashExplorerUI(forms.WPFWindow):
         
         # Set up event handlers
         self.saveSettingsButton.Click += self.save_settings_button_click
-        self.loadClashTestsButton.Click += self.load_clash_tests_button_click
-        self.selectClashTestButton.Click += self.select_clash_test_button_click
+        self.loadClashTestsButton.Click += self.load_clash_sets_button_click
+        self.selectClashTestButton.Click += self.select_clash_set_button_click
         self.applyFiltersButton.Click += self.apply_filters_button_click
         self.highlightAllButton.Click += self.highlight_all_button_click
         self.exportButton.Click += self.export_button_click
         
         # Data grid selection changed events
-        self.clashTestsDataGrid.SelectionChanged += self.clash_test_selection_changed
+        self.clashTestsDataGrid.SelectionChanged += self.clash_set_selection_changed
         self.clashGroupsDataGrid.SelectionChanged += self.clash_group_selection_changed
         
         # Initialize UI
-        self.clashTestsDataGrid.ItemsSource = self.clash_tests
+        self.clashTestsDataGrid.ItemsSource = self.clash_sets
         self.clashGroupsDataGrid.ItemsSource = self.clash_groups
         self.clashDetailsDataGrid.ItemsSource = self.clash_details
         
@@ -139,161 +141,129 @@ class ClashExplorerUI(forms.WPFWindow):
         else:
             self.update_status("Failed to save settings")
     
-    def load_clash_tests_button_click(self, sender, args):
-        """Handle load clash tests button click."""
+    def load_clash_sets_button_click(self, sender, args):
+        """Handle load clash sets button click."""
         if not self.clash_api_client:
             self.update_status("Please save settings first")
             return
         
-        self.update_status("Loading clash tests...")
+        self.update_status("Loading clash sets...")
         self.progressBar.Visibility = Visibility.Visible
         
         try:
-            # Get clash tests from API
-            tests = self.clash_api_client.get_clash_tests()
+            # Get clash sets from API (ifcclash format)
+            clash_sets = self.clash_api_client.get_clash_sets()
             
-            if tests:
-                self.clash_tests.Clear()
-                for test in tests:
-                    test_obj = ClashTest(
-                        Id=test.get('id', ''),
-                        Name=test.get('name', 'Unknown'),
-                        TotalClashes=test.get('total_clashes', 0),
-                        Status=test.get('status', 'Unknown'),
-                        LastRun=test.get('last_run', 'N/A')
+            if clash_sets:
+                self.clash_sets.Clear()
+                for clash_set in clash_sets:
+                    # Parse ifcclash ClashSet format
+                    clashes = clash_set.get('clashes', {})
+                    set_obj = ClashSet(
+                        Name=clash_set.get('name', 'Unknown'),
+                        Mode=clash_set.get('mode', 'collision'),
+                        TotalClashes=len(clashes),
+                        Data=clash_set
                     )
-                    self.clash_tests.Add(test_obj)
+                    self.clash_sets.Add(set_obj)
                 
-                self.update_status("Loaded {} clash tests".format(len(tests)))
+                self.update_status("Loaded {} clash sets".format(len(clash_sets)))
                 self.clashTestsTab.IsEnabled = True
                 self.tabControl.SelectedItem = self.clashTestsTab
             else:
-                error_msg = self.clash_api_client.last_error or "No clash tests found"
+                error_msg = self.clash_api_client.last_error or "No clash sets found"
                 self.update_status(error_msg)
         except Exception as e:
-            logger.error("Error loading clash tests: {}".format(str(e)))
-            self.update_status("Error loading clash tests: {}".format(str(e)))
+            logger.error("Error loading clash sets: {}".format(str(e)))
+            self.update_status("Error loading clash sets: {}".format(str(e)))
         finally:
             self.progressBar.Visibility = Visibility.Collapsed
     
-    def clash_test_selection_changed(self, sender, args):
-        """Handle clash test selection change."""
+    def clash_set_selection_changed(self, sender, args):
+        """Handle clash set selection change."""
         selected = self.clashTestsDataGrid.SelectedItem
         if selected:
             self.selectClashTestButton.IsEnabled = True
         else:
             self.selectClashTestButton.IsEnabled = False
     
-    def select_clash_test_button_click(self, sender, args):
-        """Handle select clash test button click."""
-        selected_test = self.clashTestsDataGrid.SelectedItem
+    def select_clash_set_button_click(self, sender, args):
+        """Handle select clash set button click."""
+        selected_set = self.clashTestsDataGrid.SelectedItem
         
-        if not selected_test:
-            self.update_status("Please select a clash test")
+        if not selected_set:
+            self.update_status("Please select a clash set")
             return
         
-        self.current_test = selected_test
-        self.selectedTestNameRun.Text = selected_test.Name
+        self.current_clash_set = selected_set
+        self.selectedTestNameRun.Text = selected_set.Name
         
-        self.update_status("Loading clash groups for: {}".format(selected_test.Name))
+        self.update_status("Processing clash set: {}".format(selected_set.Name))
         self.progressBar.Visibility = Visibility.Visible
         
         try:
-            # Get clash groups from API
-            groups = self.clash_api_client.get_clash_groups(selected_test.Id)
+            # Get clashes from the clash set (ifcclash format: dict of clash_id -> ClashResult)
+            clash_set_data = selected_set.Data
+            clashes_dict = clash_set_data.get('clashes', {})
             
-            if groups:
-                # Enrich with Revit data
-                enriched_groups = self.enrich_groups_with_revit_data(groups)
+            if clashes_dict:
+                # Enrich clashes with Revit data
+                enriched_clashes = clash_utils.enrich_clash_data_with_revit_info(revit.doc, clashes_dict)
                 
-                self.all_clash_groups = enriched_groups
-                self.populate_clash_groups(enriched_groups)
-                self.populate_filter_dropdowns(enriched_groups)
+                # Create groups from enriched clashes
+                groups = self.create_groups_from_clashes(enriched_clashes, selected_set.Name)
                 
-                self.update_status("Loaded {} clash groups".format(len(enriched_groups)))
+                self.all_clash_groups = groups
+                self.populate_clash_groups(groups)
+                self.populate_filter_dropdowns(groups)
+                
+                self.update_status("Created {} clash groups from {} clashes".format(len(groups), len(enriched_clashes)))
                 self.clashGroupsTab.IsEnabled = True
                 self.tabControl.SelectedItem = self.clashGroupsTab
             else:
-                error_msg = self.clash_api_client.last_error or "No clash groups found"
-                self.update_status(error_msg)
+                self.update_status("No clashes found in this clash set")
         except Exception as e:
             logger.error("Error loading clash groups: {}".format(str(e)))
             self.update_status("Error loading clash groups: {}".format(str(e)))
         finally:
             self.progressBar.Visibility = Visibility.Collapsed
     
-    def enrich_groups_with_revit_data(self, groups):
-        """Enrich clash groups with Revit category and level information."""
-        enriched = []
+    def create_groups_from_clashes(self, clashes_dict, set_name):
+        """Create logical groups from clash dictionary.
         
-        for group in groups:
-            try:
-                # Get GUIDs from the group (assuming first clash is representative)
-                clashes = group.get('clashes', [])
-                if not clashes:
-                    continue
-                
-                # Get categories and levels from first clash
-                first_clash = clashes[0]
-                guid_a = first_clash.get('guid_a') or first_clash.get('object_a')
-                guid_b = first_clash.get('guid_b') or first_clash.get('object_b')
-                
-                # Look up in GUID dictionary
-                category_a = "Unknown"
-                category_b = "Unknown"
-                level_a = "Unknown"
-                level_b = "Unknown"
-                
-                if self.guid_dict and guid_a in self.guid_dict:
-                    element_a, is_linked_a, link_a = self.guid_dict[guid_a]
-                    if element_a.Category:
-                        category_a = element_a.Category.Name
-                    
-                    # Get level
-                    try:
-                        level_param = element_a.get_Parameter(BuiltInParameter.SCHEDULE_LEVEL_PARAM)
-                        if level_param and level_param.HasValue:
-                            level_id = level_param.AsElementId()
-                            level = revit.doc.GetElement(level_id)
-                            if level:
-                                level_a = level.Name
-                    except:
-                        pass
-                
-                if self.guid_dict and guid_b in self.guid_dict:
-                    element_b, is_linked_b, link_b = self.guid_dict[guid_b]
-                    if element_b.Category:
-                        category_b = element_b.Category.Name
-                    
-                    # Get level
-                    try:
-                        level_param = element_b.get_Parameter(BuiltInParameter.SCHEDULE_LEVEL_PARAM)
-                        if level_param and level_param.HasValue:
-                            level_id = level_param.AsElementId()
-                            level = revit.doc.GetElement(level_id)
-                            if level:
-                                level_b = level.Name
-                    except:
-                        pass
-                
-                # Create enriched group
-                enriched_group = {
-                    'id': group.get('id'),
-                    'name': group.get('name', 'Unknown'),
-                    'clash_count': group.get('clash_count', len(clashes)),
-                    'category_a': category_a,
-                    'category_b': category_b,
-                    'level_a': level_a,
-                    'level_b': level_b,
-                    'clashes': clashes
-                }
-                enriched.append(enriched_group)
-                
-            except Exception as e:
-                logger.error("Error enriching group: {}".format(str(e)))
-                continue
+        Groups clashes by category pairs for better organization.
+        """
+        from collections import defaultdict
         
-        return enriched
+        # Group by category pair
+        category_groups = defaultdict(list)
+        
+        for clash_key, clash in clashes_dict.items():
+            cat_a = clash.get('revit_category_a', clash.get('a_ifc_class', 'Unknown'))
+            cat_b = clash.get('revit_category_b', clash.get('b_ifc_class', 'Unknown'))
+            
+            # Create a consistent group key
+            group_key = "{} vs {}".format(cat_a, cat_b)
+            category_groups[group_key].append((clash_key, clash))
+        
+        # Create group objects
+        groups = []
+        for group_name, clashes_list in sorted(category_groups.items(), key=lambda x: len(x[1]), reverse=True):
+            # Get representative clash for metadata
+            first_clash = clashes_list[0][1]
+            
+            group_data = {
+                'name': group_name,
+                'clash_count': len(clashes_list),
+                'category_a': first_clash.get('revit_category_a', first_clash.get('a_ifc_class', 'Unknown')),
+                'category_b': first_clash.get('revit_category_b', first_clash.get('b_ifc_class', 'Unknown')),
+                'level_a': first_clash.get('revit_level_a', 'Unknown'),
+                'level_b': first_clash.get('revit_level_b', 'Unknown'),
+                'clashes': dict(clashes_list)  # Convert list of tuples to dict
+            }
+            groups.append(group_data)
+        
+        return groups
     
     def populate_clash_groups(self, groups):
         """Populate the clash groups data grid."""
@@ -301,7 +271,7 @@ class ClashExplorerUI(forms.WPFWindow):
         
         for group in groups:
             group_obj = ClashGroup(
-                Id=group.get('id', ''),
+                Id=group.get('name', ''),
                 GroupName=group.get('name', 'Unknown'),
                 ClashCount=group.get('clash_count', 0),
                 CategoryA=group.get('category_a', 'Unknown'),
@@ -370,26 +340,27 @@ class ClashExplorerUI(forms.WPFWindow):
             self.selectedGroupNameRun.Text = group.GroupName
             self.clash_details.Clear()
             
-            # Get clashes from the group data
-            clashes = group.Data.get('clashes', [])
+            # Get clashes from the group data (ifcclash format)
+            clashes_dict = group.Data.get('clashes', {})
             
-            for clash in clashes:
-                guid_a = clash.get('guid_a') or clash.get('object_a')
-                guid_b = clash.get('guid_b') or clash.get('object_b')
+            for clash_key, clash in clashes_dict.items():
+                # Use ifcclash field names
+                guid_a = clash.get('a_global_id', '')
+                guid_b = clash.get('b_global_id', '')
                 
                 detail = ClashDetail(
-                    ClashId=clash.get('id', ''),
-                    ElementA=guid_a[:8] + "..." if guid_a else "Unknown",
-                    ElementB=guid_b[:8] + "..." if guid_b else "Unknown",
-                    CategoryA=clash.get('category_a', 'Unknown'),
-                    CategoryB=clash.get('category_b', 'Unknown'),
+                    ClashKey=clash_key,
+                    ElementA="{}...".format(guid_a[:8]) if guid_a else "Unknown",
+                    ElementB="{}...".format(guid_b[:8]) if guid_b else "Unknown",
+                    CategoryA=clash.get('revit_category_a', clash.get('a_ifc_class', 'Unknown')),
+                    CategoryB=clash.get('revit_category_b', clash.get('b_ifc_class', 'Unknown')),
                     Distance="{:.2f}".format(clash.get('distance', 0.0)),
                     Data=clash
                 )
                 self.clash_details.Add(detail)
             
             self.clashDetailsTab.IsEnabled = True
-            self.update_status("Loaded {} clashes in group".format(len(clashes)))
+            self.update_status("Loaded {} clashes in group".format(len(clashes_dict)))
             
         except Exception as e:
             logger.error("Error loading clash details: {}".format(str(e)))
@@ -406,12 +377,12 @@ class ClashExplorerUI(forms.WPFWindow):
         try:
             self.update_status("Highlighting clash group: {}".format(group.GroupName))
             
-            # Get all GUIDs from the group
-            clashes = group.Data.get('clashes', [])
+            # Get all GUIDs from the group (ifcclash format)
+            clashes_dict = group.Data.get('clashes', {})
             guids = []
-            for clash in clashes:
-                guid_a = clash.get('guid_a') or clash.get('object_a')
-                guid_b = clash.get('guid_b') or clash.get('object_b')
+            for clash_key, clash in clashes_dict.items():
+                guid_a = clash.get('a_global_id')
+                guid_b = clash.get('b_global_id')
                 if guid_a:
                     guids.append(guid_a)
                 if guid_b:
@@ -461,12 +432,12 @@ class ClashExplorerUI(forms.WPFWindow):
             return
         
         try:
-            self.update_status("Highlighting clash: {}".format(clash_detail.ClashId))
+            self.update_status("Highlighting clash: {}".format(clash_detail.ClashKey))
             
-            # Get GUIDs from clash
+            # Get GUIDs from clash (ifcclash format)
             clash_data = clash_detail.Data
-            guid_a = clash_data.get('guid_a') or clash_data.get('object_a')
-            guid_b = clash_data.get('guid_b') or clash_data.get('object_b')
+            guid_a = clash_data.get('a_global_id')
+            guid_b = clash_data.get('b_global_id')
             
             guids = []
             if guid_a:
@@ -485,7 +456,7 @@ class ClashExplorerUI(forms.WPFWindow):
                 return
             
             # Create view name
-            view_name = "Clash - {}".format(clash_detail.ClashId)
+            view_name = "Clash - {}".format(clash_detail.ClashKey[:16])
             
             # Create 3D view
             view = clash_utils.create_clash_view(revit.doc, view_name, element_dict)
@@ -512,8 +483,13 @@ class ClashExplorerUI(forms.WPFWindow):
             self.update_status("Please select a clash group first")
             return
         
-        # Simulate clicking the highlight button for the current group
-        self.highlight_button_click(sender, args)
+        # Create a button object with the current group as Tag
+        class FakeButton:
+            def __init__(self, tag):
+                self.Tag = tag
+        
+        fake_button = FakeButton(self.current_group)
+        self.highlight_button_click(fake_button, None)
     
     def export_button_click(self, sender, args):
         """Handle export button click."""

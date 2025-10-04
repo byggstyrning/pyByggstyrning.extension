@@ -38,7 +38,7 @@
 
                     <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Margin="0,10,0,10">
                         <Button x:Name="saveSettingsButton" Content="Save Settings" Width="120" Height="30" Margin="0,0,10,0"/>
-                        <Button x:Name="loadClashTestsButton" Content="Load Clash Tests" Width="120" Height="30"/>
+                        <Button x:Name="loadClashTestsButton" Content="Load Clash Sets" Width="120" Height="30"/>
                     </StackPanel>
                     
                     <TextBlock x:Name="settingsStatusTextBlock" Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" 
@@ -46,8 +46,8 @@
                 </Grid>
             </TabItem>
 
-            <!-- Clash Tests Tab -->
-            <TabItem Header="2. Clash Tests" x:Name="clashTestsTab" IsEnabled="False">
+            <!-- Clash Sets Tab -->
+            <TabItem Header="2. Clash Sets" x:Name="clashTestsTab" IsEnabled="False">
                 <Grid Margin="10">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -55,19 +55,18 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Text="Select a Clash Test to view clash matrix:" Grid.Row="0" Margin="0,0,0,10"/>
+                    <TextBlock Text="Select a Clash Set (from ifcclash JSON):" Grid.Row="0" Margin="0,0,0,10"/>
                     
                     <DataGrid x:Name="clashTestsDataGrid" Grid.Row="1" Margin="0,0,0,10" 
                               AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single">
                         <DataGrid.Columns>
-                            <DataGridTextColumn Header="Test Name" Binding="{Binding Name}" Width="300"/>
+                            <DataGridTextColumn Header="Clash Set Name" Binding="{Binding Name}" Width="300"/>
                             <DataGridTextColumn Header="Total Clashes" Binding="{Binding TotalClashes}" Width="100"/>
-                            <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="100"/>
-                            <DataGridTextColumn Header="Last Run" Binding="{Binding LastRun}" Width="150"/>
+                            <DataGridTextColumn Header="Mode" Binding="{Binding Mode}" Width="100"/>
                         </DataGrid.Columns>
                     </DataGrid>
                     
-                    <Button x:Name="selectClashTestButton" Content="Select Clash Test" Grid.Row="2" 
+                    <Button x:Name="selectClashTestButton" Content="Select Clash Set" Grid.Row="2" 
                             HorizontalAlignment="Left" Width="150" Height="30"/>
                 </Grid>
             </TabItem>

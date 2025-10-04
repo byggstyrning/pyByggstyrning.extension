@@ -343,12 +343,18 @@ def enrich_clash_data_with_revit_info(doc, clash_results):
     This function loads all GUIDs from clash results and matches them against
     the model to add Revit-specific metadata for filtering and grouping.
     
+    Works with ifcclash format where clashes have:
+    - a_global_id: IFC GUID for element A
+    - b_global_id: IFC GUID for element B
+    - a_ifc_class: IFC class name (e.g., "IfcWall")
+    - b_ifc_class: IFC class name
+    
     Args:
         doc: The active Revit document
-        clash_results: List of clash result objects with GUIDs
+        clash_results: List or dict of clash result objects with GUIDs
         
     Returns:
-        Enriched clash results with category and level information
+        Enriched clash results with Revit category and level information
     """
     try:
         logger.debug("Enriching clash data with Revit information...")
@@ -356,22 +362,27 @@ def enrich_clash_data_with_revit_info(doc, clash_results):
         # Build GUID lookup dictionary
         guid_dict = build_guid_lookup_dict(doc)
         
+        # Handle both list and dict formats
+        is_dict = isinstance(clash_results, dict)
+        clashes_to_process = clash_results.values() if is_dict else clash_results
+        
         # Process each clash result
-        enriched_results = []
-        for clash in clash_results:
+        enriched_results = [] if not is_dict else {}
+        
+        for clash_key, clash in (clash_results.items() if is_dict else enumerate(clashes_to_process)):
             try:
-                # Get GUIDs from clash (assuming they're in 'guid_a' and 'guid_b' fields)
-                guid_a = clash.get('guid_a') or clash.get('object_a')
-                guid_b = clash.get('guid_b') or clash.get('object_b')
+                # Get GUIDs from ifcclash format
+                guid_a = clash.get('a_global_id')
+                guid_b = clash.get('b_global_id')
                 
                 # Look up elements
                 element_a_data = guid_dict.get(guid_a)
                 element_b_data = guid_dict.get(guid_b)
                 
-                # Add Revit metadata
+                # Add Revit metadata for element A
                 if element_a_data:
                     element_a, is_linked_a, link_a = element_a_data
-                    clash['revit_category_a'] = element_a.Category.Name if element_a.Category else "Unknown"
+                    clash['revit_category_a'] = element_a.Category.Name if element_a.Category else clash.get('a_ifc_class', 'Unknown')
                     clash['revit_is_linked_a'] = is_linked_a
                     
                     # Get level
@@ -386,13 +397,15 @@ def enrich_clash_data_with_revit_info(doc, clash_results):
                     except:
                         clash['revit_level_a'] = "Unknown"
                 else:
-                    clash['revit_category_a'] = "Not Found"
+                    # Element not found in current model, use IFC class as fallback
+                    clash['revit_category_a'] = clash.get('a_ifc_class', 'Not Found')
                     clash['revit_level_a'] = "Not Found"
                     clash['revit_is_linked_a'] = True
                 
+                # Add Revit metadata for element B
                 if element_b_data:
                     element_b, is_linked_b, link_b = element_b_data
-                    clash['revit_category_b'] = element_b.Category.Name if element_b.Category else "Unknown"
+                    clash['revit_category_b'] = element_b.Category.Name if element_b.Category else clash.get('b_ifc_class', 'Unknown')
                     clash['revit_is_linked_b'] = is_linked_b
                     
                     # Get level
@@ -407,15 +420,23 @@ def enrich_clash_data_with_revit_info(doc, clash_results):
                     except:
                         clash['revit_level_b'] = "Unknown"
                 else:
-                    clash['revit_category_b'] = "Not Found"
+                    # Element not found in current model, use IFC class as fallback
+                    clash['revit_category_b'] = clash.get('b_ifc_class', 'Not Found')
                     clash['revit_level_b'] = "Not Found"
                     clash['revit_is_linked_b'] = True
                 
-                enriched_results.append(clash)
+                # Store enriched result
+                if is_dict:
+                    enriched_results[clash_key] = clash
+                else:
+                    enriched_results.append(clash)
                 
             except Exception as e:
                 logger.error("Error enriching clash data: {}".format(str(e)))
-                enriched_results.append(clash)
+                if is_dict:
+                    enriched_results[clash_key] = clash
+                else:
+                    enriched_results.append(clash)
                 continue
         
         logger.debug("Enriched {} clash results".format(len(enriched_results)))
