@@ -7,7 +7,6 @@ and manage clash test results.
 
 import json
 import urllib2
-import base64
 from collections import namedtuple
 
 # Import Revit API and pyRevit modules
@@ -18,7 +17,7 @@ from Autodesk.Revit.DB import *
 from pyrevit import script
 from pyrevit import revit
 
-# Import extensible storage
+# Import extensible storage using the generic implementation
 import sys
 import os.path as op
 current_dir = op.dirname(__file__)
@@ -26,20 +25,12 @@ lib_dir = op.dirname(current_dir)
 if lib_dir not in sys.path:
     sys.path.append(lib_dir)
 
-try:
-    from extensible_storage import BaseSchema, simple_field
-except ImportError:
-    print("Warning: extensible_storage module could not be imported in clash_api.py")
-    BaseSchema = object
-    def simple_field(**kwargs):
-        def decorator(func):
-            return func
-        return decorator
+from extensible_storage import BaseSchema, simple_field
 
 # Initialize logger
 logger = script.get_logger()
 
-# Define the ClashExplorerSettingsSchema
+# Define the ClashExplorerSettingsSchema using the generic BaseSchema
 class ClashExplorerSettingsSchema(BaseSchema):
     """Schema for storing Clash Explorer settings using extensible storage"""
     
@@ -55,7 +46,10 @@ class ClashExplorerSettingsSchema(BaseSchema):
         """The API key for authentication"""
 
 def get_or_create_clash_settings_storage(doc):
-    """Get existing or create new Clash Explorer settings storage element."""
+    """Get existing or create new Clash Explorer settings storage element.
+    
+    Uses the generic pattern from extensible storage.
+    """
     if not doc:
         logger.error("No active document available")
         return None
@@ -69,7 +63,6 @@ def get_or_create_clash_settings_storage(doc):
         # Look for our storage with the schema
         for ds in data_storages:
             try:
-                # Check if this storage has our schema
                 entity = ds.GetEntity(ClashExplorerSettingsSchema.schema)
                 if entity.IsValid():
                     logger.debug("Found existing Clash Explorer settings storage")
@@ -79,7 +72,7 @@ def get_or_create_clash_settings_storage(doc):
                 continue
         
         logger.debug("No existing Clash Explorer settings storage found, creating new one...")
-        # If not found, create a new one
+        # Create new storage in transaction
         with revit.Transaction("Create Clash Explorer Settings Storage", doc):
             new_storage = ExtensibleStorage.DataStorage.Create(doc)
             logger.debug("Created new Clash Explorer settings storage")
@@ -90,23 +83,24 @@ def get_or_create_clash_settings_storage(doc):
         return None
 
 def save_clash_settings(doc, api_url, api_key):
-    """Save Clash Explorer settings to extensible storage."""
+    """Save Clash Explorer settings to extensible storage.
+    
+    Uses the generic BaseSchema pattern with context manager.
+    """
     if not doc:
         logger.error("No active document available")
         return False
         
     try:
-        # Get or create data storage
         storage = get_or_create_clash_settings_storage(doc)
         if not storage:
             logger.error("Failed to get or create Clash Explorer storage")
             return False
         
-        # Save to storage
-        with revit.Transaction("Save Clash Explorer Settings", doc):
-            with ClashExplorerSettingsSchema(storage) as entity:
-                entity.set("api_url", api_url)
-                entity.set("api_key", api_key)
+        # Use context manager pattern from BaseSchema for automatic transaction handling
+        with ClashExplorerSettingsSchema(storage) as entity:
+            entity.set("api_url", api_url)
+            entity.set("api_key", api_key)
                 
         logger.debug("Saved Clash Explorer settings")
         return True
@@ -115,7 +109,10 @@ def save_clash_settings(doc, api_url, api_key):
         return False
 
 def load_clash_settings(doc):
-    """Load Clash Explorer settings from extensible storage."""
+    """Load Clash Explorer settings from extensible storage.
+    
+    Uses the generic BaseSchema pattern.
+    """
     if not doc:
         logger.error("No active document available")
         return None, None
@@ -128,10 +125,10 @@ def load_clash_settings(doc):
         
         for ds in data_storages:
             try:
-                # Check if this storage has our schema
                 entity = ds.GetEntity(ClashExplorerSettingsSchema.schema)
                 if entity.IsValid():
-                    schema = ClashExplorerSettingsSchema(ds)
+                    # Use the generic BaseSchema to read data
+                    schema = ClashExplorerSettingsSchema(ds, update=False)
                     if schema.is_valid:
                         api_url = schema.get("api_url")
                         api_key = schema.get("api_key")
