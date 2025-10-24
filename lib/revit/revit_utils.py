@@ -100,6 +100,71 @@ def get_available_parameters2():
         logger.error("Error getting available parameters: {}".format(str(e)))
         return []
     
+def is_element_editable(doc, element):
+    """Check if an element is editable considering worksharing ownership.
+    
+    Args:
+        doc: Revit document
+        element: Element to check
+        
+    Returns:
+        tuple: (is_editable: bool, reason: str)
+    """
+    try:
+        # Check if document is workshared
+        if doc.IsWorkshared:
+            try:
+                # Get worksharing tooltip info to determine ownership
+                tooltip_info = WorksharingUtils.GetWorksharingTooltipInfo(doc, element.Id)
+                
+                if tooltip_info and tooltip_info.Owner:
+                    owner = tooltip_info.Owner.lower()
+                    current_user = doc.Application.Username.lower()
+                    
+                    # Element is owned by another user
+                    if owner != current_user:
+                        return False, "Owned by {}".format(tooltip_info.Owner)
+                    
+            except Exception as ex:
+                # Some elements might not support worksharing queries
+                # If we can't determine ownership, assume it's editable
+                pass
+        
+        # Element is editable
+        return True, "Editable"
+        
+    except Exception as ex:
+        # If something goes wrong, log and assume not editable
+        return False, "Error checking editability: {}".format(str(ex))
+
+def is_parameter_writable(element, param_name):
+    """Check if a parameter is writable on an element.
+    
+    Args:
+        element: Element to check
+        param_name: Name of parameter to check
+        
+    Returns:
+        tuple: (is_writable: bool, reason: str, parameter: Parameter or None)
+    """
+    try:
+        param = element.LookupParameter(param_name)
+        
+        if not param:
+            return False, "Parameter not found", None
+        
+        if param.IsReadOnly:
+            return False, "Parameter is read-only", param
+        
+        # Check if parameter type is supported
+        if param.StorageType not in [StorageType.String, StorageType.Double, StorageType.Integer]:
+            return False, "Unsupported parameter type", param
+        
+        return True, "Writable", param
+        
+    except Exception as ex:
+        return False, "Error checking parameter: {}".format(str(ex)), None
+
 def set_parameter_value(element, param_name, value):
     """Set parameter value on an element."""
     param = element.LookupParameter(param_name)

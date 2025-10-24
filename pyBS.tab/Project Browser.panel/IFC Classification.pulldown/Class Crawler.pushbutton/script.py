@@ -40,6 +40,9 @@ logger = script.get_logger()
 # Classification endpoint
 CLASSIFICATION_URL = "https://n8n.byggstyrning.se/webhook/classification"
 
+# Global storage for results (needed for button callbacks)
+_stored_results = []
+
 class ElementTypeInfo(object):
     """Container for element type information"""
     
@@ -153,6 +156,59 @@ def get_element_types_in_view():
     logger.info("Found {} unique element types".format(len(element_types)))
     return element_types
 
+def extract_classification_data(classification):
+    """Extract IFC class, predefined type, and reasoning from classification response"""
+    ifc_class = None
+    predefined_type = None
+    reasoning = None
+    
+    try:
+        if isinstance(classification, dict):
+            # Handle the new API response format with 'output' field
+            output_data = classification.get('output', {})
+            if output_data:
+                ifc_class = output_data.get('Class', 'Not classified')
+                predefined_type = output_data.get('PredefinedType', 'Not specified')
+                reasoning = output_data.get('Reasoning', 'No reasoning provided')
+            else:
+                # Fallback to direct dictionary response
+                ifc_class = classification.get('ifc_class', 'Not classified')
+                predefined_type = classification.get('predefined_type', 'Not specified')
+                reasoning = classification.get('reasoning', 'No reasoning provided')
+        elif isinstance(classification, list) and len(classification) > 0:
+            # Handle legacy list format
+            class_output = classification[0].get('output', {})
+            ifc_class = class_output.get('Class', 'Not classified')
+            predefined_type = class_output.get('PredefinedType', class_output.get('Type', 'Not specified'))
+            reasoning = class_output.get('Reasoning', 'No reasoning provided')
+    except Exception as e:
+        logger.error("Error extracting classification data: {}".format(str(e)))
+        ifc_class = 'Error'
+        predefined_type = 'Error'
+        reasoning = 'Error parsing data'
+    
+    return ifc_class, predefined_type, reasoning
+
+def html_escape(text):
+    """Escape special HTML characters"""
+    if not text:
+        return ""
+    text = str(text)
+    text = text.replace("&", "&amp;")
+    text = text.replace("<", "&lt;")
+    text = text.replace(">", "&gt;")
+    text = text.replace('"', "&quot;")
+    text = text.replace("'", "&#39;")
+    return text
+
+def create_tooltip_cell(content, tooltip):
+    """Create HTML cell content with hover tooltip"""
+    if not tooltip or tooltip == "No reasoning provided":
+        return str(content)
+    escaped_tooltip = html_escape(tooltip)
+    escaped_content = html_escape(content)
+    return '<span title="{}">{}</span>'.format(escaped_tooltip, escaped_content)
+
 def send_classification_request(type_data):
     """Send classification request to the API"""
     try:
@@ -228,11 +284,11 @@ def main():
                 else:
                     logger.warning("Failed to classify: {}".format(str(type_info)))
         
-        # Display results
+        # Display results in interactive table
         if results:
             display_results(results)
             
-            # Ask if user wants to apply classifications
+            # Ask if user wants to apply classifications after reviewing table
             apply_changes = forms.alert(
                 "Apply these classifications to the element types?",
                 title="Apply Classifications",
@@ -242,10 +298,22 @@ def main():
             )
             
             if apply_changes:
+                # Get output for logging
+                output = script.get_output()
+                
                 # Use progress bar for applying parameters
-                with forms.ProgressBar(title="Applying IFC Classifications to Element Types...") as pb:
+                with forms.ProgressBar(title="Applying IFC Classifications...") as pb:
                     pb.update_progress(0, len(results))
                     updated_count = apply_classifications_with_progress(results, pb)
+                
+                # Log results to output window
+                output.print_md("---")
+                if updated_count > 0:
+                    output.log_success("Successfully applied classifications to {} element types".format(updated_count))
+                    output.print_md("**Status:** {} classifications applied successfully".format(updated_count))
+                else:
+                    output.log_warning("No classifications were applied")
+                    output.print_md("**Status:** No changes were made")
                 
                 logger.info("Applied classifications to {} element types.".format(updated_count))
         else:
@@ -256,61 +324,179 @@ def main():
         forms.alert("An error occurred: {}".format(str(e)), title="Error")
 
 def display_results(results):
-    """Display classification results"""
+    """Display classification results in a custom HTML table with interactive buttons"""
+    global _stored_results
+    _stored_results = results
+    
     output = script.get_output()
     output.print_md("# IFC Classification Results")
     output.print_md("---")
     
-    for i, result in enumerate(results, 1):
+    # Build HTML table manually for full control
+    html_parts = []
+    
+    # Add CSS styling
+    html_parts.append("""
+    <style>
+        .classification-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            font-family: Arial, sans-serif;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .classification-table thead {
+            background-color: #2196F3;
+            color: white;
+        }
+        .classification-table th {
+            padding: 12px 8px;
+            text-align: left;
+            font-weight: 600;
+            border: 1px solid #ddd;
+        }
+        .classification-table th.center {
+            text-align: center;
+        }
+        .classification-table td {
+            padding: 10px 8px;
+            border: 1px solid #ddd;
+            vertical-align: middle;
+        }
+        .classification-table td.center {
+            text-align: center;
+        }
+        .classification-table tbody tr:nth-child(odd) {
+            background-color: #f9f9f9;
+        }
+        .classification-table tbody tr:nth-child(even) {
+            background-color: #ffffff;
+        }
+        .classification-table tbody tr:hover {
+            background-color: #e3f2fd;
+        }
+        .tooltip-cell {
+            cursor: help;
+            border-bottom: 1px dotted #666;
+        }
+        .status-ready {
+            padding: 6px 16px;
+            background-color: #4CAF50;
+            color: white;
+            border-radius: 4px;
+            font-size: 13px;
+            font-weight: bold;
+            display: inline-block;
+        }
+        .info-box {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #E3F2FD;
+            border-left: 4px solid #2196F3;
+            border-radius: 4px;
+        }
+        .summary {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #FFF3CD;
+            border-left: 4px solid #FFC107;
+            border-radius: 4px;
+            font-weight: 600;
+            color: #856404;
+        }
+        .apply-notice {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #D1ECF1;
+            border-left: 4px solid #17A2B8;
+            border-radius: 4px;
+            color: #0C5460;
+        }
+    </style>
+    """)
+    
+    # Add info box
+    html_parts.append("""
+    <div class="info-box">
+        <strong style="color: #1976D2;">📋 Review Classification Results</strong>
+        <p style="margin: 10px 0 0 0; color: #555;">
+            • Hover over <span style="border-bottom: 1px dotted #666;">IFC Class names</span> to see AI reasoning<br>
+            • Review the suggested classifications in the table below<br>
+            • After reviewing, you'll be asked to confirm applying these changes
+        </p>
+    </div>
+    """)
+    
+    # Start table
+    html_parts.append("""
+    <table class="classification-table">
+        <thead>
+            <tr>
+                <th style="width: 12%;">Category</th>
+                <th style="width: 18%;">Family</th>
+                <th style="width: 20%;">Type</th>
+                <th style="width: 12%;">Manufacturer</th>
+                <th style="width: 15%;">IFC Class</th>
+                <th style="width: 13%;">Predefined Type</th>
+                <th class="center" style="width: 10%;">Status</th>
+            </tr>
+        </thead>
+        <tbody>
+    """)
+    
+    # Add table rows
+    for i, result in enumerate(results):
         type_info = result['type_info']
         classification = result['classification']
         
-        output.print_md("## {}. {}".format(i, str(type_info)))
+        # Extract classification data
+        ifc_class, predefined_type, reasoning = extract_classification_data(classification)
         
-        # Show original type info
-        output.print_md("**Original Information:**")
-        output.print_md("- Category: {}".format(type_info.category))
-        output.print_md("- Family: {}".format(type_info.family))
-        output.print_md("- Type: {}".format(type_info.type_name))
-        output.print_md("- Manufacturer: {}".format(type_info.manufacturer))
+        # Escape data for HTML
+        category = html_escape(type_info.category)
+        family = html_escape(type_info.family)
+        type_name = html_escape(type_info.type_name)
+        manufacturer = html_escape(type_info.manufacturer) if type_info.manufacturer else "-"
+        ifc_class_escaped = html_escape(ifc_class)
+        predefined_type_escaped = html_escape(predefined_type) if predefined_type else "-"
+        reasoning_escaped = html_escape(reasoning)
         
-        # Show classification results
-        output.print_md("**Classification Results:**")
-        try:
-            if isinstance(classification, dict):
-                # Handle the new API response format with 'output' field
-                output_data = classification.get('output', {})
-                if output_data:
-                    ifc_class = output_data.get('Class', 'Not classified')
-                    predefined_type = output_data.get('PredefinedType', 'Not specified')
-                    reasoning = output_data.get('Reasoning', 'No reasoning provided')
-                    
-                    output.print_md("- IFC Class: {}".format(ifc_class))
-                    output.print_md("- Predefined Type: {}".format(predefined_type))
-                    output.print_md("- Reasoning: {}".format(reasoning))
-                else:
-                    # Fallback to direct dictionary response
-                    ifc_class = classification.get('ifc_class', 'Not classified')
-                    predefined_type = classification.get('predefined_type', 'Not specified')
-                    
-                    output.print_md("- IFC Class: {}".format(ifc_class))
-                    output.print_md("- Predefined Type: {}".format(predefined_type))
-            elif isinstance(classification, list) and len(classification) > 0:
-                # Handle legacy list format
-                class_output = classification[0].get('output', {})
-                ifc_class = class_output.get('Class', 'Not classified')
-                predefined_type = class_output.get('PredefinedType', class_output.get('Type', 'Not specified'))
-                
-                output.print_md("- IFC Class: {}".format(ifc_class))
-                output.print_md("- Predefined Type: {}".format(predefined_type))
-            else:
-                output.print_md("- No classification data received")
-        except Exception as e:
-            output.print_md("- Error parsing classification: {}".format(str(e)))
+        # Build row HTML
+        html_parts.append("<tr>")
+        html_parts.append("<td>{}</td>".format(category))
+        html_parts.append("<td>{}</td>".format(family))
+        html_parts.append("<td>{}</td>".format(type_name))
+        html_parts.append("<td>{}</td>".format(manufacturer))
         
-        output.print_md("---")
+        # IFC Class with tooltip
+        if reasoning and reasoning != "No reasoning provided":
+            html_parts.append('<td><span class="tooltip-cell" title="{}">{}</span></td>'.format(
+                reasoning_escaped, ifc_class_escaped))
+        else:
+            html_parts.append("<td>{}</td>".format(ifc_class_escaped))
+        
+        html_parts.append("<td>{}</td>".format(predefined_type_escaped))
+        html_parts.append('<td class="center"><span class="status-ready">✓ Ready</span></td>')
+        html_parts.append("</tr>")
     
-    output.print_md("Classification complete. {} types processed.".format(len(results)))
+    # Close table
+    html_parts.append("""
+        </tbody>
+    </table>
+    """)
+    
+    # Add summary and next steps
+    html_parts.append("""
+    <div class="summary">
+        ⚡ <strong>Total:</strong> {} type(s) successfully classified
+    </div>
+    <div class="apply-notice">
+        <strong>⏭️ Next Step:</strong> A confirmation dialog will appear asking if you want to apply these classifications to your element types.
+    </div>
+    """.format(len(results)))
+    
+    # Output the complete HTML
+    output.print_html("".join(html_parts))
 
 def apply_classifications_with_progress(results, progress_bar):
     """Apply the classifications to element types with progress tracking"""
