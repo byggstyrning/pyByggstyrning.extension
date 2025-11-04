@@ -2,14 +2,6 @@
 
 This guide will walk you through installing pyRevit, the pyByggstyrning extension, and setting up the MMI (Model Maturity Index) tools for model-based construction workflows.
 
-## Table of Contents
-1. [Install pyRevit](#1-install-pyrevit)
-2. [Install pyByggstyrning Extension](#2-install-pybyggstyrning-extension)
-3. [Setting Up MMI Parameters](#3-setting-up-mmi-parameters)
-4. [Setting MMI Values on Elements](#4-setting-mmi-values-on-elements)
-5. [MMI Settings Configuration](#5-mmi-settings-configuration)
-6. [Using MMI Monitor](#6-using-mmi-monitor)
-
 ---
 
 ## 1. Install pyRevit
@@ -18,15 +10,12 @@ pyRevit is a free and open-source plugin framework for Revit that allows you to 
 
 ### Installation Steps:
 
-1. **Download pyRevit installer** from the official website or GitHub repository
+1. **Download pyRevit installer** from the official website or **[GitHub repository](https://github.com/pyrevitlabs/pyRevit/releases)**
 2. **Run the installer** and follow the on-screen instructions
 3. **Restart Revit** after installation completes
 
 For detailed installation instructions, visit:
 **[pyRevit Installation Guide](https://pyrevitlabs.notion.site/Install-pyRevit-98ca4359920a42c3af5c12a7c99a196d)**
-
-![Screenshot: pyRevit Installation]
-*[PLACEHOLDER: Screenshot of pyRevit installer]*
 
 ---
 
@@ -44,25 +33,16 @@ This is the easiest method using the built-in pyRevit GUI.
    - Click on the **pyRevit tab** in the Revit ribbon
    - Click the **"Extensions"** button (or use the pyRevit menu)
    
-   ![Screenshot: pyRevit Extensions Button]
-   *[PLACEHOLDER: Screenshot highlighting the Extensions button in pyRevit tab]*
+<img width="579" height="303" alt="image" src="https://github.com/user-attachments/assets/bb16c156-7901-4844-931c-2eee9079190b" />
 
-3. **Add the extension source:**
-   - In the Extensions window, look for the pyByggstyrning extension in the list
-   - If not found, click on the **gear icon** or **settings** to add a custom extension source
-   - Add the GitHub repository URL: `https://github.com/byggstyrning/pyByggstyrning.extension.git`
+3. **Install the extension:**
+   - Find and Select **pyByggstyrning** in the extensions list
+   - Click the **Install Extension** to install it it
    
-   ![Screenshot: pyRevit Extension Manager]
-   *[PLACEHOLDER: Screenshot of pyRevit Extensions manager window]*
+<img width="464" height="715" alt="image" src="https://github.com/user-attachments/assets/af3110ea-9a77-44c2-881b-01068a334792" />
 
-4. **Install the extension:**
-   - Find **pyByggstyrning** in the extensions list
-   - Click the **Install** or **Toggle** button to enable it
-   
-   ![Screenshot: Installing Extension]
-   *[PLACEHOLDER: Screenshot showing pyByggstyrning extension being installed]*
 
-5. **Restart Revit** to load the extension
+4. **Restart Revit** to load the extension
 
 For detailed extension installation instructions, visit:
 **[pyRevit Extensions Installation Guide](https://pyrevitlabs.notion.site/Install-Extensions-0753ab78c0ce46149f962acc50892491)**
@@ -76,17 +56,13 @@ For detailed extension installation instructions, visit:
    ```
 3. **Restart Revit** to load the extension
 
-![Screenshot: Command Prompt Installation]
-*[PLACEHOLDER: Screenshot of command prompt with extension install command]*
-
 ### Verify Installation
 
 After restarting Revit, you should see a new **"pyBS"** tab in the Revit ribbon with several panels including:
 - **MMI Panel** - Quick access buttons for setting MMI values (200, 225, 250, etc.)
 - **MMI Settings Panel** - Configuration tools for MMI parameters and monitoring
 
-![Screenshot: pyBS Tab in Revit]
-*[PLACEHOLDER: Screenshot of pyBS tab showing all panels]*
+<img width="914" height="224" alt="image" src="https://github.com/user-attachments/assets/75f5374f-ebcd-490d-b303-071c7375466a" />
 
 ---
 
@@ -105,29 +81,21 @@ Your Revit project should have a **shared parameter** or **project parameter** (
 3. **Go to the MMI Settings panel**
 4. **Click the "Settings" button**
 
-   ![Screenshot: MMI Settings Button]
-   *[PLACEHOLDER: Screenshot highlighting the Settings button in MMI Settings panel]*
+<img width="600" height="181" alt="image" src="https://github.com/user-attachments/assets/e7e6189e-4f9f-48a0-9174-2674bd89c172" />
 
-5. **In the MMI Settings dialog:**
+5. **Select your MMI parameter:**
    - Click **"Set MMI Parameter"**
-   
-   ![Screenshot: MMI Settings Dialog]
-   *[PLACEHOLDER: Screenshot of MMI Settings dialog with "Set MMI Parameter" option]*
-
-6. **Select your MMI parameter:**
    - A list of available instance parameters will appear
    - Select the parameter you want to use for MMI values
    - Click OK
+   - <img width="430" height="185" alt="image" src="https://github.com/user-attachments/assets/e558e38e-bd60-4943-8c28-517349610c3a" />
 
-   ![Screenshot: Parameter Selection]
-   *[PLACEHOLDER: Screenshot of parameter selection dialog]*
 
-7. **Confirmation:**
+6. **Confirmation:**
    - You'll see a balloon notification confirming the parameter has been set
    - The parameter setting is stored in the project file using Extensible Storage
+   - <img width="318" height="118" alt="image" src="https://github.com/user-attachments/assets/a84d0943-9803-4d44-9fc7-a4da848f7277" />
 
-   ![Screenshot: Confirmation Balloon]
-   *[PLACEHOLDER: Screenshot of confirmation balloon notification]*
 
 ---
 
@@ -148,35 +116,21 @@ For complete definitions, visit: [MMI Veilederen](https://mmi-veilederen.no/?pag
 
 ### Using MMI Buttons
 
-![Screenshot: MMI Panel]
-*[PLACEHOLDER: Screenshot of MMI Panel showing all MMI value buttons]*
-
 **Steps:**
 
 1. **Select elements** in your Revit view
-
-   ![Screenshot: Selected Elements]
-   *[PLACEHOLDER: Screenshot showing multiple elements selected in Revit]*
-
 2. **Click the MMI button** for the desired value (200, 250, 300, etc.)
    - Buttons are organized by hundreds (200 series, 300 series, 400 series)
-
-   ![Screenshot: Clicking MMI Button]
-   *[PLACEHOLDER: Screenshot highlighting an MMI button being clicked]*
-
+   - <img width="367" height="468" alt="image" src="https://github.com/user-attachments/assets/5add79fa-53c0-418e-954e-9826a93dcbf6" />
 3. **Values are applied** to all selected elements instantly
+<img width="648" height="411" alt="image" src="https://github.com/user-attachments/assets/deb5b8e2-1c55-4d40-a877-4d050940afaf" />
 
-   ![Screenshot: MMI Values Applied]
-   *[PLACEHOLDER: Screenshot showing elements with updated MMI parameter values]*
 
 **Quick Tip:** The MMI panel also appears in the **Modify tab** when elements are selected for quick access.
 
-![Screenshot: MMI in Modify Tab]
-*[PLACEHOLDER: Screenshot of MMI panel appearing in Modify tab]*
-
 ---
 
-## 5. MMI Settings Configuration (Optional)
+## 5. MMI Settings Configuration
 
 Configure automated monitoring features for quality control.
 
@@ -193,31 +147,29 @@ Configure automated monitoring features for quality control.
 2. Check the boxes for features you want to enable
 3. Click **"Save Config"** to save settings
 
-![Screenshot: MMI Configuration Options]
-*[PLACEHOLDER: Screenshot showing all configuration checkboxes]*
+<img width="600" height="181" alt="image" src="https://github.com/user-attachments/assets/105a62c2-fbf7-4287-9197-69ca9325ccd9" />
 
 **Recommended:** Enable Validate MMI, Pin elements >=400, and Check MMI after sync for most projects.
 
 ---
 
-## 6. Using MMI Monitor (Optional)
-
+## 6. Using MMI Monitor
 The MMI Monitor automatically enforces the rules you configured in MMI Settings as you work.
 
 ### Starting the Monitor
 
 1. Click the **"Monitor"** button in the MMI Settings panel to toggle it on
 
-![Screenshot: Monitor Button - OFF State]
-*[PLACEHOLDER: Screenshot of Monitor button in OFF state]*
+<img width="87" height="106" alt="image" src="https://github.com/user-attachments/assets/213e8ddb-c15b-4a26-bce4-8e66393f2a5b" />
 
-2. The button icon changes to green and shows active features
 
-![Screenshot: Monitor Button - ON State]
-*[PLACEHOLDER: Screenshot of Monitor button in ON state]*
+2. The button icon changes to orange when active 
 
-![Screenshot: Monitor Active Notification]
-*[PLACEHOLDER: Screenshot of balloon notification showing "Monitor activated"]*
+<img width="83" height="26" alt="image" src="https://github.com/user-attachments/assets/e3d3777e-997f-4665-898b-43b28b50ec0a" />
+
+3. Bubble appears to display selected settings
+4. 
+<img width="287" height="193" alt="image" src="https://github.com/user-attachments/assets/0399d25d-d3f4-418f-8ada-243346165440" />
 
 ### What the Monitor Does
 
@@ -227,42 +179,13 @@ The monitor runs in the background and:
 - **Warns on moves** - Notifies when approved elements are moved
 - **Checks after sync** - Verifies MMI values after syncing with central
 
-![Screenshot: Validation Notification]
-*[PLACEHOLDER: Screenshot of MMI validation correction notification]*
+<img width="526" height="389" alt="image" src="https://github.com/user-attachments/assets/fd3ef22d-6246-4b7c-807f-87f2a9adb8f0" />
 
-![Screenshot: Pinning Notification]
-*[PLACEHOLDER: Screenshot showing elements pinned notification]*
 
 ### Stopping the Monitor
 
 Click the **"Monitor"** button again to toggle it off. The monitor state persists across Revit sessions.
 
----
-
-## Troubleshooting
-
-### MMI Buttons Don't Work
-- **Check:** Is the MMI parameter configured? Go to Settings and set your MMI parameter
-- **Check:** Are elements selected? MMI buttons require a selection
-- **Check:** Does the selected element support the parameter? Some system families may not have access to all parameters
-
-### Monitor Doesn't Start
-- **Check:** Is the MMI parameter configured in Settings?
-- **Check:** Are any monitor features enabled in Settings?
-- **Check:** Check the pyRevit log for error messages (pyRevit tab > Settings > Open Log Folder)
-
-### Parameter Not Saving
-- **Check:** Is the parameter an Instance parameter (not Type parameter)?
-- **Check:** Is the parameter Text type (not Integer)?
-- **Check:** Do you have write access to the project?
-
-### Elements Not Pinning Automatically
-- **Check:** Is "Pin elements >=400" enabled in MMI Settings?
-- **Check:** Is the MMI Monitor running (button should show ON state)?
-- **Check:** Are the elements already pinned?
-- **Check:** Does the element type support pinning? (Some elements like rooms cannot be pinned)
-
----
 
 ## Support and Resources
 
@@ -275,6 +198,4 @@ For issues or feature requests, please visit the GitHub repository and create an
 ---
 
 **Last Updated:** November 2025  
-**Extension Version:** 1.x  
 **Author:** Byggstyrning AB
-
