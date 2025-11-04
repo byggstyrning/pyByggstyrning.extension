@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Weight Calculator - Calculate weight for structural elements based on volume and density."""
+"""Weight Calculator - Calculate weight for elements based on volume and density."""
 
 __title__ = "Weight Calc"
 __author__ = "Byggstyrning AB"
-__doc__ = "Calculate weight for structural elements based on volume and density"
+__doc__ = "Calculate weight for elements based on volume and density"
 
 import sys
 import os.path as op
@@ -66,8 +66,8 @@ def convert_density_to_kg_per_cubic_meter(density_internal):
         return density_internal * 16.0185
 
 
-def get_structural_elements_in_view(doc, view):
-    """Get all structural elements with volume in the active view."""
+def get_elements_with_volume_in_view(doc, view):
+    """Get all elements with volume in the active view."""
     elements = []
     collector = FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType().ToElements()
     
@@ -80,17 +80,8 @@ def get_structural_elements_in_view(doc, view):
             if not volume_param or not volume_param.HasValue or volume_param.AsDouble() <= 0:
                 continue
             
-            # Check if structural
-            is_structural = False
-            structural_param = element.LookupParameter("Structural")
-            if structural_param and structural_param.HasValue and structural_param.StorageType == StorageType.Integer:
-                is_structural = structural_param.AsInteger() == 1
-            
-            if not is_structural and element.Category.Name and element.Category.Name.startswith("Structural"):
-                is_structural = True
-            
-            if is_structural:
-                elements.append(element)
+            # Element has volume, add it to the list
+            elements.append(element)
         except:
             continue
     
@@ -222,7 +213,7 @@ def calculate_density_from_layers(element):
 
 
 def calculate_element_weight(element):
-    """Calculate weight for a structural element. Returns (weight in kg, method) or (None, error)."""
+    """Calculate weight for an element. Returns (weight in kg, method) or (None, error)."""
     try:
         volume_param = element.LookupParameter("Volume")
         if not volume_param or not volume_param.HasValue:
@@ -269,6 +260,68 @@ def calculate_element_weight(element):
             if weighted_density:
                 density = weighted_density
                 method = "Material layers"
+        
+        # Try GetMaterialIds (for elements like curtain wall mullions)
+        if not density:
+            try:
+                material_ids = element.GetMaterialIds(False)
+                if material_ids and material_ids.Count > 0:
+                    # Try to get material from the first material ID
+                    material = doc.GetElement(material_ids[0])
+                    if material:
+                        density = get_material_density(material)
+                        if density:
+                            method = "GetMaterialIds"
+            except:
+                pass
+        
+        # Try material from element type
+        if not density:
+            try:
+                type_id = element.GetTypeId()
+                if type_id != ElementId.InvalidElementId:
+                    element_type = doc.GetElement(type_id)
+                    if element_type:
+                        # Try Material parameter on type
+                        type_material_param = element_type.LookupParameter("Material")
+                        if type_material_param and type_material_param.HasValue:
+                            material_id = type_material_param.AsElementId()
+                            if material_id != ElementId.InvalidElementId:
+                                material = doc.GetElement(material_id)
+                                if material:
+                                    density = get_material_density(material)
+                                    if density:
+                                        method = "Type Material parameter"
+                        
+                        # Try GetMaterialIds on type
+                        if not density:
+                            try:
+                                type_material_ids = element_type.GetMaterialIds(False)
+                                if type_material_ids and type_material_ids.Count > 0:
+                                    material = doc.GetElement(type_material_ids[0])
+                                    if material:
+                                        density = get_material_density(material)
+                                        if density:
+                                            method = "Type GetMaterialIds"
+                            except:
+                                pass
+            except:
+                pass
+        
+        # Try MATERIAL_ID_PARAM built-in parameter
+        if not density:
+            try:
+                material_param = element.get_Parameter(BuiltInParameter.MATERIAL_ID_PARAM)
+                if material_param and material_param.HasValue:
+                    material_id = material_param.AsElementId()
+                    if material_id != ElementId.InvalidElementId:
+                        material = doc.GetElement(material_id)
+                        if material:
+                            density = get_material_density(material)
+                            if density:
+                                method = "MATERIAL_ID_PARAM"
+            except:
+                pass
         
         # Calculate weight
         if density and density > 0:
@@ -385,14 +438,12 @@ def main():
         return
     
     view = doc.ActiveView
-    elements = get_structural_elements_in_view(doc, view)
+    elements = get_elements_with_volume_in_view(doc, view)
     
     if not elements:
         forms.alert(
-            "No structural elements with volume found in the active view.\n\n"
-            "Elements must:\n"
-            "- Have a Volume parameter with a value\n"
-            "- Be structural (Structural=Yes or category starting with 'Structural')",
+            "No elements with volume found in the active view.\n\n"
+            "Elements must have a Volume parameter with a value greater than zero.",
             title="Weight Calculator"
         )
         return

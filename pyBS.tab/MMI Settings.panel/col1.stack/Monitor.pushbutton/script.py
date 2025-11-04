@@ -78,6 +78,17 @@ class MMIEventHandler(IExternalEventHandler):
     def Execute(self, uiapp):
         try:
             logger.debug("MMI Event Handler Executing")
+            
+            # Check if monitor is still active
+            if not is_monitor_active():
+                logger.debug("Monitor is not active, clearing queued operations")
+                # Clear any queued operations
+                self.elements_to_pin = []
+                self.elements_to_validate = []
+                self.validate_corrections = {}
+                self.notify_message = None
+                return
+            
             doc = uiapp.ActiveUIDocument.Document
             
             # Process validation corrections if any
@@ -202,6 +213,7 @@ doc_changed_handler = None
 doc_synchronizing_handler = None
 doc_synchronized_handler = None
 element_location_cache = {}  # Cache to store element locations for move detection
+element_mmi_cache = {}  # Cache to store element MMI values to detect changes
 
 
 def update_element_location_cache(element_id, location):
@@ -221,6 +233,129 @@ def clean_element_location_cache():
         id: data for id, data in element_location_cache.items()
         if (now - data["timestamp"]).total_seconds() < 300
     }
+
+def populate_initial_location_cache(doc):
+    """Populate the location cache with all high MMI elements on monitor activation.
+    This ensures we can detect movement even on the first move."""
+    global element_location_cache
+    try:
+        mmi_param_name = get_mmi_parameter_name(doc)
+        if not mmi_param_name:
+            return
+        
+        logger.debug("Populating initial location cache for high MMI elements...")
+        
+        # Get all elements in the model
+        all_elements = FilteredElementCollector(doc).WhereElementIsNotElementType().ToElements()
+        
+        cache_count = 0
+        for element in all_elements:
+            # Skip elements that can't be pinned
+            if not hasattr(element, "Pinned"):
+                continue
+            
+            # Get the MMI value for the element
+            mmi_value, value_str, param = get_element_mmi_value(element, mmi_param_name, doc)
+            
+            # Only cache high MMI elements
+            if mmi_value is not None and mmi_value > MMI_THRESHOLD:
+                current_location = get_element_location(element)
+                if current_location:
+                    update_element_location_cache(element.Id, current_location)
+                    cache_count += 1
+        
+        logger.debug("Cached locations for {} high MMI elements".format(cache_count))
+        
+    except Exception as ex:
+        logger.error("Error populating initial location cache: {}".format(ex))
+
+def populate_initial_mmi_cache(doc):
+    """Populate the MMI cache with all elements on monitor activation.
+    This allows us to detect MMI value changes."""
+    global element_mmi_cache
+    try:
+        mmi_param_name = get_mmi_parameter_name(doc)
+        if not mmi_param_name:
+            return
+        
+        logger.debug("Populating initial MMI cache...")
+        
+        # Get all elements in the model
+        all_elements = FilteredElementCollector(doc).WhereElementIsNotElementType().ToElements()
+        
+        cache_count = 0
+        for element in all_elements:
+            # Skip elements that can't be pinned
+            if not hasattr(element, "Pinned"):
+                continue
+            
+            # Get the MMI value for the element
+            mmi_value, value_str, param = get_element_mmi_value(element, mmi_param_name, doc)
+            
+            # Cache all MMI values (both high and low)
+            if mmi_value is not None:
+                element_mmi_cache[element.Id.IntegerValue] = mmi_value
+                cache_count += 1
+        
+        logger.debug("Cached MMI values for {} elements".format(cache_count))
+        
+    except Exception as ex:
+        logger.error("Error populating initial MMI cache: {}".format(ex))
+
+def pin_all_high_mmi_elements(doc):
+    """Proactively pin all high MMI elements when monitor activates.
+    This prevents movement before it happens."""
+    try:
+        mmi_param_name = get_mmi_parameter_name(doc)
+        if not mmi_param_name:
+            return 0
+        
+        logger.debug("Scanning for high MMI elements to pin...")
+        
+        # Get all elements in the model
+        all_elements = FilteredElementCollector(doc).WhereElementIsNotElementType().ToElements()
+        
+        elements_to_pin = []
+        for element in all_elements:
+            # Skip elements that can't be pinned
+            if not hasattr(element, "Pinned"):
+                continue
+            
+            # Skip already pinned elements
+            if element.Pinned:
+                continue
+            
+            # Get the MMI value for the element
+            mmi_value, value_str, param = get_element_mmi_value(element, mmi_param_name, doc)
+            
+            # Only pin high MMI elements
+            if mmi_value is not None and mmi_value >= MMI_THRESHOLD:
+                elements_to_pin.append(element)
+        
+        if not elements_to_pin:
+            logger.debug("No unpinned high MMI elements found")
+            return 0
+        
+        # Pin all elements in a single transaction
+        with Transaction(doc, "Pin High MMI Elements") as t:
+            t.Start()
+            
+            pinned_count = 0
+            for element in elements_to_pin:
+                try:
+                    element.Pinned = True
+                    pinned_count += 1
+                except Exception as e:
+                    logger.debug("Could not pin element {}: {}".format(element.Id, e))
+            
+            t.Commit()
+        
+        logger.debug("Proactively pinned {} high MMI elements".format(pinned_count))
+        return pinned_count
+        
+    except Exception as ex:
+        logger.error("Error in proactive pinning: {}".format(ex))
+        return 0
 
 def document_changed_handler(sender, args):
     """Handler for document changed event."""
@@ -316,13 +451,37 @@ def document_changed_handler(sender, args):
                         # Update location cache for future checks
                         update_element_location_cache(element_id, current_location)
                 
-                # ===== STEP 3: PIN ELEMENTS =====
-                if pin_elements_enabled and mmi_value > MMI_THRESHOLD:
-                    # Only pin if not already pinned
+                # ===== STEP 3: PIN ELEMENTS (only when MMI changes) =====
+                if pin_elements_enabled and mmi_value >= MMI_THRESHOLD:
+                    # Check if MMI value changed to/above threshold
+                    element_id_int = element_id.IntegerValue
+                    prev_mmi = element_mmi_cache.get(element_id_int)
+                    
+                    # Pin if: 
+                    # 1. Element is not already pinned, AND
+                    # 2. Either we don't have a cached MMI (new element) OR the MMI value changed
+                    should_pin = False
+                    
                     if not element.Pinned:
+                        if prev_mmi is None:
+                            # First time seeing this element with high MMI
+                            should_pin = True
+                            logger.debug("Element {} newly detected with MMI {} - queuing for pin".format(
+                                element_id, mmi_value))
+                        elif prev_mmi < MMI_THRESHOLD and mmi_value >= MMI_THRESHOLD:
+                            # MMI value changed from below to above threshold
+                            should_pin = True
+                            logger.debug("Element {} MMI changed from {} to {} - queuing for pin".format(
+                                element_id, prev_mmi, mmi_value))
+                    
+                    if should_pin:
                         elements_to_pin.append(element_id)
-                        logger.debug("Element {} with MMI value {} queued for pinning".format(
-                            element_id, mmi_value))
+                    
+                    # Update MMI cache
+                    element_mmi_cache[element_id_int] = mmi_value
+                elif mmi_value is not None:
+                    # Update cache for low MMI elements too (to detect future changes)
+                    element_mmi_cache[element_id.IntegerValue] = mmi_value
         
         # Process validation if needed
         if elements_to_validate and validation_corrections and mmi_event_handler and external_event:
@@ -497,6 +656,15 @@ def deregister_event_handlers():
             doc_synchronized_handler = None
             logger.debug("Document Synchronized Handler unregistered.")
         
+        # Clear any pending operations and mark handlers as inactive
+        if mmi_event_handler is not None:
+            # Clear all queued operations
+            mmi_event_handler.elements_to_pin = []
+            mmi_event_handler.elements_to_validate = []
+            mmi_event_handler.validate_corrections = {}
+            mmi_event_handler.notify_message = None
+            logger.debug("Cleared all queued MMI operations")
+        
         # Dispose the external event if created
         if external_event is not None:
             external_event = None # Mark as inactive
@@ -543,10 +711,26 @@ if __name__ == '__main__':
             monitor_settings = load_monitor_config(revit.doc, use_display_names=False)
             mmi_param_name = get_mmi_parameter_name(revit.doc) or "Not set"
             
+            # Populate initial location cache if warn_on_move is enabled
+            if monitor_settings["warn_on_move"]:
+                populate_initial_location_cache(revit.doc)
+            
+            # Populate initial MMI cache if pin_elements is enabled (to detect changes)
+            if monitor_settings["pin_elements"]:
+                populate_initial_mmi_cache(revit.doc)
+            
+            # Proactively pin all high MMI elements if pin_elements is enabled
+            pinned_count = 0
+            if monitor_settings["pin_elements"]:
+                pinned_count = pin_all_high_mmi_elements(revit.doc)
+            
             # Create a readable list of enabled features
             enabled_features = []
             if monitor_settings["pin_elements"]:
-                enabled_features.append("Pin elements >={}".format(MMI_THRESHOLD))
+                pin_feature_text = "Pin elements >={}".format(MMI_THRESHOLD)
+                if pinned_count > 0:
+                    pin_feature_text += " ({} pinned)".format(pinned_count)
+                enabled_features.append(pin_feature_text)
             if monitor_settings["warn_on_move"]:
                 enabled_features.append("Warn when moving elements >{}".format(MMI_THRESHOLD))
             if monitor_settings["validate_mmi"]:
@@ -577,9 +761,16 @@ if __name__ == '__main__':
     else:
         # Deactivate: Deregister handlers
         logger.debug("Deactivating MMI Monitor...")
+        
         if deregister_event_handlers():
             set_monitor_active(False)
             script.toggle_icon(new_active_state)  # Toggle icon to inactive state
+            
+            # Clear caches
+            element_location_cache = {}
+            element_mmi_cache = {}
+            logger.debug("Cleared element location and MMI caches")
+            
             success = True
         else:
             forms.show_balloon(

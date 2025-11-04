@@ -3,7 +3,7 @@
 
 import re
 from Autodesk.Revit.DB import FilteredElementCollector, ParameterElement, BuiltInParameter
-from Autodesk.Revit.DB import ElementId, StorageType
+from Autodesk.Revit.DB import ElementId, StorageType, LocationPoint, LocationCurve
 
 # Try to import ParameterType, which might not be available in all Revit API versions
 try:
