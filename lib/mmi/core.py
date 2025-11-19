@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Core functions for MMI parameter operations."""
 
-from Autodesk.Revit.DB import Transaction, ElementId, FilteredElementCollector
+from Autodesk.Revit.DB import Transaction, ElementId, FilteredElementCollector, BuiltInCategory
 from Autodesk.Revit.DB import ExtensibleStorage, StorageType
 from pyrevit import revit, forms, script
 import datetime
@@ -13,6 +13,13 @@ from mmi.config import CONFIG_KEYS
 
 # Initialize logger
 logger = script.get_logger()
+
+# Categories that should not have MMI values set
+# Using integer values directly since some BuiltInCategory enum values may not exist
+EXCLUDED_CATEGORIES = [
+    int(BuiltInCategory.OST_CurtainGrids),  # Curtain Wall Grids (2034483)
+    2451555,                                 # Wall Sweeps (no BuiltInCategory enum available)
+]
 
 def get_mmi_parameter_name(doc):
     """Get the configured MMI parameter name from extensible storage.
@@ -82,12 +89,26 @@ def set_mmi_value(doc, elements, value, param_name=None):
     failed_elements = []
     
     for element in element_list:
-        # Try to set the parameter value
-        param = element.LookupParameter(param_name)
-        if param and not param.IsReadOnly and param.StorageType == StorageType.String:
-            param.Set(str(value))
-            success_count += 1
-        else:
+        try:
+            # Skip excluded categories
+            if element.Category and element.Category.Id:
+                category_id = element.Category.Id.IntegerValue
+                if category_id in EXCLUDED_CATEGORIES:
+                    # Silently skip excluded categories (don't add to failed_elements)
+                    logger.debug("Skipping excluded category: {} ({})".format(
+                        element.Category.Name, category_id))
+                    continue
+            
+            # Try to set the parameter value
+            param = element.LookupParameter(param_name)
+            if param and not param.IsReadOnly and param.StorageType == StorageType.String:
+                param.Set(str(value))
+                success_count += 1
+            else:
+                failed_elements.append(element.Id)
+        except Exception as ex:
+            # Catch any Revit API exceptions during parameter setting
+            logger.debug("Error setting MMI parameter on element {}: {}".format(element.Id, ex))
             failed_elements.append(element.Id)
     
     return success_count, failed_elements
@@ -129,7 +150,18 @@ def set_selection_mmi_value(doc, value, show_results=False):
         
         # Show failure message if any
         if failed_elements:
-            print("Could not set MMI parameter on {} elements.".format(len(failed_elements)))
+            output = script.get_output()
+            output.print_md("**⚠️ Could not set MMI parameter on {} element(s):**".format(len(failed_elements)))
+            for element_id in failed_elements:
+                element = doc.GetElement(element_id)
+                if element:
+                    element_link = output.linkify(element_id)
+                    element_name = element.Name if hasattr(element, 'Name') and element.Name else "Element"
+                    category_name = element.Category.Name if element.Category else "Unknown"
+                    output.print_md("- {} {} ({})".format(category_name, element_link, element_name))
+                else:
+                    element_link = output.linkify(element_id)
+                    output.print_md("- Element {}".format(element_link))
         
         return success_count > 0
         

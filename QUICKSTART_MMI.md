@@ -138,7 +138,7 @@ Configure automated monitoring features for quality control.
 
 1. **Validate MMI** - Auto-corrects MMI value formats (e.g., "2 00" → "200")
 2. **Pin elements >=400** - Auto-pins high-status elements to prevent modification
-3. **Warn when moving elements >400** - Shows warnings when moving approved elements
+3. **Warn when moving elements >=425** - Shows warnings when moving approved elements
 4. **Check MMI after sync** - Verifies MMI values after sync with central
 
 ### Configuration Steps

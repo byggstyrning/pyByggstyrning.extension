@@ -507,7 +507,7 @@ def document_changed_handler(sender, args):
             
             forms.show_balloon(
                 header="High MMI Element Move",
-                text="{} elements with MMI > {} were moved".format(count, MMI_THRESHOLD),
+                text="{} elements with MMI >= 425 were moved".format(count),
                 tooltip=tooltip,
                 is_new=True
             )

@@ -54,7 +54,7 @@ class MMIParameterSchema(BaseSchema):
         
     @simple_field(value_type="boolean")
     def warn_on_move():
-        """Whether to warn when moving elements > 400."""
+        """Whether to warn when moving elements >= 425."""
         return False
         
     @simple_field(value_type="boolean")

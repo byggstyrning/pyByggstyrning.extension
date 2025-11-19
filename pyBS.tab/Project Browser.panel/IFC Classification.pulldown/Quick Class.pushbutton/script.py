@@ -74,11 +74,17 @@ class MLIFCClassifier(object):
             
             # Parse response to verify format
             response_data = json.loads(response)
-            if 'result' in response_data:
+            
+            # Handle n8n webhook response format - it wraps the response in a list
+            if isinstance(response_data, list) and len(response_data) > 0:
+                # Extract the actual response dict from the list
+                response_data = response_data[0]
+            
+            if isinstance(response_data, dict) and 'result' in response_data:
                 logger.info("CatBoost API is available")
                 return True
             else:
-                logger.warning("API response format unexpected")
+                logger.warning("API response format unexpected: {}".format(type(response_data).__name__))
                 return False
             
         except Exception as e:
@@ -167,6 +173,22 @@ class MLIFCClassifier(object):
             
             # Parse response
             response_data = json.loads(response)
+            
+            # Handle n8n webhook response format - it wraps the response in a list
+            if isinstance(response_data, list) and len(response_data) > 0:
+                # Extract the actual response dict from the list
+                response_data = response_data[0]
+                logger.debug("Extracted response from n8n list wrapper")
+            
+            # Validate response structure
+            if not isinstance(response_data, dict):
+                logger.error("Unexpected response format: expected dict, got {}".format(type(response_data).__name__))
+                return None
+            
+            if 'results' not in response_data:
+                logger.error("Response missing 'results' field. Keys: {}".format(response_data.keys()))
+                return None
+            
             logger.debug("API Response received: {} results".format(len(response_data.get("results", []))))
             
             return response_data

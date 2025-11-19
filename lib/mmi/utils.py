@@ -325,4 +325,38 @@ def get_element_mmi_value(element, mmi_param_name, doc):
         return None, None, None
     except Exception as ex:
         logger.debug("Error getting MMI value: {}".format(ex))
-        return None, None, None 
+        return None, None, None
+
+def select_elements_by_mmi(doc, uidoc, mmi_value, param_name=None):
+    """Select all elements with a specific MMI value.
+    
+    Args:
+        doc: The active Revit document
+        uidoc: The active UI document
+        mmi_value: The MMI value to select elements for
+        param_name: Optional parameter name, will use 'MMI' if None
+        
+    Returns:
+        int: Number of elements selected
+    """
+    from System.Collections.Generic import List
+    from Autodesk.Revit.DB import ElementId
+    
+    # Get elements with the specified MMI value
+    elements = get_elements_by_mmi_value(doc, mmi_value, param_name, comparison="equal")
+    
+    if not elements:
+        logger.debug("No elements found with MMI value: {}".format(mmi_value))
+        return 0
+    
+    # Convert to ElementId list
+    element_ids = List[ElementId]([elem.Id for elem in elements])
+    
+    # Set selection
+    try:
+        uidoc.Selection.SetElementIds(element_ids)
+        logger.debug("Selected {} elements with MMI value: {}".format(len(elements), mmi_value))
+        return len(elements)
+    except Exception as ex:
+        logger.error("Error selecting elements: {}".format(ex))
+        return 0 

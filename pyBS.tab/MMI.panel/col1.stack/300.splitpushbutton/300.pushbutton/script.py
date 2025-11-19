@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 __title__ = "300"
 __author__ = ""
-__context__ = 'Selection'
 __doc__ = """Klar för utvärdering
 Objektet är vidareutvecklat för produktion och anbud. Mindre justeringar kan förekomma. Objektet är placerat i plan, profil och höjd. Objektet är nu i 3D. Tekniska data som geometri, form och toleranser kan vara definierade.
 
-Sets the MMI parameter value to 300 on selected elements.
+If elements are selected: Sets the MMI parameter value to 300 on selected elements.
+If no selection: Selects all elements with MMI value 300.
 Based on MMI veilederen: https://mmi-veilederen.no/?page_id=85"""
 
 # Add the lib directory to sys.path for importing
@@ -25,9 +25,17 @@ if lib_path not in sys.path:
 
 from pyrevit import revit
 from mmi.core import set_selection_mmi_value
+from mmi.utils import select_elements_by_mmi
 
-# Set the MMI value on selected elements
-set_selection_mmi_value(revit.doc, "300")
+# Check if there's a selection
+selection = revit.get_selection()
+
+if not selection or not selection.element_ids:
+    # No selection: select elements by MMI value
+    select_elements_by_mmi(revit.doc, revit.uidoc, "300")
+else:
+    # Selection exists: set MMI value on selected elements
+    set_selection_mmi_value(revit.doc, "300")
 
 # --------------------------------------------------
 # 💡 pyRevit with VSCode: Use pyrvt or pyrvtmin snippet
