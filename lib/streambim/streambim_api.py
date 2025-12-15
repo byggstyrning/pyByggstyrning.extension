@@ -477,4 +477,163 @@ class StreamBIMClient:
         except Exception as e:
             self.last_error = str(e)
             print("Error getting checklist items: {}".format(str(e)))
-            return [] 
+            return []
+    
+    def create_ifc_search(self, checklist_id, building_id, checklist_value):
+        """Create an IFC search for a grouped checklist value.
+        
+        Args:
+            checklist_id: ID of the checklist
+            building_id: ID of the building
+            checklist_value: The group key (checklistValue) to search for
+            
+        Returns:
+            searchId string if successful, None otherwise
+        """
+        if not self.idToken or not self.current_project:
+            self.last_error = "Not authenticated or no project selected"
+            return None
+        
+        try:
+            url = "{}/project-{}/api/v1/ifc-searches".format(
+                self.base_url, self.current_project
+            )
+            
+            # Build rules with only checklistValue (no @kind or @Document Id needed)
+            rules = [[{
+                "propKey": "checklistValue",
+                "propValue": checklist_value,
+                "buildingId": building_id,
+                "checklistId": checklist_id
+            }]]
+            
+            data = json.dumps({"rules": rules}, ensure_ascii=False).encode('utf-8')
+            
+            req = urllib2.Request(url, data=data)
+            req.add_header('Authorization', 'Bearer {}'.format(self.idToken))
+            req.add_header('Content-Type', 'application/json')
+            req.add_header('Accept', '*/*')
+            
+            response = urllib2.urlopen(req)
+            result = json.loads(response.read().decode('utf-8'))
+            
+            # Decode UTF-8 strings in the response
+            result = self._decode_utf8(result)
+            
+            search_id = result.get('searchId')
+            if search_id:
+                logger.debug("Created IFC search with searchId: {}".format(search_id))
+                return str(search_id)
+            else:
+                self.last_error = "No searchId in response"
+                return None
+                
+        except urllib2.HTTPError as e:
+            error_message = "HTTP Error: {} - {}".format(e.code, e.reason)
+            if e.code == 401:
+                error_message = "Authentication failed. Please log in again."
+            elif e.code == 500:
+                error_message = "Server error: {}".format(e.read())
+                
+            self.last_error = error_message
+            logger.error("Error creating IFC search: {}".format(error_message))
+            return None
+        except Exception as e:
+            self.last_error = str(e)
+            logger.error("Error creating IFC search: {}".format(str(e)))
+            return None
+    
+    def get_ifc_object_refs(self, search_id, limit=500):
+        """Get IFC object references for a search ID.
+        
+        Args:
+            search_id: The search ID from create_ifc_search
+            limit: Maximum number of results to fetch (default 500)
+            
+        Returns:
+            List of IFC object ref data dictionaries
+        """
+        if not self.idToken or not self.current_project:
+            self.last_error = "Not authenticated or no project selected"
+            return []
+        
+        try:
+            url = "{}/project-{}/api/v1/v2/ifc-object-refs-sets?page[limit]={}&searchId={}".format(
+                self.base_url, self.current_project, limit, search_id
+            )
+            
+            req = urllib2.Request(url)
+            req.add_header('Authorization', 'Bearer {}'.format(self.idToken))
+            req.add_header('Accept', 'application/vnd.api+json')
+            
+            response = urllib2.urlopen(req)
+            result = json.loads(response.read().decode('utf-8'))
+            
+            # Decode UTF-8 strings in the response
+            result = self._decode_utf8(result)
+            
+            data = result.get('data', [])
+            logger.debug("Retrieved {} IFC object refs for searchId: {}".format(len(data), search_id))
+            return data
+            
+        except urllib2.HTTPError as e:
+            error_message = "HTTP Error: {} - {}".format(e.code, e.reason)
+            if e.code == 401:
+                error_message = "Authentication failed. Please log in again."
+                
+            self.last_error = error_message
+            logger.error("Error getting IFC object refs: {}".format(error_message))
+            return []
+        except Exception as e:
+            self.last_error = str(e)
+            logger.error("Error getting IFC object refs: {}".format(str(e)))
+            return []
+    
+    def resolve_group_key_to_ifc_guids(self, checklist_id, building_id, group_key):
+        """Resolve a grouped checklist group key to a list of IFC GUIDs.
+        
+        This method caches results per (checklist_id, building_id, group_key) to avoid
+        redundant API calls during a single import run.
+        
+        Args:
+            checklist_id: ID of the checklist
+            building_id: ID of the building
+            group_key: The group key (object value from exported checklist items)
+            
+        Returns:
+            List of IFC GUID strings (matching Revit IfcGUID parameter values)
+        """
+        # Initialize cache if it doesn't exist
+        if not hasattr(self, '_group_key_cache'):
+            self._group_key_cache = {}
+        
+        # Check cache first
+        cache_key = (checklist_id, building_id, group_key)
+        if cache_key in self._group_key_cache:
+            logger.debug("Using cached IFC GUIDs for group key: {}".format(group_key))
+            return self._group_key_cache[cache_key]
+        
+        # Resolve via API
+        logger.debug("Resolving group key to IFC GUIDs: {}".format(group_key))
+        search_id = self.create_ifc_search(checklist_id, building_id, group_key)
+        
+        if not search_id:
+            logger.warning("Failed to create IFC search for group key: {}".format(group_key))
+            self._group_key_cache[cache_key] = []
+            return []
+        
+        # Get IFC object refs (use high limit to get all results)
+        object_refs = self.get_ifc_object_refs(search_id, limit=10000)
+        
+        # Extract IDs (these match Revit IfcGUID parameter values)
+        ifc_guids = []
+        for ref in object_refs:
+            ref_id = ref.get('id')
+            if ref_id:
+                ifc_guids.append(ref_id)
+        
+        # Cache the result
+        self._group_key_cache[cache_key] = ifc_guids
+        logger.debug("Resolved group key '{}' to {} IFC GUIDs".format(group_key, len(ifc_guids)))
+        
+        return ifc_guids 

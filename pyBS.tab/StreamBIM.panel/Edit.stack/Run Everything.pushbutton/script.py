@@ -123,6 +123,9 @@ class RunEverythingProcessor:
         # Initialize config list
         self.configs = []
         
+        # Cache for checklist records (runtime only, not persisted)
+        self.checklist_records_cache = {}
+        
         # Load configurations
         self.load_configurations()
         
@@ -179,6 +182,47 @@ class RunEverythingProcessor:
         else:
             logger.error("No saved StreamBIM login found. Please log in using the ChecklistImporter first.")
             return False
+    
+    def get_checklist_metadata(self, checklist_id):
+        """Get checklist metadata (group-by and building_id) from cache or API.
+        
+        Returns:
+            tuple: (group_by string, building_id string or None)
+        """
+        # Check cache first
+        if checklist_id in self.checklist_records_cache:
+            record = self.checklist_records_cache[checklist_id]
+        else:
+            # Fetch all checklists and cache them
+            logger.debug("Fetching checklist records for metadata lookup...")
+            checklists = self.api_client.get_checklists()
+            if not checklists:
+                logger.warning("Failed to fetch checklists for metadata lookup")
+                return ('', None)
+            
+            # Cache all records
+            for checklist in checklists:
+                cid = checklist.get('id')
+                if cid:
+                    self.checklist_records_cache[cid] = checklist
+            
+            # Get the requested record
+            record = self.checklist_records_cache.get(checklist_id)
+            if not record:
+                logger.warning("Checklist {} not found in fetched records".format(checklist_id))
+                return ('', None)
+        
+        # Extract group-by and building_id
+        attrs = record.get('attributes', {})
+        group_by = attrs.get('group-by', '') or ''
+        
+        relationships = record.get('relationships', {})
+        buildings = relationships.get('buildings', {}).get('data', [])
+        building_id = None
+        if buildings and len(buildings) > 0:
+            building_id = buildings[0].get('id')
+        
+        return (group_by, building_id)
     
     def run_import_configurations(self):
         """Run import for all configurations."""
@@ -336,15 +380,87 @@ class RunEverythingProcessor:
                 except Exception as e:
                     logger.error("Error parsing mapping config: {}".format(str(e)))
             
-            # Optimize by pre-building element lookup dict for the checklist items
-            # First extract all the element IDs from the checklist items
-            element_ids = set()
-            for item in checklist_items:
-                element_id = item.get('object')
-                if not element_id:
-                    element_id = item.get('attributes', {}).get('elementId')
-                if element_id:
+            # Check if this is a grouped checklist
+            group_by, building_id = self.get_checklist_metadata(config.checklist_id)
+            is_grouped = group_by and len(group_by) > 0
+            
+            if is_grouped:
+                # Grouped checklist: resolve group keys to IFC GUIDs
+                if not building_id:
+                    logger.warning("Cannot process grouped checklist {}: no building ID found".format(config.checklist_id))
+                    config.elements_processed = 0
+                    config.elements_updated = 0
+                    return (0, 0)
+                
+                logger.info("Processing grouped checklist with group-by: {}".format(group_by))
+                
+                # Build mapping from IFC GUID to property value
+                guid_to_value = {}
+                for item in checklist_items:
+                    try:
+                        # Get group key (object value)
+                        group_key = item.get('object')
+                        if not group_key:
+                            continue
+                        
+                        # Get property value from this group
+                        property_value = self.get_property_value(item, config.streambim_property)
+                        if property_value is None:
+                            continue
+                        
+                        # Apply value mapping if enabled
+                        if config.mapping_enabled:
+                            if property_value in value_mapping:
+                                property_value = value_mapping[property_value]
+                            else:
+                                # Skip if mapping enabled but value not in mapping
+                                continue
+                        
+                        # Resolve group key to IFC GUIDs
+                        ifc_guids = self.api_client.resolve_group_key_to_ifc_guids(
+                            config.checklist_id,
+                            building_id,
+                            group_key
+                        )
+                        
+                        # Map all resolved GUIDs to this property value
+                        for guid in ifc_guids:
+                            guid_to_value[guid] = property_value
+                            
+                    except Exception as e:
+                        logger.error("Error resolving group key: {}".format(str(e)))
+                        continue
+                
+                logger.info("Resolved groups to {} IFC GUID mappings".format(len(guid_to_value)))
+                element_ids = set(guid_to_value.keys())
+                
+            else:
+                # Non-grouped checklist: direct GUID matching (existing behavior)
+                guid_to_value = {}
+                element_ids = set()
+                
+                for item in checklist_items:
+                    element_id = item.get('object')
+                    if not element_id:
+                        element_id = item.get('attributes', {}).get('elementId')
+                    if not element_id:
+                        continue
+                    
                     element_ids.add(element_id)
+                    
+                    # Get property value
+                    property_value = self.get_property_value(item, config.streambim_property)
+                    if property_value is None:
+                        continue
+                    
+                    # Apply value mapping if enabled
+                    if config.mapping_enabled:
+                        if property_value in value_mapping:
+                            property_value = value_mapping[property_value]
+                        else:
+                            continue
+                    
+                    guid_to_value[element_id] = property_value
             
             # If no elements found, skip
             if not element_ids:
@@ -389,40 +505,19 @@ class RunEverythingProcessor:
                 logger.info("Starting element processing")
                 
                 # Set an estimated number of elements for the progress tracking
-                config.elements_total = len(checklist_items)
+                config.elements_total = len(guid_to_value)
                 
-                # Process each checklist item directly
-                for idx, item in enumerate(checklist_items):                                        
+                # Process GUID to value mappings
+                item_count = 0
+                for guid, property_value in guid_to_value.items():
+                    item_count += 1
                     processed_count += 1
                     
                     try:
-                        # Get the element ID from the checklist item
-                        element_id = item.get('object')
-                        if not element_id:
-                            element_id = item.get('attributes', {}).get('elementId')
-                        
-                        if not element_id:
-                            continue
-                        
                         # Find the element using our lookup dictionary
-                        element = element_lookup.get(element_id)
+                        element = element_lookup.get(guid)
                         if not element:
                             continue
-                        
-                        # Get property value
-                        checklist_value = self.get_property_value(item, config.streambim_property)
-                        
-                        if checklist_value is None:
-                            continue
-                                                
-                        # Apply value mapping if enabled
-                        if config.mapping_enabled:
-                            if checklist_value in value_mapping:
-                                original_value = checklist_value
-                                checklist_value = value_mapping[checklist_value]
-                            else:
-                                # Skip if mapping enabled but value not in mapping
-                                continue
                         
                         # Get the parameter
                         param = element.LookupParameter(config.revit_parameter)
@@ -437,7 +532,7 @@ class RunEverythingProcessor:
                         param_storage_type = param.StorageType
                         
                         # Set the parameter value
-                        set_value_result = self.set_parameter_value(param, checklist_value, param_storage_type)
+                        set_value_result = self.set_parameter_value(param, property_value, param_storage_type)
                         if set_value_result:
                             updated_count += 1
                             
@@ -445,8 +540,8 @@ class RunEverythingProcessor:
                         logger.error("Error processing element: {}".format(str(e)))
                     
                     # Log progress periodically
-                    if idx % 100 == 0:
-                        logger.debug("Processed {}/{} items, updated {} so far".format(idx, len(checklist_items), updated_count))
+                    if item_count % 100 == 0:
+                        logger.debug("Processed {}/{} mappings, updated {} so far".format(item_count, len(guid_to_value), updated_count))
                 
                 # Commit the transaction
                 t.Commit()

@@ -210,6 +210,11 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.mappings = ObservableCollection[object]()
         self.mapping_storage = None
         self.is_loading_configuration = False  # Flag to prevent recursive loading
+        
+        # Initialize grouped checklist metadata (runtime only, not persisted)
+        self.selected_checklist_group_by = None
+        self.selected_checklist_building_id = None
+        self.all_checklist_records = {}  # Cache checklist records by ID for metadata lookup
 
         # Set up event handlers
         self.loginButton.Click += self.login_button_click
@@ -397,14 +402,17 @@ class StreamBIMImporterUI(forms.WPFWindow):
         if checklists:
             self.checklists.Clear()
             self.all_checklists = []  # Clear all checklists list
+            self.all_checklist_records = {}  # Cache checklist records for metadata lookup
             
             for checklist in checklists:
+                checklist_id = checklist.get('id')
                 checklist_obj = Checklist(
-                    Id=checklist.get('id'),
+                    Id=checklist_id,
                     Name=checklist.get('attributes', {}).get('name', 'Unknown')
                 )
                 self.checklists.Add(checklist_obj)
                 self.all_checklists.append(checklist_obj)  # Store in all checklists list for filtering
+                self.all_checklist_records[checklist_id] = checklist  # Cache full record
             
             # Enable checklist tab
             self.checklistTab.IsEnabled = True
@@ -437,6 +445,24 @@ class StreamBIMImporterUI(forms.WPFWindow):
             self.checklist_items = checklist_items
             self.selected_checklist_id = selected_checklist.Id  # Store for later use
             self.selected_checklist_name = selected_checklist.Name
+            
+            # Store grouped checklist metadata (runtime only, not persisted)
+            checklist_record = self.all_checklist_records.get(selected_checklist.Id)
+            if checklist_record:
+                attrs = checklist_record.get('attributes', {})
+                self.selected_checklist_group_by = attrs.get('group-by', '') or ''
+                
+                # Get building ID from relationships
+                relationships = checklist_record.get('relationships', {})
+                buildings = relationships.get('buildings', {}).get('data', [])
+                if buildings and len(buildings) > 0:
+                    self.selected_checklist_building_id = buildings[0].get('id')
+                else:
+                    self.selected_checklist_building_id = None
+                    logger.warning("No building ID found for checklist {}".format(selected_checklist.Id))
+            else:
+                self.selected_checklist_group_by = ''
+                self.selected_checklist_building_id = None
 
             # Extract available properties from checklist items
             self.extract_available_properties()
@@ -598,18 +624,108 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.progressBar.Value = 40
         self.progressText.Text = "Processing checklist items..."
         
-        # Create mapping from IFC GUID to checklist item
-        guid_to_item = {}
-        for item in all_checklist_items:
-            if 'object' in item:
-                guid_to_item[item['object']] = item
-                
         # Create value mapping dictionary if enabled
         value_mapping = {}
         if self.enableMappingCheckBox.IsChecked and self.mappings:
             for mapping in self.mappings:
                 if mapping.ChecklistValue and mapping.RevitValue:
                     value_mapping[mapping.ChecklistValue] = mapping.RevitValue
+        
+        # Check if this is a grouped checklist
+        is_grouped = self.selected_checklist_group_by and len(self.selected_checklist_group_by) > 0
+        
+        if is_grouped:
+            # Grouped checklist: resolve group keys to IFC GUIDs
+            if not self.selected_checklist_building_id:
+                error_msg = "Cannot import grouped checklist: no building ID found"
+                self.update_status(error_msg)
+                logger.error(error_msg)
+                self.importButton.IsEnabled = True
+                self.progressBar.Visibility = Visibility.Collapsed
+                self.progressText.Visibility = Visibility.Collapsed
+                return
+            
+            self.update_status("Resolving grouped checklist items...")
+            logger.info("Processing grouped checklist with group-by: {}".format(self.selected_checklist_group_by))
+            
+            # Build mapping from IFC GUID to property value
+            guid_to_value = {}
+            total_groups = len(all_checklist_items)
+            group_count = 0
+            
+            for item in all_checklist_items:
+                group_count += 1
+                
+                # Update progress
+                if group_count % 5 == 0:
+                    progress = 40 + (group_count / total_groups * 10)
+                    self.progressBar.Value = progress
+                    self.progressText.Text = "Resolving groups... ({}/{})".format(group_count, total_groups)
+                
+                try:
+                    # Get group key (object value)
+                    group_key = item.get('object')
+                    if not group_key:
+                        continue
+                    
+                    # Get property value from this group
+                    if 'items' not in item or streambim_prop not in item['items']:
+                        continue
+                    
+                    property_value = item['items'][streambim_prop]
+                    if not property_value:
+                        continue
+                    
+                    # Apply value mapping if enabled
+                    if value_mapping:
+                        if property_value in value_mapping:
+                            property_value = value_mapping[property_value]
+                        else:
+                            # Skip if mapping enabled but value not in mapping
+                            continue
+                    
+                    # Resolve group key to IFC GUIDs
+                    ifc_guids = self.streambim_client.resolve_group_key_to_ifc_guids(
+                        self.selected_checklist_id,
+                        self.selected_checklist_building_id,
+                        group_key
+                    )
+                    
+                    # Map all resolved GUIDs to this property value
+                    for guid in ifc_guids:
+                        guid_to_value[guid] = property_value
+                        
+                except Exception as e:
+                    logger.error("Error resolving group key: {}".format(str(e)))
+                    continue
+            
+            logger.info("Resolved {} groups to {} IFC GUID mappings".format(total_groups, len(guid_to_value)))
+            
+        else:
+            # Non-grouped checklist: direct GUID matching (existing behavior)
+            guid_to_value = {}
+            for item in all_checklist_items:
+                if 'object' not in item:
+                    continue
+                
+                guid = item['object']
+                
+                # Get property value
+                if 'items' not in item or streambim_prop not in item['items']:
+                    continue
+                
+                property_value = item['items'][streambim_prop]
+                if not property_value:
+                    continue
+                
+                # Apply value mapping if enabled
+                if value_mapping:
+                    if property_value in value_mapping:
+                        property_value = value_mapping[property_value]
+                    else:
+                        continue
+                
+                guid_to_value[guid] = property_value
         
         self.progressBar.Value = 50
         self.progressText.Text = "Updating element parameters..."
@@ -625,11 +741,11 @@ class StreamBIMImporterUI(forms.WPFWindow):
         t.Start()
         
         try:
-            # Process checklist items directly (MUCH FASTER)
-            total_items = len(guid_to_item)
+            # Process GUID to value mappings
+            total_items = len(guid_to_value)
             item_count = 0
             
-            for guid, item in guid_to_item.items():
+            for guid, revit_value in guid_to_value.items():
                 item_count += 1
                 processed += 1
                 
@@ -638,23 +754,6 @@ class StreamBIMImporterUI(forms.WPFWindow):
                     element = ifc_guid_dict.get(guid)
                     if not element:
                         continue
-                    
-                    # Get property value
-                    if 'items' not in item or streambim_prop not in item['items']:
-                        continue
-                        
-                    checklist_value = item['items'][streambim_prop]
-                    if not checklist_value:
-                        continue
-                    
-                    # Apply value mapping if enabled and value exists in mapping
-                    if value_mapping:
-                        if checklist_value in value_mapping:
-                            revit_value = value_mapping[checklist_value]
-                        else:
-                            continue
-                    else:
-                        revit_value = checklist_value
                     
                     # Get the parameter
                     param = element.LookupParameter(revit_param)
