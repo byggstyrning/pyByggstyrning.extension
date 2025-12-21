@@ -134,6 +134,28 @@ Managing scopes and event handlers in WPF UIs is critical for maintaining functi
 - **Testing UIs**  
   Thoroughly test your WPF windows. Monitor for memory leaks by repeatedly opening and closing windows, and verify that event handlers are responsive over long sessions.
 
+## 6. Script Reloading and Runtime Updates
+
+Understanding when scripts can be updated live versus when a reload is required is crucial for efficient development:
+
+- **.pushbutton Scripts Support Live Updates**  
+  Scripts in `.pushbutton` folders can be edited and will automatically reload when executed again. You can modify these scripts during runtime and test changes immediately without restarting Revit or reloading the extension.
+
+- **lib Folder Scripts Require Reload**  
+  Scripts in the `lib/` folder are loaded into memory when the extension is initialized. When you modify files in the `lib/` folder, you **must reload the extension in pyRevit** for changes to take effect. The extension will continue using the old cached version until reloaded.
+
+- **startup.py Requires Reload**  
+  The `startup.py` file is executed when the extension loads. Any changes to `startup.py` or functions defined within it require a full extension reload to take effect.
+
+- **Notify Users About Reload Requirements**  
+  When updating shared library code or startup functions, always inform users that they need to reload the extension in pyRevit to use the updated code. This prevents confusion when changes don't appear to take effect.
+
+- **Development Workflow Recommendation**  
+  For rapid iteration during development:
+  - Test changes to `.pushbutton` scripts directly (they update automatically)
+  - For `lib/` folder changes, use pyRevit's reload extension command or restart Revit
+  - Consider keeping frequently-changing code in `.pushbutton` scripts during active development, then refactor to `lib/` once stable
+
 ---
 
-This Markdown file outlines the essential rules and best practices for PyRevit development with a focus on code structure, debugging, WPF integration, IronPython 2.7 practices, and managing scopes and events for WPF windows.  
+This Markdown file outlines the essential rules and best practices for PyRevit development with a focus on code structure, debugging, WPF integration, IronPython 2.7 practices, managing scopes and events for WPF windows, and script reloading requirements.  

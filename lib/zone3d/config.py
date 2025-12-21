@@ -22,7 +22,11 @@ def serialize_config(config_dict):
     """
     serialized = config_dict.copy()
     
+    # Special marker for 3D Zone filter
+    THREE_D_ZONE_MARKER = "3DZONE_FILTER"
+    
     # Convert source_categories from BuiltInCategory to int
+    # Special marker (string) is preserved as-is
     if "source_categories" in serialized:
         serialized["source_categories"] = [
             int(cat) if isinstance(cat, BuiltInCategory) else cat
@@ -49,12 +53,19 @@ def deserialize_config(config_dict):
     """
     deserialized = config_dict.copy()
     
+    # Special marker for 3D Zone filter
+    THREE_D_ZONE_MARKER = "3DZONE_FILTER"
+    
     # Convert source_categories from int to BuiltInCategory
     if "source_categories" in deserialized:
         converted_cats = []
         for cat in deserialized["source_categories"]:
             # If it's already a BuiltInCategory, keep it
             if isinstance(cat, BuiltInCategory):
+                converted_cats.append(cat)
+            # If it's the special marker, keep it as string
+            # Check both basestring and direct string comparison for IronPython compatibility
+            elif (isinstance(cat, basestring) or isinstance(cat, str) or isinstance(cat, unicode)) and (cat == THREE_D_ZONE_MARKER or str(cat) == THREE_D_ZONE_MARKER):
                 converted_cats.append(cat)
             # Otherwise, try to convert from int
             else:
@@ -81,6 +92,10 @@ def deserialize_config(config_dict):
                     converted_cats.append(cat)
         deserialized["target_filter_categories"] = converted_cats
     
+    # Ensure source_sort_property defaults to "ElementId" if missing (backward compatibility)
+    if "source_sort_property" not in deserialized:
+        deserialized["source_sort_property"] = "ElementId"
+    
     return deserialized
 
 def get_or_create_storage(doc):
@@ -90,7 +105,7 @@ def get_or_create_storage(doc):
         return None
         
     try:
-        logger.info("Searching for 3D Zone settings storage...")
+        logger.debug("Searching for 3D Zone settings storage...")
         data_storages = FilteredElementCollector(doc)\
             .OfClass(ExtensibleStorage.DataStorage)\
             .ToElements()
@@ -101,17 +116,17 @@ def get_or_create_storage(doc):
                 # Check if this storage has our schema
                 entity = ds.GetEntity(Zone3DConfigSchema.schema)
                 if entity.IsValid():
-                    logger.info("Found existing 3D Zone settings storage")
+                    logger.debug("Found existing 3D Zone settings storage")
                     return ds
             except Exception as e:
-                logger.info("Error checking storage entity: {}".format(str(e)))
+                logger.debug("Error checking storage entity: {}".format(str(e)))
                 continue
         
-        logger.info("No existing 3D Zone settings storage found, creating new one...")
+        logger.debug("No existing 3D Zone settings storage found, creating new one...")
         # If not found, create a new one
         with revit.Transaction("Create 3D Zone Settings Storage", doc):
             new_storage = ExtensibleStorage.DataStorage.Create(doc)
-            logger.info("Created new 3D Zone settings storage")
+            logger.debug("Created new 3D Zone settings storage")
             return new_storage
             
     except Exception as e:
@@ -128,18 +143,18 @@ def load_configs(doc):
         # Get storage
         storage = get_or_create_storage(doc)
         if not storage:
-            logger.info("No storage found, returning empty config list")
+            logger.debug("No storage found, returning empty config list")
             return []
             
         # Load configurations
         schema = Zone3DConfigSchema(storage)
         if not schema.is_valid:
-            logger.info("Invalid 3D Zone schema")
+            logger.debug("Invalid 3D Zone schema")
             return []
             
         pickled_configs = schema.get("pickled_configs")
         if not pickled_configs:
-            logger.info("No configurations found in storage")
+            logger.debug("No configurations found in storage")
             return []
             
         # Decode and unpickle
@@ -165,28 +180,28 @@ def load_configs(doc):
             
             # If old format detected, serialize then deserialize
             if needs_serialization:
-                logger.info("Detected old format with BuiltInCategory objects, converting...")
+                logger.debug("Detected old format with BuiltInCategory objects, converting...")
                 raw_configs = [serialize_config(cfg) for cfg in raw_configs]
             
             # Deserialize BuiltInCategory enums (convert int back to BuiltInCategory)
             configs = [deserialize_config(cfg) for cfg in raw_configs]
-            logger.info("Successfully loaded {} configurations".format(len(configs)))
+            logger.debug("Successfully loaded {} configurations".format(len(configs)))
             
             # Pretty print configs for debugging
             for i, cfg in enumerate(configs):
-                logger.info("Configuration {}:".format(i + 1))
-                logger.info("  ID: {}".format(cfg.get("id", "N/A")))
-                logger.info("  Name: {}".format(cfg.get("name", "N/A")))
-                logger.info("  Order: {}".format(cfg.get("order", "N/A")))
-                logger.info("  Enabled: {}".format(cfg.get("enabled", False)))
+                logger.debug("Configuration {}:".format(i + 1))
+                logger.debug("  ID: {}".format(cfg.get("id", "N/A")))
+                logger.debug("  Name: {}".format(cfg.get("name", "N/A")))
+                logger.debug("  Order: {}".format(cfg.get("order", "N/A")))
+                logger.debug("  Enabled: {}".format(cfg.get("enabled", False)))
                 source_cats = cfg.get("source_categories", [])
-                logger.info("  Source Categories: {}".format([str(cat) for cat in source_cats]))
-                logger.info("  Source Params: {}".format(cfg.get("source_params", [])))
-                logger.info("  Target Params: {}".format(cfg.get("target_params", [])))
+                logger.debug("  Source Categories: {}".format([str(cat) for cat in source_cats]))
+                logger.debug("  Source Params: {}".format(cfg.get("source_params", [])))
+                logger.debug("  Target Params: {}".format(cfg.get("target_params", [])))
                 target_filter = cfg.get("target_filter_categories", [])
                 if target_filter:
-                    logger.info("  Target Filter Categories: {}".format([str(cat) for cat in target_filter]))
-                logger.info("")
+                    logger.debug("  Target Filter Categories: {}".format([str(cat) for cat in target_filter]))
+                logger.debug("")
             
             return configs
         except Exception as e:
@@ -195,13 +210,13 @@ def load_configs(doc):
             
             # Check if it's the BuiltInCategory serialization error
             if "BuiltInCategory" in error_msg or "unknown serialization format" in error_msg.lower():
-                logger.info("Detected corrupted configuration data with BuiltInCategory objects.")
-                logger.info("Attempting to clear corrupted configuration data...")
+                logger.debug("Detected corrupted configuration data with BuiltInCategory objects.")
+                logger.debug("Attempting to clear corrupted configuration data...")
                 try:
                     with revit.Transaction("Clear Corrupted 3D Zone Configurations", doc):
                         with Zone3DConfigSchema(storage) as entity:
                             entity.set("pickled_configs", "")
-                    logger.info("Cleared corrupted configuration data. Please recreate configurations.")
+                    logger.debug("Cleared corrupted configuration data. Please recreate configurations.")
                 except Exception as clear_error:
                     logger.error("Failed to clear corrupted data: {}".format(str(clear_error)))
             return []
@@ -253,7 +268,7 @@ def save_configs(doc, config_list):
                     # Save configurations
                     entity.set("pickled_configs", encoded_data)
                     
-            logger.info("Saved {} configurations to 3D Zone storage".format(len(config_list)))
+            logger.debug("Saved {} configurations to 3D Zone storage".format(len(config_list)))
             return True
         except Exception as e:
             logger.error("Error pickling configurations: {}".format(str(e)))
@@ -325,15 +340,15 @@ def delete_config(doc, config_id):
     return save_configs(doc, configs)
 
 def get_enabled_configs(doc):
-    """Get all enabled configurations sorted by order.
+    """Get all enabled configurations in source order.
     
     Args:
         doc: The Revit document
         
     Returns:
-        list: List of enabled configurations sorted by order
+        list: List of enabled configurations in source order
     """
     configs = load_configs(doc)
     enabled = [c for c in configs if c.get("enabled", False)]
-    return sorted(enabled, key=lambda x: x.get("order", 999))
+    return enabled
 

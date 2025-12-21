@@ -69,12 +69,21 @@ HOST_APP.app.DocumentOpening += \
         doc_opening_handler
     )
 
-# =============================================================================
-# SWITCHBACK API - MOVED TO pyValidator.extension
-# =============================================================================
-# The Switchback API code below has been moved to:
-#   pyValidator.extension/startup_switchback.py
-# 
-# This prevents route conflicts and makes the pyValidator extension self-contained.
-# The pyByggstyrning extension now only handles MMI panel cloning.
-# =============================================================================
+# Register IFC export handler for 3D Zone parameter mapping
+try:
+    import sys
+    import os.path as op
+    # Add lib path for zone3d import
+    extension_dir = op.dirname(op.abspath(__file__))
+    lib_path = op.join(extension_dir, 'lib')
+    if lib_path not in sys.path:
+        sys.path.insert(0, lib_path)
+    
+    from zone3d import ifc_export
+    if ifc_export.register_ifc_export_handler():
+        pass
+    else:
+        script_logger.warning("Failed to register 3D Zone IFC export handler")
+except Exception as e:
+    script_logger.warning("Could not register 3D Zone IFC export handler: {}".format(str(e)))
+
