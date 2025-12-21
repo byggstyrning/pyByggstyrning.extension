@@ -237,10 +237,15 @@ class StreamBIMImporterUI(forms.WPFWindow):
         # Initialize regions data
         self.regions = []
         self.selected_region = None
+        
+        # Initialize MFA state
+        self.mfa_session = None
+        self.mfa_username = None
 
         # Set up event handlers
         self.loginButton.Click += self.login_button_click
         self.logoutButton.Click += self.logout_button_click
+        self.verifyMfaButton.Click += self.verify_mfa_button_click
         self.serverRegionComboBox.SelectionChanged += self.server_region_selection_changed
         self.selectProjectButton.Click += self.select_project_button_click
         self.selectChecklistButton.Click += self.select_checklist_button_click
@@ -400,6 +405,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.passwordBox.IsEnabled = False
         self.serverRegionComboBox.IsEnabled = False
         self.customUrlTextBox.IsEnabled = False
+        self.mfaCodeTextBox.IsEnabled = False
         
         # Update buttons
         self.loginButton.IsEnabled = False
@@ -493,7 +499,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
         
         # Set server URL and login
         self.streambim_client.base_url = server_url
-        success = self.streambim_client.login(username, password)
+        login_result = self.streambim_client.login(username, password)
         
         # Hide busy indicator
         try:
@@ -501,13 +507,98 @@ class StreamBIMImporterUI(forms.WPFWindow):
         except:
             pass
         
-        if success:
+        # Check if login result is a dict (new MFA-enabled login)
+        if isinstance(login_result, dict):
+            if login_result.get('success'):
+                # Login successful without MFA
+                self.on_login_success()
+            elif login_result.get('requires_mfa'):
+                # MFA challenge required
+                self.mfa_session = login_result.get('session')
+                self.mfa_username = username
+                self.streambim_client.mfa_session = self.mfa_session
+                
+                # Show MFA input fields
+                self.mfaCodeLabel.Visibility = Visibility.Visible
+                self.mfaCodeTextBox.Visibility = Visibility.Visible
+                self.verifyMfaButton.Visibility = Visibility.Visible
+                self.loginButton.Visibility = Visibility.Collapsed
+                
+                self.update_status("MFA code required. Please enter your verification code.")
+                self.loginStatusTextBlock.Text = "MFA verification required. Enter your code below."
+                self.mfaCodeTextBox.Focus()
+            else:
+                # Login failed
+                error_msg = self.streambim_client.last_error or "Login failed. Please check your credentials."
+                self.update_status(error_msg)
+                self.loginStatusTextBlock.Text = "Login failed: " + error_msg
+                self.loginButton.IsEnabled = True
+        else:
+            # Legacy boolean return (for backward compatibility)
+            if login_result:
+                self.on_login_success()
+            else:
+                error_msg = self.streambim_client.last_error or "Login failed. Please check your credentials."
+                self.update_status(error_msg)
+                self.loginStatusTextBlock.Text = "Login failed: " + error_msg
+                self.loginButton.IsEnabled = True
+    
+    def verify_mfa_button_click(self, sender, args):
+        """Handle MFA verification button click event."""
+        mfa_code = self.mfaCodeTextBox.Text.strip()
+        
+        if not mfa_code:
+            self.update_status("Please enter your MFA verification code")
+            return
+        
+        if not self.mfa_session or not self.mfa_username:
+            self.update_status("MFA session expired. Please login again.")
+            return
+        
+        # Update UI
+        self.verifyMfaButton.IsEnabled = False
+        self.update_status("Verifying MFA code...")
+        
+        # Show busy indicator during verification
+        try:
+            self.busyIndicator.IsBusy = True
+            self.busyIndicator.BusyContent = "Verifying MFA code..."
+        except:
+            pass
+        
+        # Verify MFA code
+        verify_result = self.streambim_client.verify_mfa(self.mfa_username, self.mfa_session, mfa_code)
+        
+        # Hide busy indicator
+        try:
+            self.busyIndicator.IsBusy = False
+        except:
+            pass
+        
+        if verify_result.get('success'):
+            # MFA verification successful
+            self.mfa_session = None
+            self.mfa_username = None
+            self.streambim_client.mfa_session = None
+            
+            # Hide MFA input fields
+            self.mfaCodeLabel.Visibility = Visibility.Collapsed
+            self.mfaCodeTextBox.Visibility = Visibility.Collapsed
+            self.verifyMfaButton.Visibility = Visibility.Collapsed
+            self.loginButton.Visibility = Visibility.Visible
+            
+            # Clear MFA code
+            self.mfaCodeTextBox.Text = ""
+            
             self.on_login_success()
         else:
-            error_msg = self.streambim_client.last_error or "Login failed. Please check your credentials."
+            # MFA verification failed
+            error_msg = self.streambim_client.last_error or "Invalid MFA code. Please try again."
             self.update_status(error_msg)
-            self.loginStatusTextBlock.Text = "Login failed: " + error_msg
-            self.loginButton.IsEnabled = True
+            self.loginStatusTextBlock.Text = "MFA verification failed: " + error_msg
+            self.verifyMfaButton.IsEnabled = True
+            self.mfaCodeTextBox.Text = ""  # Clear the code for retry
+            self.mfaCodeTextBox.Focus()
     
     def logout_button_click(self, sender, args):
         """Handle logout button click event."""
@@ -535,6 +626,18 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.passwordBox.IsEnabled = True
         self.serverRegionComboBox.IsEnabled = True
         self.customUrlTextBox.IsEnabled = True
+        self.mfaCodeTextBox.IsEnabled = True
+        
+        # Hide MFA fields
+        self.mfaCodeLabel.Visibility = Visibility.Collapsed
+        self.mfaCodeTextBox.Visibility = Visibility.Collapsed
+        self.verifyMfaButton.Visibility = Visibility.Collapsed
+        self.loginButton.Visibility = Visibility.Visible
+        
+        # Clear MFA state
+        self.mfa_session = None
+        self.mfa_username = None
+        self.mfaCodeTextBox.Text = ""
         
         # Clear data
         self.projects.Clear()

@@ -375,10 +375,35 @@ class ConfigEditorUI(forms.WPFWindow):
             self.update_status("Logging in to StreamBIM...")
             
             # Login to StreamBIM
-            login_success = self.api_client.login(username, password)
+            login_result = self.api_client.login(username, password)
+            
+            # Handle new MFA-enabled login response (dict) or legacy boolean
+            login_success = False
+            if isinstance(login_result, dict):
+                if login_result.get('success'):
+                    login_success = True
+                    self.update_status("Logged in successfully")
+                elif login_result.get('requires_mfa'):
+                    # MFA required - show message
+                    MessageBox.Show(
+                        "This account requires MFA (Multi-Factor Authentication).\n\nPlease use the Checklist Importer tool to log in with MFA support.",
+                        "MFA Required",
+                        MessageBoxButton.OK
+                    )
+                    self.update_status("MFA required. Please use Checklist Importer tool.")
+                    return False
+                else:
+                    self.update_status("Login failed: {}".format(self.api_client.last_error))
+                    return False
+            elif login_result:
+                # Legacy boolean success
+                login_success = True
+                self.update_status("Logged in successfully")
+            else:
+                self.update_status("Login failed: {}".format(self.api_client.last_error))
+                return False
             
             if login_success:
-                self.update_status("Logged in successfully")
                 
                 # Get projects
                 projects = self.api_client.get_projects()

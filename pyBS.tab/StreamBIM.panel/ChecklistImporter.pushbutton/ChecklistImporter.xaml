@@ -26,6 +26,8 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
@@ -45,12 +47,16 @@
                     <TextBlock Text="Password:" Grid.Row="3" Grid.Column="0" VerticalAlignment="Center" Margin="0,10,0,10"/>
                     <PasswordBox x:Name="passwordBox" Grid.Row="3" Grid.Column="1" Margin="0,10,0,10"/>
 
-                    <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal" Margin="0,10,0,10">
+                    <TextBlock x:Name="mfaCodeLabel" Text="MFA Code:" Grid.Row="4" Grid.Column="0" VerticalAlignment="Center" Margin="0,10,0,10" Visibility="Collapsed"/>
+                    <xctk:WatermarkTextBox x:Name="mfaCodeTextBox" Grid.Row="4" Grid.Column="1" Margin="0,10,0,10" Watermark="Enter MFA verification code" Visibility="Collapsed"/>
+
+                    <StackPanel Grid.Row="5" Grid.Column="1" Orientation="Horizontal" Margin="0,10,0,10">
                         <Button x:Name="loginButton" Content="Login" Width="100" Height="30" Margin="0,0,10,0"/>
+                        <Button x:Name="verifyMfaButton" Content="Verify MFA" Width="100" Height="30" Margin="0,0,10,0" Visibility="Collapsed"/>
                         <Button x:Name="logoutButton" Content="Logout" Width="100" Height="30" IsEnabled="False"/>
                     </StackPanel>
                     
-                    <TextBlock x:Name="loginStatusTextBlock" Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,10,0,0" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="loginStatusTextBlock" Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,10,0,0" TextWrapping="Wrap"/>
                 </Grid>
             </TabItem>
 

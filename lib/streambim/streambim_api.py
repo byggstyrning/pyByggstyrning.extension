@@ -206,6 +206,7 @@ class StreamBIMClient:
         self.projects = []
         self.current_project = None
         self.last_error = None
+        self.mfa_session = None  # Store MFA session token
         
         # Load saved tokens if they exist
         self.token_file = os.path.join(os.getenv('APPDATA'), 'pyBS', 'tokens.json')
@@ -255,9 +256,18 @@ class StreamBIMClient:
             print("Error clearing tokens: {}".format(str(e)))
         
     def login(self, username, password):
-        """Login to StreamBIM and get authentication token"""
+        """Login to StreamBIM and get authentication token.
+        
+        Returns:
+            dict with keys:
+            - 'success': bool - True if login successful
+            - 'requires_mfa': bool - True if MFA challenge is required
+            - 'session': str - MFA session token if requires_mfa is True
+            - 'result': str - Response result field
+        """
         try:
-            url = "{}/mgw/api/v2/login".format(self.base_url)
+            # Use new auth endpoint
+            url = "{}/auth/v1/login".format(self.base_url)
             data = json.dumps({
                 "username": username,
                 "password": password
@@ -275,30 +285,156 @@ class StreamBIMClient:
             response = urllib2.urlopen(req)
             result = json.loads(response.read())
 
-            if 'idToken' in result:
+            # Check for MFA challenge
+            if result.get('result') == 'CHALLENGE_REQUESTED' and result.get('session'):
+                self.last_error = None
+                return {
+                    'success': False,
+                    'requires_mfa': True,
+                    'session': result.get('session'),
+                    'result': result.get('result')
+                }
+            
+            # Check for successful login with tokens
+            if 'idToken' in result or 'accessToken' in result:
+                self.accessToken = result.get('accessToken')
+                self.idToken = result.get('idToken')
+                self.username = username  # Store the username
+                self.save_tokens()
+                self.last_error = None
+                return {
+                    'success': True,
+                    'requires_mfa': False,
+                    'session': None,
+                    'result': result.get('result', 'SUCCESS')
+                }
+            
+            self.last_error = "No token in response"
+            return {
+                'success': False,
+                'requires_mfa': False,
+                'session': None,
+                'result': result.get('result', 'UNKNOWN')
+            }
+        except urllib2.HTTPError as e:
+            error_body = ""
+            try:
+                error_body = e.read()
+                # Try to parse error response for MFA challenge
+                error_data = json.loads(error_body)
+                if error_data.get('result') == 'CHALLENGE_REQUESTED' and error_data.get('session'):
+                    self.last_error = None
+                    return {
+                        'success': False,
+                        'requires_mfa': True,
+                        'session': error_data.get('session'),
+                        'result': error_data.get('result')
+                    }
+            except:
+                pass
+            
+            error_message = "HTTP Error: {} - {}".format(e.code, e.reason)
+            if e.code == 401:
+                error_message = "Invalid username or password"
+            elif e.code == 404:
+                error_message = "Server URL not found"
+                
+            self.last_error = error_message
+            logger.error("Login error: {}".format(error_message))
+            return {
+                'success': False,
+                'requires_mfa': False,
+                'session': None,
+                'result': 'ERROR'
+            }
+        except Exception as e:
+            self.last_error = str(e)
+            logger.error("Login error: {}".format(str(e)))
+            return {
+                'success': False,
+                'requires_mfa': False,
+                'session': None,
+                'result': 'ERROR'
+            }
+    
+    def verify_mfa(self, username, session, code):
+        """Verify MFA code and complete login.
+        
+        Args:
+            username: Username for the account
+            session: MFA session token from login response
+            code: MFA verification code
+            
+        Returns:
+            dict with keys:
+            - 'success': bool - True if verification successful
+            - 'accessToken': str - Access token if successful
+            - 'idToken': str - ID token if successful
+        """
+        try:
+            url = "{}/auth/v1/mfa/verify".format(self.base_url)
+            data = json.dumps({
+                "username": username,
+                "session": session,
+                "code": code
+            })
+            
+            headers = {
+                "Accept": "application/json",
+                "Content-Type": "application/json; charset=utf-8"
+            }
+            
+            req = urllib2.Request(url, data=data.encode('utf-8'))
+            for key, value in headers.items():
+                req.add_header(key, value)
+            
+            response = urllib2.urlopen(req)
+            result = json.loads(response.read())
+
+            if 'idToken' in result and 'accessToken' in result:
                 self.accessToken = result['accessToken']
                 self.idToken = result['idToken']
                 self.username = username  # Store the username
                 self.save_tokens()
                 self.last_error = None
-                return True
+                return {
+                    'success': True,
+                    'accessToken': result['accessToken'],
+                    'idToken': result['idToken']
+                }
             
-            self.last_error = "No token in response"
-            return False
+            self.last_error = "MFA verification failed: No tokens in response"
+            return {
+                'success': False,
+                'accessToken': None,
+                'idToken': None
+            }
         except urllib2.HTTPError as e:
             error_message = "HTTP Error: {} - {}".format(e.code, e.reason)
             if e.code == 401:
-                error_message = "Invalid username or password: " + e.reason + " " + e.read()
+                try:
+                    error_data = json.loads(e.read())
+                    error_message = error_data.get('message', 'Invalid MFA code')
+                except:
+                    error_message = "Invalid MFA code"
             elif e.code == 404:
-                error_message = "Server URL not found"
+                error_message = "MFA verification endpoint not found"
                 
             self.last_error = error_message
-            print("Login error: {}".format(error_message))
-            return False
+            logger.error("MFA verification error: {}".format(error_message))
+            return {
+                'success': False,
+                'accessToken': None,
+                'idToken': None
+            }
         except Exception as e:
             self.last_error = str(e)
-            print("Login error: {}".format(str(e)))
-            return False
+            logger.error("MFA verification error: {}".format(str(e)))
+            return {
+                'success': False,
+                'accessToken': None,
+                'idToken': None
+            }
     
     def _decode_utf8(self, data):
         """Recursively decode UTF-8 strings in the API response."""
