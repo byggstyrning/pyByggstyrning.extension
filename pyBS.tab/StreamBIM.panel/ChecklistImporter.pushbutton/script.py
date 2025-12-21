@@ -44,21 +44,6 @@ clr.AddReference("WindowsBase")
 clr.AddReference('RevitAPI')
 clr.AddReference('RevitAPIUI')
 
-# Try to add Xceed WPF Toolkit reference
-# The DLL should be placed in the lib folder or system path
-try:
-    # Try to load from lib folder first
-    xceed_dll_path = op.join(lib_path, 'Xceed.Wpf.Toolkit.dll')
-    if op.exists(xceed_dll_path):
-        clr.AddReferenceToFileAndPath(xceed_dll_path)
-        logger.debug("Loaded Xceed Toolkit from lib folder")
-    else:
-        # Try to load from system (if installed globally)
-        clr.AddReference("Xceed.Wpf.Toolkit")
-        logger.debug("Loaded Xceed Toolkit from system")
-except Exception as e:
-    logger.warning("Could not load Xceed WPF Toolkit: {}. Some features may not be available.".format(str(e)))
-
 from Autodesk.Revit.DB import *
 
 from System import EventHandler
@@ -212,6 +197,9 @@ class StreamBIMImporterUI(forms.WPFWindow):
         # Initialize WPF window
         forms.WPFWindow.__init__(self, 'ChecklistImporter.xaml')
         
+        # Load styles ResourceDictionary
+        self.load_styles()
+        
         # Initialize StreamBIM API client
         self.streambim_client = streambim_api.StreamBIMClient()
                 
@@ -277,15 +265,63 @@ class StreamBIMImporterUI(forms.WPFWindow):
         # Try automatic login
         self.try_automatic_login()
 
+    def load_styles(self):
+        """Load the common styles ResourceDictionary."""
+        try:
+            import os.path as op
+            script_dir = op.dirname(__file__)
+            panel_dir = op.dirname(script_dir)
+            tab_dir = op.dirname(panel_dir)
+            extension_dir = op.dirname(op.dirname(tab_dir))
+            styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
+            
+            if op.exists(styles_path):
+                from System.Windows import Application
+                from System.Uri import Uri
+                from System.Windows.Markup import XamlReader
+                from System.IO import File
+                
+                # Read XAML content
+                xaml_content = File.ReadAllText(styles_path)
+                
+                # Parse as ResourceDictionary
+                styles_dict = XamlReader.Parse(xaml_content)
+                
+                # Merge into window resources
+                if self.Resources is None:
+                    from System.Windows import ResourceDictionary
+                    self.Resources = ResourceDictionary()
+                
+                # If it's a ResourceDictionary, merge its contents
+                if hasattr(styles_dict, 'Keys'):
+                    for key in styles_dict.Keys:
+                        self.Resources[key] = styles_dict[key]
+                else:
+                    # Try to merge the entire dictionary
+                    self.Resources.MergedDictionaries.Add(styles_dict)
+                    
+                logger.debug("Loaded styles from: {}".format(styles_path))
+        except Exception as e:
+            logger.warning("Could not load styles: {}. Using default styles.".format(str(e)))
+            import traceback
+            logger.debug("Style loading error details: {}".format(traceback.format_exc()))
+
+    def set_busy(self, is_busy, message="Loading..."):
+        """Show or hide the busy overlay indicator."""
+        try:
+            if is_busy:
+                self.busyOverlay.Visibility = Visibility.Visible
+                self.busyTextBlock.Text = message
+            else:
+                self.busyOverlay.Visibility = Visibility.Collapsed
+        except Exception as e:
+            logger.debug("Error setting busy indicator: {}".format(str(e)))
+
     def load_regions(self):
         """Load available StreamBIM regions from the API."""
         try:
             # Show busy indicator during region loading
-            try:
-                self.busyIndicator.IsBusy = True
-                self.busyIndicator.BusyContent = "Loading regions..."
-            except:
-                pass
+            self.set_busy(True, "Loading regions...")
             
             # Fetch regions from API
             url = "https://global.streambim.com/regions.json"
@@ -334,10 +370,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
             self.serverRegionComboBox.SelectedIndex = default_index
             
             # Hide busy indicator
-            try:
-                self.busyIndicator.IsBusy = False
-            except:
-                pass
+            self.set_busy(False)
             
             logger.debug("Loaded {} regions".format(len(self.regions)))
             
@@ -352,10 +385,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
             self.serverRegionComboBox.SelectedIndex = 0
             
             # Hide busy indicator
-            try:
-                self.busyIndicator.IsBusy = False
-            except:
-                pass
+            self.set_busy(False)
 
     def server_region_selection_changed(self, sender, args):
         """Handle server region ComboBox selection change."""
@@ -419,19 +449,12 @@ class StreamBIMImporterUI(forms.WPFWindow):
         # Get projects
         self.update_status("Retrieving projects...")
         # Show busy indicator during project retrieval
-        try:
-            self.busyIndicator.IsBusy = True
-            self.busyIndicator.BusyContent = "Retrieving projects..."
-        except:
-            pass
+        self.set_busy(True, "Retrieving projects...")
         
         projects = self.streambim_client.get_projects()
         
         # Hide busy indicator
-        try:
-            self.busyIndicator.IsBusy = False
-        except:
-            pass
+        self.set_busy(False)
         if projects:
             self.projects.Clear()
             saved_project = None
@@ -491,21 +514,14 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.update_status("Logging in to StreamBIM...")
         
         # Show busy indicator during login
-        try:
-            self.busyIndicator.IsBusy = True
-            self.busyIndicator.BusyContent = "Logging in..."
-        except:
-            pass  # BusyIndicator might not be available if Xceed DLL not loaded
+        self.set_busy(True, "Logging in...")
         
         # Set server URL and login
         self.streambim_client.base_url = server_url
         login_result = self.streambim_client.login(username, password)
         
         # Hide busy indicator
-        try:
-            self.busyIndicator.IsBusy = False
-        except:
-            pass
+        self.set_busy(False)
         
         # Check if login result is a dict (new MFA-enabled login)
         if isinstance(login_result, dict):
@@ -560,20 +576,13 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.update_status("Verifying MFA code...")
         
         # Show busy indicator during verification
-        try:
-            self.busyIndicator.IsBusy = True
-            self.busyIndicator.BusyContent = "Verifying MFA code..."
-        except:
-            pass
+        self.set_busy(True, "Verifying MFA code...")
         
         # Verify MFA code
         verify_result = self.streambim_client.verify_mfa(self.mfa_username, self.mfa_session, mfa_code)
         
         # Hide busy indicator
-        try:
-            self.busyIndicator.IsBusy = False
-        except:
-            pass
+        self.set_busy(False)
         
         if verify_result.get('success'):
             # MFA verification successful
@@ -660,11 +669,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.update_status("Selecting project: " + selected_project.Name)
         
         # Show busy indicator during checklist retrieval
-        try:
-            self.busyIndicator.IsBusy = True
-            self.busyIndicator.BusyContent = "Retrieving checklists..."
-        except:
-            pass
+        self.set_busy(True, "Retrieving checklists...")
         
         # Save project ID
         if self.save_project_id(selected_project.Id):
@@ -677,10 +682,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
         checklists = self.streambim_client.get_checklists()
         
         # Hide busy indicator
-        try:
-            self.busyIndicator.IsBusy = False
-        except:
-            pass
+        self.set_busy(False)
         if checklists:
             self.checklists.Clear()
             self.all_checklists = []  # Clear all checklists list
@@ -719,11 +721,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.update_status("Loading checklist preview...")
         
         # Show busy indicator during checklist preview loading
-        try:
-            self.busyIndicator.IsBusy = True
-            self.busyIndicator.BusyContent = "Loading checklist preview..."
-        except:
-            pass
+        self.set_busy(True, "Loading checklist preview...")
         
         # Update selected checklist text
         self.selectedChecklistTextBlock.Text = selected_checklist.Name
@@ -732,10 +730,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
         checklist_items = self.streambim_client.get_checklist_items(selected_checklist.Id, limit=5)
         
         # Hide busy indicator
-        try:
-            self.busyIndicator.IsBusy = False
-        except:
-            pass
+        self.set_busy(False)
         if checklist_items:
             self.checklist_items = checklist_items
             self.selected_checklist_id = selected_checklist.Id  # Store for later use
@@ -869,11 +864,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.update_status("Loading all checklist items...")
         
         # Show busy indicator during initial loading
-        try:
-            self.busyIndicator.IsBusy = True
-            self.busyIndicator.BusyContent = "Importing checklist, please wait..."
-        except:
-            pass
+        self.set_busy(True, "Importing checklist, please wait...")
         
         # Get all checklist items
         all_checklist_items = self.streambim_client.get_checklist_items(self.selected_checklist_id, streambim_prop, limit=0)
@@ -884,10 +875,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
             self.progressBar.Visibility = Visibility.Collapsed
             self.progressText.Visibility = Visibility.Collapsed
             # Hide busy indicator
-            try:
-                self.busyIndicator.IsBusy = False
-            except:
-                pass
+            self.set_busy(False)
             return
             
         self.progressBar.Value = 25
@@ -1101,10 +1089,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
                 logger.error("Error during import: {}".format(str(e)))
                 self.update_status("Error during import: {}".format(str(e)))
                 # Hide busy indicator on error
-                try:
-                    self.busyIndicator.IsBusy = False
-                except:
-                    pass
+                self.set_busy(False)
                 return
         
         # Update UI
@@ -1115,10 +1100,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.progressText.Visibility = Visibility.Collapsed
         
         # Hide busy indicator
-        try:
-            self.busyIndicator.IsBusy = False
-        except:
-            pass
+        self.set_busy(False)
     
     def isolate_button_click(self, sender, args):
         """Handle isolate button click."""

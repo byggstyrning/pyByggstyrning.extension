@@ -48,21 +48,6 @@ clr.AddReference("WindowsBase")
 clr.AddReference('RevitAPI')
 clr.AddReference('System.Windows.Forms')
 
-# Try to add Xceed WPF Toolkit reference
-# The DLL should be placed in the lib folder or system path
-try:
-    # Try to load from lib folder first
-    xceed_dll_path = op.join(lib_path, 'Xceed.Wpf.Toolkit.dll')
-    if op.exists(xceed_dll_path):
-        clr.AddReferenceToFileAndPath(xceed_dll_path)
-        logger.debug("Loaded Xceed Toolkit from lib folder")
-    else:
-        # Try to load from system (if installed globally)
-        clr.AddReference("Xceed.Wpf.Toolkit")
-        logger.debug("Loaded Xceed Toolkit from system")
-except Exception as e:
-    logger.warning("Could not load Xceed WPF Toolkit: {}. Some features may not be available.".format(str(e)))
-
 from Autodesk.Revit.DB import *
 
 from System import EventHandler, Action
@@ -169,6 +154,9 @@ class ConfigEditorUI(forms.WPFWindow):
         # Initialize WPF window
         forms.WPFWindow.__init__(self, 'ConfigEditor.xaml')
         
+        # Load styles ResourceDictionary
+        self.load_styles()
+        
         # Initialize StreamBIM API client
         self.streambim_client = streambim_api.StreamBIMClient()
 
@@ -205,6 +193,59 @@ class ConfigEditorUI(forms.WPFWindow):
         # Try automatic login
         self.try_automatic_login()
     
+    def load_styles(self):
+        """Load the common styles ResourceDictionary."""
+        try:
+            import os.path as op
+            script_dir = op.dirname(__file__)
+            stack_dir = op.dirname(script_dir)
+            panel_dir = op.dirname(stack_dir)
+            tab_dir = op.dirname(panel_dir)
+            extension_dir = op.dirname(tab_dir)
+            styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
+            
+            if op.exists(styles_path):
+                from System.Windows import Application
+                from System.Uri import Uri
+                from System.Windows.Markup import XamlReader
+                from System.IO import File
+                
+                # Read XAML content
+                xaml_content = File.ReadAllText(styles_path)
+                
+                # Parse as ResourceDictionary
+                styles_dict = XamlReader.Parse(xaml_content)
+                
+                # Merge into window resources
+                if self.Resources is None:
+                    from System.Windows import ResourceDictionary
+                    self.Resources = ResourceDictionary()
+                
+                # If it's a ResourceDictionary, merge its contents
+                if hasattr(styles_dict, 'Keys'):
+                    for key in styles_dict.Keys:
+                        self.Resources[key] = styles_dict[key]
+                else:
+                    # Try to merge the entire dictionary
+                    self.Resources.MergedDictionaries.Add(styles_dict)
+                    
+                logger.debug("Loaded styles from: {}".format(styles_path))
+        except Exception as e:
+            logger.warning("Could not load styles: {}. Using default styles.".format(str(e)))
+            import traceback
+            logger.debug("Style loading error details: {}".format(traceback.format_exc()))
+    
+    def set_busy(self, is_busy, message="Loading..."):
+        """Show or hide the busy overlay indicator."""
+        try:
+            if is_busy:
+                self.busyOverlay.Visibility = Visibility.Visible
+                self.busyTextBlock.Text = message
+            else:
+                self.busyOverlay.Visibility = Visibility.Collapsed
+        except Exception as e:
+            logger.debug("Error setting busy indicator: {}".format(str(e)))
+    
     def try_automatic_login(self):
         """Attempt to automatically log in using saved tokens."""
         # Load tokens from file first
@@ -234,11 +275,7 @@ class ConfigEditorUI(forms.WPFWindow):
     def load_configurations(self):
         """Load all mapping configurations from storage."""
         # Show busy indicator during loading
-        try:
-            self.busyIndicator.IsBusy = True
-            self.busyIndicator.BusyContent = "Loading configurations..."
-        except:
-            pass
+        self.set_busy(True, "Loading configurations...")
         
         try:
             # Clear existing configurations
@@ -281,10 +318,7 @@ class ConfigEditorUI(forms.WPFWindow):
             self.update_status("Error loading configurations: {}".format(str(e)))
         finally:
             # Hide busy indicator
-            try:
-                self.busyIndicator.IsBusy = False
-            except:
-                pass
+            self.set_busy(False)
 
     def run_all_button_click(self, sender, args):
         """Process all configs when the Run All button is clicked."""
@@ -466,11 +500,7 @@ class ConfigEditorUI(forms.WPFWindow):
         self.update_status("Starting batch import process...")
         
         # Show busy indicator during batch import
-        try:
-            self.busyIndicator.IsBusy = True
-            self.busyIndicator.BusyContent = "Processing batch import..."
-        except:
-            pass
+        self.set_busy(True, "Processing batch import...")
         
         try:
             # Update main progress bar max
@@ -550,10 +580,7 @@ class ConfigEditorUI(forms.WPFWindow):
         finally:
             logger.debug("Batch import process completed, resetting UI state")
             # Hide busy indicator
-            try:
-                self.busyIndicator.IsBusy = False
-            except:
-                pass
+            self.set_busy(False)
             # Re-enable buttons
             self.runAllButton.IsEnabled = True
             self.runSelectedButton.IsEnabled = True
