@@ -48,6 +48,21 @@ clr.AddReference("WindowsBase")
 clr.AddReference('RevitAPI')
 clr.AddReference('System.Windows.Forms')
 
+# Try to add Xceed WPF Toolkit reference
+# The DLL should be placed in the lib folder or system path
+try:
+    # Try to load from lib folder first
+    xceed_dll_path = op.join(lib_path, 'Xceed.Wpf.Toolkit.dll')
+    if op.exists(xceed_dll_path):
+        clr.AddReferenceToFileAndPath(xceed_dll_path)
+        logger.debug("Loaded Xceed Toolkit from lib folder")
+    else:
+        # Try to load from system (if installed globally)
+        clr.AddReference("Xceed.Wpf.Toolkit")
+        logger.debug("Loaded Xceed Toolkit from system")
+except Exception as e:
+    logger.warning("Could not load Xceed WPF Toolkit: {}. Some features may not be available.".format(str(e)))
+
 from Autodesk.Revit.DB import *
 
 from System import EventHandler, Action
@@ -218,6 +233,13 @@ class ConfigEditorUI(forms.WPFWindow):
         
     def load_configurations(self):
         """Load all mapping configurations from storage."""
+        # Show busy indicator during loading
+        try:
+            self.busyIndicator.IsBusy = True
+            self.busyIndicator.BusyContent = "Loading configurations..."
+        except:
+            pass
+        
         try:
             # Clear existing configurations
             self.configs.Clear()
@@ -257,6 +279,12 @@ class ConfigEditorUI(forms.WPFWindow):
             import traceback
             logger.error("Stack trace: {}".format(traceback.format_exc()))
             self.update_status("Error loading configurations: {}".format(str(e)))
+        finally:
+            # Hide busy indicator
+            try:
+                self.busyIndicator.IsBusy = False
+            except:
+                pass
 
     def run_all_button_click(self, sender, args):
         """Process all configs when the Run All button is clicked."""
@@ -412,6 +440,13 @@ class ConfigEditorUI(forms.WPFWindow):
         logger.debug("Starting batch import process for {} configurations".format(len(configs)))
         self.update_status("Starting batch import process...")
         
+        # Show busy indicator during batch import
+        try:
+            self.busyIndicator.IsBusy = True
+            self.busyIndicator.BusyContent = "Processing batch import..."
+        except:
+            pass
+        
         try:
             # Update main progress bar max
             self.mainProgressBar.Maximum = len(configs)
@@ -489,6 +524,11 @@ class ConfigEditorUI(forms.WPFWindow):
             
         finally:
             logger.debug("Batch import process completed, resetting UI state")
+            # Hide busy indicator
+            try:
+                self.busyIndicator.IsBusy = False
+            except:
+                pass
             # Re-enable buttons
             self.runAllButton.IsEnabled = True
             self.runSelectedButton.IsEnabled = True

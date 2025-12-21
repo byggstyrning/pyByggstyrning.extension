@@ -42,6 +42,22 @@ clr.AddReference("PresentationCore")
 clr.AddReference("WindowsBase")
 clr.AddReference('RevitAPI')
 clr.AddReference('RevitAPIUI')
+
+# Try to add Xceed WPF Toolkit reference
+# The DLL should be placed in the lib folder or system path
+try:
+    # Try to load from lib folder first
+    xceed_dll_path = op.join(lib_path, 'Xceed.Wpf.Toolkit.dll')
+    if op.exists(xceed_dll_path):
+        clr.AddReferenceToFileAndPath(xceed_dll_path)
+        logger.debug("Loaded Xceed Toolkit from lib folder")
+    else:
+        # Try to load from system (if installed globally)
+        clr.AddReference("Xceed.Wpf.Toolkit")
+        logger.debug("Loaded Xceed Toolkit from system")
+except Exception as e:
+    logger.warning("Could not load Xceed WPF Toolkit: {}. Some features may not be available.".format(str(e)))
+
 from Autodesk.Revit.DB import *
 
 from System import EventHandler
@@ -289,7 +305,20 @@ class StreamBIMImporterUI(forms.WPFWindow):
         
         # Get projects
         self.update_status("Retrieving projects...")
+        # Show busy indicator during project retrieval
+        try:
+            self.busyIndicator.IsBusy = True
+            self.busyIndicator.BusyContent = "Retrieving projects..."
+        except:
+            pass
+        
         projects = self.streambim_client.get_projects()
+        
+        # Hide busy indicator
+        try:
+            self.busyIndicator.IsBusy = False
+        except:
+            pass
         if projects:
             self.projects.Clear()
             saved_project = None
@@ -332,9 +361,22 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.loginButton.IsEnabled = False
         self.update_status("Logging in to StreamBIM...")
         
+        # Show busy indicator during login
+        try:
+            self.busyIndicator.IsBusy = True
+            self.busyIndicator.BusyContent = "Logging in..."
+        except:
+            pass  # BusyIndicator might not be available if Xceed DLL not loaded
+        
         # Set server URL and login
         self.streambim_client.base_url = server_url
         success = self.streambim_client.login(username, password)
+        
+        # Hide busy indicator
+        try:
+            self.busyIndicator.IsBusy = False
+        except:
+            pass
         
         if success:
             self.on_login_success()
@@ -390,6 +432,13 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.selectProjectButton.IsEnabled = False
         self.update_status("Selecting project: " + selected_project.Name)
         
+        # Show busy indicator during checklist retrieval
+        try:
+            self.busyIndicator.IsBusy = True
+            self.busyIndicator.BusyContent = "Retrieving checklists..."
+        except:
+            pass
+        
         # Save project ID
         if self.save_project_id(selected_project.Id):
             self.saved_project_id = selected_project.Id
@@ -399,6 +448,12 @@ class StreamBIMImporterUI(forms.WPFWindow):
         
         # Get checklists
         checklists = self.streambim_client.get_checklists()
+        
+        # Hide busy indicator
+        try:
+            self.busyIndicator.IsBusy = False
+        except:
+            pass
         if checklists:
             self.checklists.Clear()
             self.all_checklists = []  # Clear all checklists list
@@ -436,11 +491,24 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.selectChecklistButton.IsEnabled = False
         self.update_status("Loading checklist preview...")
         
+        # Show busy indicator during checklist preview loading
+        try:
+            self.busyIndicator.IsBusy = True
+            self.busyIndicator.BusyContent = "Loading checklist preview..."
+        except:
+            pass
+        
         # Update selected checklist text
         self.selectedChecklistTextBlock.Text = selected_checklist.Name
         
         # Get checklist items (limited for preview)
         checklist_items = self.streambim_client.get_checklist_items(selected_checklist.Id, limit=5)
+        
+        # Hide busy indicator
+        try:
+            self.busyIndicator.IsBusy = False
+        except:
+            pass
         if checklist_items:
             self.checklist_items = checklist_items
             self.selected_checklist_id = selected_checklist.Id  # Store for later use
@@ -573,6 +641,13 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.progressText.Text = "Fetching checklist items..."
         self.update_status("Loading all checklist items...")
         
+        # Show busy indicator during initial loading
+        try:
+            self.busyIndicator.IsBusy = True
+            self.busyIndicator.BusyContent = "Importing checklist, please wait..."
+        except:
+            pass
+        
         # Get all checklist items
         all_checklist_items = self.streambim_client.get_checklist_items(self.selected_checklist_id, streambim_prop, limit=0)
         if not all_checklist_items:
@@ -581,6 +656,11 @@ class StreamBIMImporterUI(forms.WPFWindow):
             self.importButton.IsEnabled = True
             self.progressBar.Visibility = Visibility.Collapsed
             self.progressText.Visibility = Visibility.Collapsed
+            # Hide busy indicator
+            try:
+                self.busyIndicator.IsBusy = False
+            except:
+                pass
             return
             
         self.progressBar.Value = 25
@@ -789,11 +869,16 @@ class StreamBIMImporterUI(forms.WPFWindow):
             # Commit all changes
             t.Commit()
             
-        except Exception as e:
-            t.RollBack()
-            logger.error("Error during import: {}".format(str(e)))
-            self.update_status("Error during import: {}".format(str(e)))
-            return
+            except Exception as e:
+                t.RollBack()
+                logger.error("Error during import: {}".format(str(e)))
+                self.update_status("Error during import: {}".format(str(e)))
+                # Hide busy indicator on error
+                try:
+                    self.busyIndicator.IsBusy = False
+                except:
+                    pass
+                return
         
         # Update UI
         self.update_status("Import complete. Updated {}/{} elements.".format(updated, processed))
@@ -801,6 +886,12 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.isolateButton.IsEnabled = updated > 0  # Enable isolate button if elements were updated
         self.progressBar.Visibility = Visibility.Collapsed
         self.progressText.Visibility = Visibility.Collapsed
+        
+        # Hide busy indicator
+        try:
+            self.busyIndicator.IsBusy = False
+        except:
+            pass
     
     def isolate_button_click(self, sender, args):
         """Handle isolate button click."""
