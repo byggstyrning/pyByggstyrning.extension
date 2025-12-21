@@ -8,86 +8,16 @@
     WindowStartupLocation="CenterScreen"
     ShowInTaskbar="True">
     
-    <Window.Resources>
-        <ResourceDictionary>
-            <!-- Common Styles -->
-            <Style TargetType="{x:Type Button}">
-                <Setter Property="Margin" Value="5"/>
-                <Setter Property="Padding" Value="5,5"/>
-                <Setter Property="Height" Value="33"/>
-                <Setter Property="Background" Value="#F0F0F0"/>
-                <Setter Property="BorderBrush" Value="#CCCCCC"/>
-            </Style>
-            <Style TargetType="{x:Type ComboBox}">
-                <Setter Property="Margin" Value="5"/>
-                <Setter Property="Height" Value="33"/>
-                <Setter Property="IsEditable" Value="False"/>
-                <Setter Property="IsTextSearchEnabled" Value="True"/>
-                <Setter Property="IsSynchronizedWithCurrentItem" Value="True"/>
-            </Style>
-            <Style TargetType="{x:Type ListBox}">
-                <Setter Property="Margin" Value="5"/>
-                <Setter Property="BorderBrush" Value="#CCCCCC"/>
-            </Style>
-            <Style TargetType="{x:Type TextBlock}">
-                <Setter Property="Margin" Value="5,5,5,2"/>
-                <Setter Property="FontWeight" Value="SemiBold"/>
-            </Style>
-            <Style TargetType="{x:Type CheckBox}">
-                <Setter Property="Margin" Value="5,3"/>
-                <Setter Property="VerticalAlignment" Value="Center"/>
-            </Style>
-            <Style TargetType="{x:Type RadioButton}">
-                <Setter Property="Margin" Value="5,3"/>
-                <Setter Property="VerticalAlignment" Value="Center"/>
-            </Style>
-            
-            <!-- Toggle Switch Style -->
-            <Style x:Key="ToggleSwitchStyle" TargetType="{x:Type CheckBox}">
-                <Setter Property="Template">
-                    <Setter.Value>
-                        <ControlTemplate TargetType="{x:Type CheckBox}">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <Border x:Name="SwitchBorder" 
-                                        Width="40" Height="20" 
-                                        CornerRadius="10" 
-                                        Background="#CCCCCC" 
-                                        Margin="0,0,5,0">
-                                    <Ellipse x:Name="SwitchKnob" 
-                                             Width="16" Height="16" 
-                                             HorizontalAlignment="Left" 
-                                             Margin="2,0,0,0" 
-                                             Fill="White"/>
-                                </Border>
-                                <TextBlock Grid.Column="1" 
-                                           Text="{TemplateBinding Content}" 
-                                           VerticalAlignment="Center"/>
-                            </Grid>
-                            <ControlTemplate.Triggers>
-                                <Trigger Property="IsChecked" Value="True">
-                                    <Setter TargetName="SwitchBorder" Property="Background" Value="#4CAF50"/>
-                                    <Setter TargetName="SwitchKnob" Property="HorizontalAlignment" Value="Right"/>
-                                    <Setter TargetName="SwitchKnob" Property="Margin" Value="0,0,2,0"/>
-                                </Trigger>
-                                <Trigger Property="IsChecked" Value="False">
-                                    <Setter Property="Content" Value="OFF"/>
-                                </Trigger>
-                                <Trigger Property="IsChecked" Value="True">
-                                    <Setter Property="Content" Value="ON"/>
-                                </Trigger>
-                            </ControlTemplate.Triggers>
-                        </ControlTemplate>
-                    </Setter.Value>
-                </Setter>
-            </Style>
-        </ResourceDictionary>
-    </Window.Resources>
+    <!-- Styles will be loaded programmatically -->
     
     <Grid>
+        <!-- Busy Indicator Overlay -->
+        <Border x:Name="busyOverlay" Style="{StaticResource BusyOverlayStyle}">
+            <StackPanel Style="{StaticResource BusyContentStyle}">
+                <ProgressBar x:Name="busyProgressBar" Style="{StaticResource BusyProgressBarStyle}"/>
+                <TextBlock x:Name="busyTextBlock" Style="{StaticResource BusyTextBlockStyle}" Text="Loading..."/>
+            </StackPanel>
+        </Border>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -102,12 +32,12 @@
             </Grid.ColumnDefinitions>
             
             <!-- Left Panel - Categories -->
-            <Border BorderThickness="1" BorderBrush="#CCCCCC" Margin="10,5,5,5">
+            <Border Style="{StaticResource PanelBorderStyle}" Margin="10,5,5,5">
                 <DockPanel>
-                    <TextBlock Text="Category" FontWeight="SemiBold" Margin="5" DockPanel.Dock="Top"/>
-                    <CheckBox x:Name="selectAllCategoriesCheckBox" Content="Select All" Margin="5,0,5,5" DockPanel.Dock="Top" IsThreeState="True" Checked="SelectAllCategories_Changed" Unchecked="SelectAllCategories_Changed" Indeterminate="SelectAllCategories_Changed"/>
+                    <TextBlock Text="Category" Style="{StaticResource SubheaderTextBlockStyle}" DockPanel.Dock="Top" Margin="5"/>
+                    <CheckBox x:Name="selectAllCategoriesCheckBox" Content="Select All" Style="{StaticResource StandardCheckBoxStyle}" Margin="5,0,5,5" DockPanel.Dock="Top" IsThreeState="True" Checked="SelectAllCategories_Changed" Unchecked="SelectAllCategories_Changed" Indeterminate="SelectAllCategories_Changed"/>
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
-                        <ListBox x:Name="categoryListBox" BorderThickness="0">
+                        <ListBox x:Name="categoryListBox" Style="{StaticResource StandardListBoxStyle}" BorderThickness="0">
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <Grid Background="Transparent">
@@ -147,8 +77,8 @@
                 
                 <!-- Parameter Type Selection -->
                 <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="5">
-                    <RadioButton x:Name="instanceRadioButton" Content="Instance" IsChecked="True" Margin="5"/>
-                    <RadioButton x:Name="typeRadioButton" Content="Type" Margin="15,5,5,5"/>
+                    <RadioButton x:Name="instanceRadioButton" Content="Instance" IsChecked="True" Style="{StaticResource StandardRadioButtonStyle}"/>
+                    <RadioButton x:Name="typeRadioButton" Content="Type" Style="{StaticResource StandardRadioButtonStyle}" Margin="15,5,5,5"/>
                 </StackPanel>
                 
                 <!-- Parameter Selection -->
@@ -157,12 +87,12 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <ComboBox x:Name="parameterSelector" Margin="0"/>
-                    <Button Grid.Column="1" Content="🔄" Width="40" Margin="0,0,0,0" ToolTip="Refresh Parameters" x:Name="refreshParametersButton"/>
+                    <ComboBox x:Name="parameterSelector" Style="{StaticResource StandardComboBoxStyle}" Margin="0"/>
+                    <Button Grid.Column="1" Content="🔄" Width="40" Margin="0,0,0,0" ToolTip="Refresh Parameters" x:Name="refreshParametersButton" Style="{StaticResource SecondaryButtonStyle}"/>
                 </Grid>
                 
                 <!-- Values and Colors -->
-                <Border Grid.Row="2" BorderThickness="1" BorderBrush="#CCCCCC">
+                <Border Grid.Row="2" Style="{StaticResource PanelBorderStyle}">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
@@ -170,19 +100,21 @@
                         </Grid.RowDefinitions>
                         
                         <!-- Header -->
-                        <Grid Background="#F5F5F5">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="35"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="70"/>
-                            </Grid.ColumnDefinitions>
-                            <CheckBox Grid.Column="0" Margin="10,5" x:Name="headerCheckBox" Checked="HeaderCheckBox_Changed" Unchecked="HeaderCheckBox_Changed"/>
-                            <TextBlock Grid.Column="1" Text="Value" Margin="5"/>
-                            <TextBlock Grid.Column="2" Text="Color" Margin="5"/>
-                        </Grid>
+                        <Border Grid.Row="0" Style="{StaticResource HeaderBorderStyle}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="35"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="70"/>
+                                </Grid.ColumnDefinitions>
+                                <CheckBox Grid.Column="0" Margin="10,5" x:Name="headerCheckBox" Checked="HeaderCheckBox_Changed" Unchecked="HeaderCheckBox_Changed" Style="{StaticResource StandardCheckBoxStyle}"/>
+                                <TextBlock Grid.Column="1" Text="Value" Style="{StaticResource LabelTextBlockStyle}" Margin="5"/>
+                                <TextBlock Grid.Column="2" Text="Color" Style="{StaticResource LabelTextBlockStyle}" Margin="5"/>
+                            </Grid>
+                        </Border>
                         
                         <!-- Values -->
-                        <ListBox Grid.Row="1" x:Name="valuesListBox" BorderThickness="0" SelectionMode="Extended" HorizontalContentAlignment="Stretch">
+                        <ListBox Grid.Row="1" x:Name="valuesListBox" Style="{StaticResource StandardListBoxStyle}" BorderThickness="0" SelectionMode="Extended" HorizontalContentAlignment="Stretch">
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <Grid HorizontalAlignment="Stretch">
@@ -227,17 +159,17 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <Button Grid.Column="0" Content="Reset Colors" Background="#ffe0e0" Margin="5,0" x:Name="resetButton"/>
-                        <Button Grid.Column="1" Content="Apply Colors" Background="#e0ffe0" Margin="5,10" x:Name="applyButton"/>
+                        <Button Grid.Column="0" Content="Reset Colors" Style="{StaticResource DangerButtonStyle}" Margin="5,0" x:Name="resetButton"/>
+                        <Button Grid.Column="1" Content="Apply Colors" Style="{StaticResource SuccessButtonStyle}" Margin="5,10" x:Name="applyButton"/>
                     </Grid>
                 </StackPanel>
             </Grid>
         </Grid>
         
         <!-- Status Bar -->
-        <Border Grid.Row="2" BorderThickness="0,1,0,0" BorderBrush="#CCCCCC" Background="#F0F0F0">
+        <Border Grid.Row="2" Style="{StaticResource StandardStatusBarStyle}">
             <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="80">
-                <TextBlock x:Name="statusText" Margin="10,5" FontWeight="Normal" TextWrapping="Wrap" Foreground="#555555" FontSize="12"/>
+                <TextBlock x:Name="statusText" Style="{StaticResource StatusTextBlockStyle}"/>
             </ScrollViewer>
         </Border>
     </Grid>

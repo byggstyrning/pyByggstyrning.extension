@@ -430,6 +430,9 @@ class RevitColorizerWindow(WPFWindow):
             # Load XAML
             WPFWindow.__init__(self, xaml_file)
             
+            # Load styles ResourceDictionary
+            self.load_styles()
+            
             # Store references
             self.logger = logger
             self.DB = DB
@@ -476,6 +479,58 @@ class RevitColorizerWindow(WPFWindow):
             
             # Create a custom CategoryItem class
             self.CategoryItem = self.create_custom_category_item_class()
+    
+    def load_styles(self):
+        """Load the common styles ResourceDictionary."""
+        try:
+            import os.path as op
+            script_dir = op.dirname(__file__)
+            panel_dir = op.dirname(script_dir)
+            tab_dir = op.dirname(panel_dir)
+            extension_dir = op.dirname(op.dirname(tab_dir))
+            styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
+            
+            if op.exists(styles_path):
+                from System.Windows import Application
+                from System.Uri import Uri
+                from System.Windows.Markup import XamlReader
+                from System.IO import File
+                
+                # Read XAML content
+                xaml_content = File.ReadAllText(styles_path)
+                
+                # Parse as ResourceDictionary
+                styles_dict = XamlReader.Parse(xaml_content)
+                
+                # Merge into window resources
+                if self.Resources is None:
+                    from System.Windows import ResourceDictionary
+                    self.Resources = ResourceDictionary()
+                
+                # If it's a ResourceDictionary, merge its contents
+                if hasattr(styles_dict, 'Keys'):
+                    for key in styles_dict.Keys:
+                        self.Resources[key] = styles_dict[key]
+                else:
+                    # Try to merge the entire dictionary
+                    self.Resources.MergedDictionaries.Add(styles_dict)
+                    
+                logger.debug("Loaded styles from: {}".format(styles_path))
+        except Exception as e:
+            logger.warning("Could not load styles: {}. Using default styles.".format(str(e)))
+            import traceback
+            logger.debug("Style loading error details: {}".format(traceback.format_exc()))
+    
+    def set_busy(self, is_busy, message="Loading..."):
+        """Show or hide the busy overlay indicator."""
+        try:
+            if is_busy:
+                self.busyOverlay.Visibility = Visibility.Visible
+                self.busyTextBlock.Text = message
+            else:
+                self.busyOverlay.Visibility = Visibility.Collapsed
+        except Exception as e:
+            logger.debug("Error setting busy indicator: {}".format(str(e)))
             
             # Create external event handlers
             self.apply_colors_handler = ApplyColorsHandler(self)
