@@ -25,6 +25,7 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
@@ -32,21 +33,24 @@
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
 
-                    <TextBlock Text="Server URL:" Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Margin="0,10,0,10"/>
-                    <xctk:WatermarkTextBox x:Name="serverUrlTextBox" Grid.Row="0" Grid.Column="1" Margin="0,10,0,10" Text="https://app.streambim.com" Watermark="Enter StreamBIM server URL"/>
+                    <TextBlock Text="Server Region:" Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Margin="0,10,0,10"/>
+                    <ComboBox x:Name="serverRegionComboBox" Grid.Row="0" Grid.Column="1" Margin="0,10,0,10" SelectionChanged="server_region_selection_changed"/>
 
-                    <TextBlock Text="Username:" Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Margin="0,10,0,10"/>
-                    <xctk:WatermarkTextBox x:Name="usernameTextBox" Grid.Row="1" Grid.Column="1" Margin="0,10,0,10" Watermark="Enter username"/>
+                    <TextBlock x:Name="customUrlLabel" Text="Custom URL:" Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Margin="0,10,0,10" Visibility="Collapsed"/>
+                    <xctk:WatermarkTextBox x:Name="customUrlTextBox" Grid.Row="1" Grid.Column="1" Margin="0,10,0,10" Watermark="Enter custom StreamBIM server URL" Visibility="Collapsed"/>
 
-                    <TextBlock Text="Password:" Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Margin="0,10,0,10"/>
-                    <PasswordBox x:Name="passwordBox" Grid.Row="2" Grid.Column="1" Margin="0,10,0,10"/>
+                    <TextBlock Text="Username:" Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Margin="0,10,0,10"/>
+                    <xctk:WatermarkTextBox x:Name="usernameTextBox" Grid.Row="2" Grid.Column="1" Margin="0,10,0,10" Watermark="Enter username"/>
 
-                    <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Margin="0,10,0,10">
+                    <TextBlock Text="Password:" Grid.Row="3" Grid.Column="0" VerticalAlignment="Center" Margin="0,10,0,10"/>
+                    <PasswordBox x:Name="passwordBox" Grid.Row="3" Grid.Column="1" Margin="0,10,0,10"/>
+
+                    <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal" Margin="0,10,0,10">
                         <Button x:Name="loginButton" Content="Login" Width="100" Height="30" Margin="0,0,10,0"/>
                         <Button x:Name="logoutButton" Content="Logout" Width="100" Height="30" IsEnabled="False"/>
                     </StackPanel>
                     
-                    <TextBlock x:Name="loginStatusTextBlock" Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,10,0,0" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="loginStatusTextBlock" Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,10,0,0" TextWrapping="Wrap"/>
                 </Grid>
             </TabItem>
 

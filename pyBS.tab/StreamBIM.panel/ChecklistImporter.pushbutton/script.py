@@ -20,6 +20,7 @@ import clr
 import json
 import pickle
 import base64
+import urllib2
 from collections import namedtuple
 
 # Add the extension directory to the path - FIXED PATH RESOLUTION
@@ -93,6 +94,7 @@ logger = script.get_logger()
 Project = namedtuple('Project', ['Id', 'Name', 'Description'])
 Checklist = namedtuple('Checklist', ['Id', 'Name'])
 PropertyValue = namedtuple('PropertyValue', ['Name', 'Sample'])
+Region = namedtuple('Region', ['Subdomain', 'Title', 'Url', 'IsCustom'])
 
 # Replace the MappingEntry namedtuple with a proper class
 class MappingEntry(object):
@@ -231,10 +233,15 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.selected_checklist_group_by = None
         self.selected_checklist_building_id = None
         self.all_checklist_records = {}  # Cache checklist records by ID for metadata lookup
+        
+        # Initialize regions data
+        self.regions = []
+        self.selected_region = None
 
         # Set up event handlers
         self.loginButton.Click += self.login_button_click
         self.logoutButton.Click += self.logout_button_click
+        self.serverRegionComboBox.SelectionChanged += self.server_region_selection_changed
         self.selectProjectButton.Click += self.select_project_button_click
         self.selectChecklistButton.Click += self.select_checklist_button_click
         self.streamBIMPropertiesComboBox.SelectionChanged += self.streambim_property_selected
@@ -259,9 +266,108 @@ class StreamBIMImporterUI(forms.WPFWindow):
         # Load saved project ID
         self.saved_project_id = self.load_saved_project_id()
 
+        # Load regions and populate ComboBox
+        self.load_regions()
+
         # Try automatic login
-        
         self.try_automatic_login()
+
+    def load_regions(self):
+        """Load available StreamBIM regions from the API."""
+        try:
+            # Show busy indicator during region loading
+            try:
+                self.busyIndicator.IsBusy = True
+                self.busyIndicator.BusyContent = "Loading regions..."
+            except:
+                pass
+            
+            # Fetch regions from API
+            url = "https://global.streambim.com/regions.json"
+            req = urllib2.Request(url)
+            req.add_header('Accept', 'application/json')
+            
+            response = urllib2.urlopen(req)
+            result = json.loads(response.read())
+            
+            # Parse regions
+            self.regions = []
+            regions_data = result.get('regions', [])
+            
+            default_index = 0
+            for i, region_data in enumerate(regions_data):
+                subdomain = region_data.get('subdomain', '')
+                title = region_data.get('title', '')
+                is_default = region_data.get('isDefault', False)
+                url = "https://{}.streambim.com".format(subdomain)
+                
+                region = Region(
+                    Subdomain=subdomain,
+                    Title=title,
+                    Url=url,
+                    IsCustom=False
+                )
+                self.regions.append(region)
+                
+                # Track default region index
+                if is_default:
+                    default_index = i
+            
+            # Add "Custom" option
+            custom_region = Region(
+                Subdomain="custom",
+                Title="Custom",
+                Url="",
+                IsCustom=True
+            )
+            self.regions.append(custom_region)
+            
+            # Populate ComboBox
+            self.serverRegionComboBox.ItemsSource = [r.Title for r in self.regions]
+            
+            # Select default region
+            self.serverRegionComboBox.SelectedIndex = default_index
+            
+            # Hide busy indicator
+            try:
+                self.busyIndicator.IsBusy = False
+            except:
+                pass
+            
+            logger.debug("Loaded {} regions".format(len(self.regions)))
+            
+        except Exception as e:
+            logger.error("Error loading regions: {}".format(str(e)))
+            # Fallback to default region
+            self.regions = [
+                Region(Subdomain="app", Title="Europe (Default)", Url="https://app.streambim.com", IsCustom=False),
+                Region(Subdomain="custom", Title="Custom", Url="", IsCustom=True)
+            ]
+            self.serverRegionComboBox.ItemsSource = [r.Title for r in self.regions]
+            self.serverRegionComboBox.SelectedIndex = 0
+            
+            # Hide busy indicator
+            try:
+                self.busyIndicator.IsBusy = False
+            except:
+                pass
+
+    def server_region_selection_changed(self, sender, args):
+        """Handle server region ComboBox selection change."""
+        selected_index = self.serverRegionComboBox.SelectedIndex
+        if selected_index >= 0 and selected_index < len(self.regions):
+            selected_region = self.regions[selected_index]
+            self.selected_region = selected_region
+            
+            # Show/hide custom URL input based on selection
+            if selected_region.IsCustom:
+                # Show custom URL input
+                self.customUrlLabel.Visibility = Visibility.Visible
+                self.customUrlTextBox.Visibility = Visibility.Visible
+            else:
+                # Hide custom URL input
+                self.customUrlLabel.Visibility = Visibility.Collapsed
+                self.customUrlTextBox.Visibility = Visibility.Collapsed
 
     def try_automatic_login(self):
         """Attempt to automatically log in using saved tokens."""
@@ -292,7 +398,8 @@ class StreamBIMImporterUI(forms.WPFWindow):
         # Disable login fields
         self.usernameTextBox.IsEnabled = False
         self.passwordBox.IsEnabled = False
-        self.serverUrlTextBox.IsEnabled = False
+        self.serverRegionComboBox.IsEnabled = False
+        self.customUrlTextBox.IsEnabled = False
         
         # Update buttons
         self.loginButton.IsEnabled = False
@@ -351,11 +458,27 @@ class StreamBIMImporterUI(forms.WPFWindow):
         """Handle login button click event."""
         username = self.usernameTextBox.Text
         password = self.passwordBox.Password
-        server_url = self.serverUrlTextBox.Text
         
         if not username or not password:
             self.update_status("Please enter username and password")
             return
+        
+        # Get server URL from selected region or custom URL
+        selected_index = self.serverRegionComboBox.SelectedIndex
+        if selected_index >= 0 and selected_index < len(self.regions):
+            selected_region = self.regions[selected_index]
+            if selected_region.IsCustom:
+                # Use custom URL
+                server_url = self.customUrlTextBox.Text.strip()
+                if not server_url:
+                    self.update_status("Please enter a custom server URL")
+                    return
+            else:
+                # Use region URL
+                server_url = selected_region.Url
+        else:
+            # Fallback to default
+            server_url = "https://app.streambim.com"
         
         # Update UI
         self.loginButton.IsEnabled = False
@@ -410,7 +533,8 @@ class StreamBIMImporterUI(forms.WPFWindow):
         # Enable login fields
         self.usernameTextBox.IsEnabled = True
         self.passwordBox.IsEnabled = True
-        self.serverUrlTextBox.IsEnabled = True
+        self.serverRegionComboBox.IsEnabled = True
+        self.customUrlTextBox.IsEnabled = True
         
         # Clear data
         self.projects.Clear()
