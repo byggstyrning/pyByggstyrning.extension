@@ -20,6 +20,7 @@ import clr
 import json
 import pickle
 import base64
+import urllib2
 from collections import namedtuple
 
 # Add the extension directory to the path - FIXED PATH RESOLUTION
@@ -42,6 +43,7 @@ clr.AddReference("PresentationCore")
 clr.AddReference("WindowsBase")
 clr.AddReference('RevitAPI')
 clr.AddReference('RevitAPIUI')
+
 from Autodesk.Revit.DB import *
 
 from System import EventHandler
@@ -77,6 +79,7 @@ logger = script.get_logger()
 Project = namedtuple('Project', ['Id', 'Name', 'Description'])
 Checklist = namedtuple('Checklist', ['Id', 'Name'])
 PropertyValue = namedtuple('PropertyValue', ['Name', 'Sample'])
+Region = namedtuple('Region', ['Subdomain', 'Title', 'Url', 'IsCustom'])
 
 # Replace the MappingEntry namedtuple with a proper class
 class MappingEntry(object):
@@ -194,6 +197,9 @@ class StreamBIMImporterUI(forms.WPFWindow):
         # Initialize WPF window
         forms.WPFWindow.__init__(self, 'ChecklistImporter.xaml')
         
+        # Load styles ResourceDictionary
+        self.load_styles()
+        
         # Initialize StreamBIM API client
         self.streambim_client = streambim_api.StreamBIMClient()
                 
@@ -215,10 +221,20 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.selected_checklist_group_by = None
         self.selected_checklist_building_id = None
         self.all_checklist_records = {}  # Cache checklist records by ID for metadata lookup
+        
+        # Initialize regions data
+        self.regions = []
+        self.selected_region = None
+        
+        # Initialize MFA state
+        self.mfa_session = None
+        self.mfa_username = None
 
         # Set up event handlers
         self.loginButton.Click += self.login_button_click
         self.logoutButton.Click += self.logout_button_click
+        self.verifyMfaButton.Click += self.verify_mfa_button_click
+        self.serverRegionComboBox.SelectionChanged += self.server_region_selection_changed
         self.selectProjectButton.Click += self.select_project_button_click
         self.selectChecklistButton.Click += self.select_checklist_button_click
         self.streamBIMPropertiesComboBox.SelectionChanged += self.streambim_property_selected
@@ -243,9 +259,151 @@ class StreamBIMImporterUI(forms.WPFWindow):
         # Load saved project ID
         self.saved_project_id = self.load_saved_project_id()
 
+        # Load regions and populate ComboBox
+        self.load_regions()
+
         # Try automatic login
-        
         self.try_automatic_login()
+
+    def load_styles(self):
+        """Load the common styles ResourceDictionary."""
+        try:
+            import os.path as op
+            # Use the same path calculation as at the top of the file
+            # Note: variable names are misleading - panel_dir is actually pushbutton dir, tab_dir is actually panel dir
+            # script_path -> panel_dir (pushbutton) -> tab_dir (panel) -> extension_dir (two levels up from tab_dir)
+            script_path = __file__
+            panel_dir = op.dirname(script_path)
+            tab_dir = op.dirname(panel_dir)
+            extension_dir = op.dirname(op.dirname(tab_dir))
+            styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
+            
+            if op.exists(styles_path):
+                from System.Windows.Markup import XamlReader
+                from System.IO import File
+                
+                # Read XAML content
+                xaml_content = File.ReadAllText(styles_path)
+                
+                # Parse as ResourceDictionary
+                styles_dict = XamlReader.Parse(xaml_content)
+                
+                # Merge into window resources
+                if self.Resources is None:
+                    from System.Windows import ResourceDictionary
+                    self.Resources = ResourceDictionary()
+                
+                # If it's a ResourceDictionary, merge its contents
+                if hasattr(styles_dict, 'Keys'):
+                    for key in styles_dict.Keys:
+                        self.Resources[key] = styles_dict[key]
+                else:
+                    # Try to merge the entire dictionary
+                    self.Resources.MergedDictionaries.Add(styles_dict)
+                    
+                logger.debug("Loaded styles from: {}".format(styles_path))
+        except Exception as e:
+            logger.warning("Could not load styles: {}. Using default styles.".format(str(e)))
+            import traceback
+            logger.debug("Style loading error details: {}".format(traceback.format_exc()))
+
+    def set_busy(self, is_busy, message="Loading..."):
+        """Show or hide the busy overlay indicator."""
+        try:
+            if is_busy:
+                self.busyOverlay.Visibility = Visibility.Visible
+                self.busyTextBlock.Text = message
+            else:
+                self.busyOverlay.Visibility = Visibility.Collapsed
+        except Exception as e:
+            logger.debug("Error setting busy indicator: {}".format(str(e)))
+
+    def load_regions(self):
+        """Load available StreamBIM regions from the API."""
+        try:
+            # Show busy indicator during region loading
+            self.set_busy(True, "Loading regions...")
+            
+            # Fetch regions from API
+            url = "https://global.streambim.com/regions.json"
+            req = urllib2.Request(url)
+            req.add_header('Accept', 'application/json')
+            
+            response = urllib2.urlopen(req)
+            result = json.loads(response.read())
+            
+            # Parse regions
+            self.regions = []
+            regions_data = result.get('regions', [])
+            
+            default_index = 0
+            for i, region_data in enumerate(regions_data):
+                subdomain = region_data.get('subdomain', '')
+                title = region_data.get('title', '')
+                is_default = region_data.get('isDefault', False)
+                url = "https://{}.streambim.com".format(subdomain)
+                
+                region = Region(
+                    Subdomain=subdomain,
+                    Title=title,
+                    Url=url,
+                    IsCustom=False
+                )
+                self.regions.append(region)
+                
+                # Track default region index
+                if is_default:
+                    default_index = i
+            
+            # Add "Custom" option
+            custom_region = Region(
+                Subdomain="custom",
+                Title="Custom",
+                Url="",
+                IsCustom=True
+            )
+            self.regions.append(custom_region)
+            
+            # Populate ComboBox
+            self.serverRegionComboBox.ItemsSource = [r.Title for r in self.regions]
+            
+            # Select default region
+            self.serverRegionComboBox.SelectedIndex = default_index
+            
+            # Hide busy indicator
+            self.set_busy(False)
+            
+            logger.debug("Loaded {} regions".format(len(self.regions)))
+            
+        except Exception as e:
+            logger.error("Error loading regions: {}".format(str(e)))
+            # Fallback to default region
+            self.regions = [
+                Region(Subdomain="app", Title="Europe (Default)", Url="https://app.streambim.com", IsCustom=False),
+                Region(Subdomain="custom", Title="Custom", Url="", IsCustom=True)
+            ]
+            self.serverRegionComboBox.ItemsSource = [r.Title for r in self.regions]
+            self.serverRegionComboBox.SelectedIndex = 0
+            
+            # Hide busy indicator
+            self.set_busy(False)
+
+    def server_region_selection_changed(self, sender, args):
+        """Handle server region ComboBox selection change."""
+        selected_index = self.serverRegionComboBox.SelectedIndex
+        if selected_index >= 0 and selected_index < len(self.regions):
+            selected_region = self.regions[selected_index]
+            self.selected_region = selected_region
+            
+            # Show/hide custom URL input based on selection
+            if selected_region.IsCustom:
+                # Show custom URL input
+                self.customUrlLabel.Visibility = Visibility.Visible
+                self.customUrlTextBox.Visibility = Visibility.Visible
+            else:
+                # Hide custom URL input
+                self.customUrlLabel.Visibility = Visibility.Collapsed
+                self.customUrlTextBox.Visibility = Visibility.Collapsed
 
     def try_automatic_login(self):
         """Attempt to automatically log in using saved tokens."""
@@ -276,7 +434,9 @@ class StreamBIMImporterUI(forms.WPFWindow):
         # Disable login fields
         self.usernameTextBox.IsEnabled = False
         self.passwordBox.IsEnabled = False
-        self.serverUrlTextBox.IsEnabled = False
+        self.serverRegionComboBox.IsEnabled = False
+        self.customUrlTextBox.IsEnabled = False
+        self.mfaCodeTextBox.IsEnabled = False
         
         # Update buttons
         self.loginButton.IsEnabled = False
@@ -289,7 +449,13 @@ class StreamBIMImporterUI(forms.WPFWindow):
         
         # Get projects
         self.update_status("Retrieving projects...")
+        # Show busy indicator during project retrieval
+        self.set_busy(True, "Retrieving projects...")
+        
         projects = self.streambim_client.get_projects()
+        
+        # Hide busy indicator
+        self.set_busy(False)
         if projects:
             self.projects.Clear()
             saved_project = None
@@ -322,27 +488,127 @@ class StreamBIMImporterUI(forms.WPFWindow):
         """Handle login button click event."""
         username = self.usernameTextBox.Text
         password = self.passwordBox.Password
-        server_url = self.serverUrlTextBox.Text
         
         if not username or not password:
             self.update_status("Please enter username and password")
             return
         
+        # Get server URL from selected region or custom URL
+        selected_index = self.serverRegionComboBox.SelectedIndex
+        if selected_index >= 0 and selected_index < len(self.regions):
+            selected_region = self.regions[selected_index]
+            if selected_region.IsCustom:
+                # Use custom URL
+                server_url = self.customUrlTextBox.Text.strip()
+                if not server_url:
+                    self.update_status("Please enter a custom server URL")
+                    return
+            else:
+                # Use region URL
+                server_url = selected_region.Url
+        else:
+            # Fallback to default
+            server_url = "https://app.streambim.com"
+        
         # Update UI
         self.loginButton.IsEnabled = False
         self.update_status("Logging in to StreamBIM...")
         
+        # Show busy indicator during login
+        self.set_busy(True, "Logging in...")
+        
         # Set server URL and login
         self.streambim_client.base_url = server_url
-        success = self.streambim_client.login(username, password)
+        login_result = self.streambim_client.login(username, password)
         
-        if success:
+        # Hide busy indicator
+        self.set_busy(False)
+        
+        # Check if login result is a dict (new MFA-enabled login)
+        if isinstance(login_result, dict):
+            if login_result.get('success'):
+                # Login successful without MFA
+                self.on_login_success()
+            elif login_result.get('requires_mfa'):
+                # MFA challenge required
+                self.mfa_session = login_result.get('session')
+                self.mfa_username = username
+                self.streambim_client.mfa_session = self.mfa_session
+                
+                # Show MFA input fields
+                self.mfaCodeLabel.Visibility = Visibility.Visible
+                self.mfaCodeTextBox.Visibility = Visibility.Visible
+                self.verifyMfaButton.Visibility = Visibility.Visible
+                self.loginButton.Visibility = Visibility.Collapsed
+                
+                self.update_status("MFA code required. Please enter your verification code.")
+                self.loginStatusTextBlock.Text = "MFA verification required. Enter your code below."
+                self.mfaCodeTextBox.Focus()
+            else:
+                # Login failed
+                error_msg = self.streambim_client.last_error or "Login failed. Please check your credentials."
+                self.update_status(error_msg)
+                self.loginStatusTextBlock.Text = "Login failed: " + error_msg
+                self.loginButton.IsEnabled = True
+        else:
+            # Legacy boolean return (for backward compatibility)
+            if login_result:
+                self.on_login_success()
+            else:
+                error_msg = self.streambim_client.last_error or "Login failed. Please check your credentials."
+                self.update_status(error_msg)
+                self.loginStatusTextBlock.Text = "Login failed: " + error_msg
+                self.loginButton.IsEnabled = True
+    
+    def verify_mfa_button_click(self, sender, args):
+        """Handle MFA verification button click event."""
+        mfa_code = self.mfaCodeTextBox.Text.strip()
+        
+        if not mfa_code:
+            self.update_status("Please enter your MFA verification code")
+            return
+        
+        if not self.mfa_session or not self.mfa_username:
+            self.update_status("MFA session expired. Please login again.")
+            return
+        
+        # Update UI
+        self.verifyMfaButton.IsEnabled = False
+        self.update_status("Verifying MFA code...")
+        
+        # Show busy indicator during verification
+        self.set_busy(True, "Verifying MFA code...")
+        
+        # Verify MFA code
+        verify_result = self.streambim_client.verify_mfa(self.mfa_username, self.mfa_session, mfa_code)
+        
+        # Hide busy indicator
+        self.set_busy(False)
+        
+        if verify_result.get('success'):
+            # MFA verification successful
+            self.mfa_session = None
+            self.mfa_username = None
+            self.streambim_client.mfa_session = None
+            
+            # Hide MFA input fields
+            self.mfaCodeLabel.Visibility = Visibility.Collapsed
+            self.mfaCodeTextBox.Visibility = Visibility.Collapsed
+            self.verifyMfaButton.Visibility = Visibility.Collapsed
+            self.loginButton.Visibility = Visibility.Visible
+            
+            # Clear MFA code
+            self.mfaCodeTextBox.Text = ""
+            
             self.on_login_success()
         else:
-            error_msg = self.streambim_client.last_error or "Login failed. Please check your credentials."
+            # MFA verification failed
+            error_msg = self.streambim_client.last_error or "Invalid MFA code. Please try again."
             self.update_status(error_msg)
-            self.loginStatusTextBlock.Text = "Login failed: " + error_msg
-            self.loginButton.IsEnabled = True
+            self.loginStatusTextBlock.Text = "MFA verification failed: " + error_msg
+            self.verifyMfaButton.IsEnabled = True
+            self.mfaCodeTextBox.Text = ""  # Clear the code for retry
+            self.mfaCodeTextBox.Focus()
     
     def logout_button_click(self, sender, args):
         """Handle logout button click event."""
@@ -368,7 +634,20 @@ class StreamBIMImporterUI(forms.WPFWindow):
         # Enable login fields
         self.usernameTextBox.IsEnabled = True
         self.passwordBox.IsEnabled = True
-        self.serverUrlTextBox.IsEnabled = True
+        self.serverRegionComboBox.IsEnabled = True
+        self.customUrlTextBox.IsEnabled = True
+        self.mfaCodeTextBox.IsEnabled = True
+        
+        # Hide MFA fields
+        self.mfaCodeLabel.Visibility = Visibility.Collapsed
+        self.mfaCodeTextBox.Visibility = Visibility.Collapsed
+        self.verifyMfaButton.Visibility = Visibility.Collapsed
+        self.loginButton.Visibility = Visibility.Visible
+        
+        # Clear MFA state
+        self.mfa_session = None
+        self.mfa_username = None
+        self.mfaCodeTextBox.Text = ""
         
         # Clear data
         self.projects.Clear()
@@ -390,6 +669,9 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.selectProjectButton.IsEnabled = False
         self.update_status("Selecting project: " + selected_project.Name)
         
+        # Show busy indicator during checklist retrieval
+        self.set_busy(True, "Retrieving checklists...")
+        
         # Save project ID
         if self.save_project_id(selected_project.Id):
             self.saved_project_id = selected_project.Id
@@ -399,6 +681,9 @@ class StreamBIMImporterUI(forms.WPFWindow):
         
         # Get checklists
         checklists = self.streambim_client.get_checklists()
+        
+        # Hide busy indicator
+        self.set_busy(False)
         if checklists:
             self.checklists.Clear()
             self.all_checklists = []  # Clear all checklists list
@@ -436,11 +721,17 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.selectChecklistButton.IsEnabled = False
         self.update_status("Loading checklist preview...")
         
+        # Show busy indicator during checklist preview loading
+        self.set_busy(True, "Loading checklist preview...")
+        
         # Update selected checklist text
         self.selectedChecklistTextBlock.Text = selected_checklist.Name
         
         # Get checklist items (limited for preview)
         checklist_items = self.streambim_client.get_checklist_items(selected_checklist.Id, limit=5)
+        
+        # Hide busy indicator
+        self.set_busy(False)
         if checklist_items:
             self.checklist_items = checklist_items
             self.selected_checklist_id = selected_checklist.Id  # Store for later use
@@ -573,6 +864,9 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.progressText.Text = "Fetching checklist items..."
         self.update_status("Loading all checklist items...")
         
+        # Show busy indicator during initial loading
+        self.set_busy(True, "Importing checklist, please wait...")
+        
         # Get all checklist items
         all_checklist_items = self.streambim_client.get_checklist_items(self.selected_checklist_id, streambim_prop, limit=0)
         if not all_checklist_items:
@@ -581,6 +875,8 @@ class StreamBIMImporterUI(forms.WPFWindow):
             self.importButton.IsEnabled = True
             self.progressBar.Visibility = Visibility.Collapsed
             self.progressText.Visibility = Visibility.Collapsed
+            # Hide busy indicator
+            self.set_busy(False)
             return
             
         self.progressBar.Value = 25
@@ -793,6 +1089,8 @@ class StreamBIMImporterUI(forms.WPFWindow):
             t.RollBack()
             logger.error("Error during import: {}".format(str(e)))
             self.update_status("Error during import: {}".format(str(e)))
+            # Hide busy indicator on error
+            self.set_busy(False)
             return
         
         # Update UI
@@ -801,6 +1099,9 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.isolateButton.IsEnabled = updated > 0  # Enable isolate button if elements were updated
         self.progressBar.Visibility = Visibility.Collapsed
         self.progressText.Visibility = Visibility.Collapsed
+        
+        # Hide busy indicator
+        self.set_busy(False)
     
     def isolate_button_click(self, sender, args):
         """Handle isolate button click."""

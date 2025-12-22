@@ -146,13 +146,78 @@ class MappingEntry(object):
     def RevitValue(self, value):
         self._revit_value = value
 
+# Helper function to load styles into Application.Resources before window creation
+def ensure_styles_loaded():
+    """Ensure CommonStyles are loaded into Application.Resources before XAML parsing."""
+    try:
+        from System.Windows import Application
+        from System.Windows.Markup import XamlReader
+        from System.IO import File
+        import os.path as op
+        
+        # Check if styles are already loaded
+        if Application.Current is not None and Application.Current.Resources is not None:
+            try:
+                # Try to access the resource to see if it exists
+                test_resource = Application.Current.Resources['BusyOverlayStyle']
+                if test_resource is not None:
+                    return  # Already loaded
+            except:
+                pass  # Resource doesn't exist, need to load it
+        
+        # Calculate styles path
+        script_dir = op.dirname(__file__)
+        stack_dir = op.dirname(script_dir)
+        panel_dir = op.dirname(stack_dir)
+        tab_dir = op.dirname(panel_dir)
+        extension_dir = op.dirname(tab_dir)
+        styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
+        
+        if op.exists(styles_path):
+            # Read and parse XAML
+            xaml_content = File.ReadAllText(styles_path)
+            styles_dict = XamlReader.Parse(xaml_content)
+            
+            # Ensure Application.Current exists
+            if Application.Current is None:
+                from System.Windows import Application as App
+                app = App()
+            
+            # Merge into Application.Resources
+            if Application.Current.Resources is None:
+                from System.Windows import ResourceDictionary
+                Application.Current.Resources = ResourceDictionary()
+            
+            # Merge styles using MergedDictionaries (proper WPF way)
+            try:
+                Application.Current.Resources.MergedDictionaries.Add(styles_dict)
+            except:
+                # Fallback: try to copy resources manually if MergedDictionaries fails
+                try:
+                    for key in styles_dict.Keys:
+                        try:
+                            if Application.Current.Resources[key] is None:
+                                pass
+                        except:
+                            Application.Current.Resources[key] = styles_dict[key]
+                except:
+                    logger.warning("Could not merge styles dictionary")
+    except Exception as e:
+        logger.warning("Could not pre-load styles into Application.Resources: {}".format(str(e)))
+
 class ConfigEditorUI(forms.WPFWindow):
     """Configuration Editor UI implementation."""
     
     def __init__(self):
         """Initialize the Configuration Editor UI."""
+        # Load styles into Application.Resources BEFORE creating window
+        ensure_styles_loaded()
+        
         # Initialize WPF window
         forms.WPFWindow.__init__(self, 'ConfigEditor.xaml')
+        
+        # Load styles ResourceDictionary (for window-specific resources if needed)
+        self.load_styles()
         
         # Initialize StreamBIM API client
         self.streambim_client = streambim_api.StreamBIMClient()
@@ -187,8 +252,60 @@ class ConfigEditorUI(forms.WPFWindow):
         # Load configurations
         self.load_configurations()
 
-        # Try automatic login
+        # Try automatic login (but don't show dialog if it fails - check before window creation)
         self.try_automatic_login()
+    
+    def load_styles(self):
+        """Load the common styles ResourceDictionary."""
+        try:
+            import os.path as op
+            script_dir = op.dirname(__file__)
+            stack_dir = op.dirname(script_dir)
+            panel_dir = op.dirname(stack_dir)
+            tab_dir = op.dirname(panel_dir)
+            extension_dir = op.dirname(tab_dir)
+            styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
+            
+            if op.exists(styles_path):
+                from System.Windows import Application
+                from System.Windows.Markup import XamlReader
+                from System.IO import File
+                
+                # Read XAML content
+                xaml_content = File.ReadAllText(styles_path)
+                
+                # Parse as ResourceDictionary
+                styles_dict = XamlReader.Parse(xaml_content)
+                
+                # Merge into window resources
+                if self.Resources is None:
+                    from System.Windows import ResourceDictionary
+                    self.Resources = ResourceDictionary()
+                
+                # If it's a ResourceDictionary, merge its contents
+                if hasattr(styles_dict, 'Keys'):
+                    for key in styles_dict.Keys:
+                        self.Resources[key] = styles_dict[key]
+                else:
+                    # Try to merge the entire dictionary
+                    self.Resources.MergedDictionaries.Add(styles_dict)
+                    
+                logger.debug("Loaded styles from: {}".format(styles_path))
+        except Exception as e:
+            logger.warning("Could not load styles: {}. Using default styles.".format(str(e)))
+            import traceback
+            logger.debug("Style loading error details: {}".format(traceback.format_exc()))
+    
+    def set_busy(self, is_busy, message="Loading..."):
+        """Show or hide the busy overlay indicator."""
+        try:
+            if is_busy:
+                self.busyOverlay.Visibility = Visibility.Visible
+                self.busyTextBlock.Text = message
+            else:
+                self.busyOverlay.Visibility = Visibility.Collapsed
+        except Exception as e:
+            logger.debug("Error setting busy indicator: {}".format(str(e)))
     
     def try_automatic_login(self):
         """Attempt to automatically log in using saved tokens."""
@@ -208,16 +325,13 @@ class ConfigEditorUI(forms.WPFWindow):
             return True
         else:
             self.update_status("No saved StreamBIM login found. Please log in using the ChecklistImporter first.")
-            # Show a message to the user
-            MessageBox.Show(
-                "No saved StreamBIM login found. Please log in using the ChecklistImporter tool first.",
-                "StreamBIM Login Required",
-                MessageBoxButton.OK
-            )
             return False
         
     def load_configurations(self):
         """Load all mapping configurations from storage."""
+        # Show busy indicator during loading
+        self.set_busy(True, "Loading configurations...")
+        
         try:
             # Clear existing configurations
             self.configs.Clear()
@@ -257,6 +371,9 @@ class ConfigEditorUI(forms.WPFWindow):
             import traceback
             logger.error("Stack trace: {}".format(traceback.format_exc()))
             self.update_status("Error loading configurations: {}".format(str(e)))
+        finally:
+            # Hide busy indicator
+            self.set_busy(False)
 
     def run_all_button_click(self, sender, args):
         """Process all configs when the Run All button is clicked."""
@@ -347,10 +464,35 @@ class ConfigEditorUI(forms.WPFWindow):
             self.update_status("Logging in to StreamBIM...")
             
             # Login to StreamBIM
-            login_success = self.api_client.login(username, password)
+            login_result = self.api_client.login(username, password)
+            
+            # Handle new MFA-enabled login response (dict) or legacy boolean
+            login_success = False
+            if isinstance(login_result, dict):
+                if login_result.get('success'):
+                    login_success = True
+                    self.update_status("Logged in successfully")
+                elif login_result.get('requires_mfa'):
+                    # MFA required - show message
+                    MessageBox.Show(
+                        "This account requires MFA (Multi-Factor Authentication).\n\nPlease use the Checklist Importer tool to log in with MFA support.",
+                        "MFA Required",
+                        MessageBoxButton.OK
+                    )
+                    self.update_status("MFA required. Please use Checklist Importer tool.")
+                    return False
+                else:
+                    self.update_status("Login failed: {}".format(self.api_client.last_error))
+                    return False
+            elif login_result:
+                # Legacy boolean success
+                login_success = True
+                self.update_status("Logged in successfully")
+            else:
+                self.update_status("Login failed: {}".format(self.api_client.last_error))
+                return False
             
             if login_success:
-                self.update_status("Logged in successfully")
                 
                 # Get projects
                 projects = self.api_client.get_projects()
@@ -411,6 +553,9 @@ class ConfigEditorUI(forms.WPFWindow):
         
         logger.debug("Starting batch import process for {} configurations".format(len(configs)))
         self.update_status("Starting batch import process...")
+        
+        # Show busy indicator during batch import
+        self.set_busy(True, "Processing batch import...")
         
         try:
             # Update main progress bar max
@@ -489,6 +634,8 @@ class ConfigEditorUI(forms.WPFWindow):
             
         finally:
             logger.debug("Batch import process completed, resetting UI state")
+            # Hide busy indicator
+            self.set_busy(False)
             # Re-enable buttons
             self.runAllButton.IsEnabled = True
             self.runSelectedButton.IsEnabled = True
@@ -1079,5 +1226,17 @@ if __name__ == '__main__':
     logger.debug("StreamBIM API module location: {}".format(streambim_api.__file__))
     logger.debug("save_configs_with_pickle function: {}".format(save_configs_with_pickle))
     
-    # Show the Configuration Editor UI
-    ConfigEditorUI().ShowDialog()
+    # Check for saved login BEFORE creating the window
+    temp_client = streambim_api.StreamBIMClient()
+    temp_client.load_tokens()
+    
+    if not temp_client.idToken:
+        # No saved login found - show error and exit without opening window
+        MessageBox.Show(
+            "No saved StreamBIM login found. Please log in using the ChecklistImporter tool first.",
+            "StreamBIM Login Required",
+            MessageBoxButton.OK
+        )
+    else:
+        # Show the Configuration Editor UI
+        ConfigEditorUI().ShowDialog()
