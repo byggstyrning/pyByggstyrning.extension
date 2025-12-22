@@ -2,12 +2,13 @@
 """Shared family creation functions for 3D Zone creation."""
 
 import os.path as op
+import os
 import shutil
 from Autodesk.Revit.DB import (
     FilteredElementCollector, Extrusion, BuiltInParameter, Category,
-    BuiltInCategory, ElementId, Transaction, FailureProcessingResult,
+    BuiltInCategory, ElementId, Transaction, TransactionStatus, FailureProcessingResult,
     IFailuresPreprocessor, CurveLoop, CurveArray, CurveArrArray,
-    XYZ, Transform, Plane, SketchPlane, SaveAsOptions
+    XYZ, Transform, Plane, SketchPlane, SaveAsOptions, FamilyInstance, Family
 )
 from Autodesk.Revit.DB.Structure import StructuralType
 from pyrevit import script
@@ -591,6 +592,604 @@ def create_zone_family(spatial_element, adapter, template_info, template_path, o
             return False, None, "Error processing family document: {}".format(str(family_error))
 
 
+def delete_family_instances(family, doc):
+    """Delete all instances of a given family from the project.
+    
+    Args:
+        family: Family element to delete instances for
+        doc: Revit document (project document)
+        
+    Returns:
+        tuple: (success: bool, deleted_count: int, error_reason: str or None)
+    """
+    # Validate family object first
+    if not family:
+        return False, 0, "Invalid family object (None)"
+    
+    # Capture family name and ID before any operations (in case family gets invalidated)
+    try:
+        # Check if element is valid by trying to access its properties
+        family_id = family.Id
+        family_name = family.Name
+    except Exception as validation_error:
+        # Family object is invalid or already deleted
+        error_msg = "Family object is invalid or has been deleted: {}".format(str(validation_error))
+        logger.error(error_msg)
+        return False, 0, error_msg
+    
+    try:
+        # Find all instances of this family
+        all_instances = FilteredElementCollector(doc)\
+            .OfClass(FamilyInstance)\
+            .WhereElementIsNotElementType()\
+            .ToElements()
+        
+        instances_to_delete = []
+        for instance in all_instances:
+            try:
+                if instance.Symbol and instance.Symbol.Family and instance.Symbol.Family.Id == family_id:
+                    instances_to_delete.append(instance)
+            except:
+                continue
+        
+        if not instances_to_delete:
+            logger.debug("No instances found for family '{}'".format(family_name))
+            return True, 0, None
+        
+        # Delete instances in a transaction
+        t = Transaction(doc, "Delete Family Instances")
+        t.Start()
+        try:
+            deleted_count = 0
+            for instance in instances_to_delete:
+                try:
+                    doc.Delete(instance.Id)
+                    deleted_count += 1
+                except Exception as delete_error:
+                    logger.warning("Failed to delete instance {}: {}".format(instance.Id, delete_error))
+            
+            t.Commit()
+            logger.debug("Deleted {} instance(s) of family '{}'".format(deleted_count, family_name))
+            return True, deleted_count, None
+            
+        except Exception as trans_error:
+            t.RollBack()
+            # Convert error to string safely
+            trans_error_str = str(trans_error) if trans_error else "Unknown transaction error"
+            error_msg = "Transaction failed while deleting instances of family '{}': {}".format(family_name, trans_error_str)
+            logger.error(error_msg)
+            return False, 0, error_msg
+            
+    except Exception as e:
+        # Convert error to string safely (e might contain invalid object references)
+        error_str = str(e) if e else "Unknown error"
+        error_msg = "Error finding/deleting instances of family '{}': {}".format(family_name, error_str)
+        logger.error(error_msg)
+        return False, 0, error_msg
+
+
+def delete_family_from_project(family, doc):
+    """Delete a family from the project, including all its instances.
+    
+    Args:
+        family: Family element to delete
+        doc: Revit document (project document)
+        
+    Returns:
+        tuple: (success: bool, error_reason: str or None)
+    """
+    # Validate family object first
+    if not family:
+        return False, "Invalid family object (None)"
+    
+    # Capture family name and ID before any operations (in case family gets invalidated)
+    try:
+        # Check if element is valid by trying to access its properties
+        family_id = family.Id
+        family_name = family.Name
+    except Exception as validation_error:
+        # Family object is invalid or already deleted
+        error_msg = "Family object is invalid or has been deleted: {}".format(str(validation_error))
+        logger.error(error_msg)
+        return False, error_msg
+    
+    try:
+        # First, delete all instances of this family
+        instances_success, deleted_count, instances_error = delete_family_instances(family, doc)
+        
+        if not instances_success:
+            # Convert error to string safely (it might contain invalid object references)
+            try:
+                error_str = str(instances_error) if instances_error else "Unknown error"
+            except:
+                error_str = "Error converting error message to string"
+            logger.warning("Failed to delete instances before deleting family '{}': {}".format(family_name, error_str))
+            # Continue anyway - try to delete family (it might fail if instances still exist)
+        
+        # Now delete the family itself
+        t = Transaction(doc, "Delete Family")
+        t.Start()
+        try:
+            doc.Delete(family_id)
+            t.Commit()
+            logger.debug("Deleted family '{}' (had {} instance(s))".format(family_name, deleted_count))
+            return True, None
+            
+        except Exception as delete_error:
+            t.RollBack()
+            # Convert error to string safely
+            try:
+                delete_error_str = str(delete_error) if delete_error else "Unknown delete error"
+            except:
+                delete_error_str = "Error converting delete error to string"
+            error_msg = "Failed to delete family '{}': {}".format(family_name, delete_error_str)
+            logger.error(error_msg)
+            return False, error_msg
+            
+    except Exception as e:
+        # Family object might be invalidated at this point, use captured name
+        # Convert error to string safely (e might contain invalid object references)
+        try:
+            error_str = str(e) if e else "Unknown error"
+        except:
+            error_str = "Error converting exception to string"
+        error_msg = "Error deleting family '{}': {}".format(family_name, error_str)
+        logger.error(error_msg)
+        return False, error_msg
+
+
+# DEPRECATED: This function is no longer used. We now delete and recreate families instead of updating them.
+# Keeping it commented out for reference.
+# DEPRECATED: This function is no longer used. We now delete and recreate families instead of updating them.
+# Keeping it for reference but it should not be called.
+def update_existing_family_geometry(spatial_element, adapter, template_info, existing_family, 
+                                   doc, app, element_number_str, element_name_str):
+    """Update geometry of an existing family.
+    
+    DEPRECATED: This function is no longer used. Use delete_family_from_project() and create_zone_family() instead.
+    
+    Args:
+        spatial_element: Area or Room element
+        adapter: SpatialElementAdapter instance
+        template_info: Dict from inspect_template_family()
+        existing_family: Existing Family element to update
+        doc: Revit document (project document)
+        app: Revit application
+        element_number_str: Element number string (for logging)
+        element_name_str: Element name string (for logging)
+        
+    Returns:
+        tuple: (success: bool, error_reason: str or None)
+    """
+    family_doc = None
+    
+    try:
+        # Open existing family for editing
+        family_doc = doc.EditFamily(existing_family)
+        if not family_doc:
+            return False, "Failed to open existing family for editing"
+        
+        logger.debug("Opened existing family '{}' for geometry update".format(existing_family.Name))
+        
+        # Get the extrusion
+        extrusions = FilteredElementCollector(family_doc).OfClass(Extrusion).ToElements()
+        if not extrusions:
+            return False, "No extrusion found in existing family"
+        
+        extrusion = extrusions[0]
+        logger.debug("Found extrusion in existing family: ID {}".format(extrusion.Id))
+        
+        # Get family manager
+        fm = family_doc.FamilyManager
+        
+        # Extract boundary loops
+        loops, insertion_point, height = extract_boundary_loops(spatial_element, doc, adapter)
+        
+        if not loops or not insertion_point:
+            return False, "Invalid boundary data (no loops or invalid insertion point)"
+        
+        # Translate loops to be relative to insertion point (center near origin)
+        # Also translate to Z=0 to ensure sketch plane is perfectly horizontal
+        translated_loops = []
+        for loop_idx, loop in enumerate(loops):
+            translated_loop = CurveLoop()
+            loop_curves = []
+            
+            for curve in loop:
+                try:
+                    # Validate curve before translation
+                    if curve is None:
+                        logger.debug("Element {}: Found None curve in loop {}, skipping".format(element_number_str, loop_idx))
+                        continue
+                    
+                    # Check if curve is valid
+                    try:
+                        start_pt = curve.GetEndPoint(0)
+                        end_pt = curve.GetEndPoint(1)
+                        
+                        # Check for degenerate curves
+                        if start_pt.DistanceTo(end_pt) < 0.001:
+                            logger.debug("Element {}: Degenerate curve detected in loop {} (length < 1mm), skipping".format(element_number_str, loop_idx))
+                            continue
+                    except Exception as curve_check_error:
+                        logger.debug("Element {}: Error checking curve in loop {}: {}, skipping".format(element_number_str, loop_idx, curve_check_error))
+                        continue
+                    
+                    # Translate curve to be relative to insertion point AND set Z=0
+                    first_pt = curve.GetEndPoint(0)
+                    translation = Transform.CreateTranslation(XYZ(-insertion_point.X, -insertion_point.Y, -first_pt.Z))
+                    translated_curve = curve.CreateTransformed(translation)
+                    
+                    # Validate translated curve
+                    if translated_curve is None:
+                        logger.debug("Element {}: Translated curve is None in loop {}, skipping".format(element_number_str, loop_idx))
+                        continue
+                    
+                    translated_loop.Append(translated_curve)
+                    loop_curves.append(translated_curve)
+                except Exception as curve_error:
+                    logger.debug("Element {}: Error processing curve in loop {}: {}, skipping".format(element_number_str, loop_idx, curve_error))
+                    continue
+            
+            # Validate loop has at least 3 curves
+            if len(loop_curves) < 3:
+                logger.debug("Element {}: Loop {} has only {} curves (minimum 3 required), skipping".format(element_number_str, loop_idx, len(loop_curves)))
+                continue
+            
+            # Check if loop is closed
+            try:
+                if translated_loop.IsOpen():
+                    logger.debug("Element {}: Loop {} is open (not closed), attempting to close".format(element_number_str, loop_idx))
+                    first_curve = loop_curves[0]
+                    last_curve = loop_curves[-1]
+                    first_pt = first_curve.GetEndPoint(0)
+                    last_pt = last_curve.GetEndPoint(1)
+                    
+                    gap = first_pt.DistanceTo(last_pt)
+                    if gap > 0.001:
+                        logger.debug("Element {}: Loop {} gap is {} (too large to auto-close)".format(element_number_str, loop_idx, gap))
+                        continue
+            except Exception as loop_check_error:
+                logger.debug("Element {}: Could not check if loop {} is closed: {}".format(element_number_str, loop_idx, loop_check_error))
+            
+            translated_loops.append(translated_loop)
+        
+        # Validate we have at least one valid loop
+        if not translated_loops:
+            return False, "No valid loops after translation (open loop or invalid geometry)"
+        
+        # Delete and recreate extrusion
+        logger.debug("Updating extrusion geometry...")
+        
+        # Suppress "off axis" warnings
+        class OffAxisFailurePreprocessor(IFailuresPreprocessor):
+            def PreprocessFailures(self, failuresAccessor):
+                failures = failuresAccessor.GetFailureMessages()
+                for failure in failures:
+                    if failure.GetSeverity().ToString() == "Warning":
+                        failuresAccessor.DeleteWarning(failure)
+                return FailureProcessingResult.Continue
+        
+        t = Transaction(family_doc, "Update Extrusion Geometry")
+        
+        try:
+            t.Start()
+        except Exception as start_error:
+            if family_doc:
+                try:
+                    family_doc.Close(False)
+                except:
+                    pass
+            return False, "Failed to start transaction: {}".format(str(start_error))
+        
+        failure_options = t.GetFailureHandlingOptions()
+        failure_options.SetFailuresPreprocessor(OffAxisFailurePreprocessor())
+        t.SetFailureHandlingOptions(failure_options)
+        
+        try:
+            # Delete old extrusion
+            family_doc.Delete(extrusion.Id)
+            
+            # Create sketch plane at Z=0
+            origin = XYZ(0, 0, 0)
+            normal = XYZ.BasisZ
+            plane = Plane.CreateByNormalAndOrigin(normal, origin)
+            sketch_plane = SketchPlane.Create(family_doc, plane)
+            
+            # Create CurveArrArray from loops
+            curve_arr_array = CurveArrArray()
+            for loop in translated_loops:
+                curve_arr = CurveArray()
+                for curve in loop:
+                    curve_arr.Append(curve)
+                curve_arr_array.Append(curve_arr)
+            
+            # Validate curve array
+            if curve_arr_array.Size == 0:
+                t.RollBack()
+                return False, "CurveArrArray is empty (no valid loops)"
+            
+            # Validate height
+            if height is not None and (height <= 0 or height > 10000):
+                t.RollBack()
+                return False, "Invalid height: {} (must be > 0 and < 10000)".format(height)
+            
+            # Create new extrusion
+            family_create = family_doc.FamilyCreate
+            extrusion_height = height if height is not None else 10.0  # Temporary default
+            
+            new_extrusion = family_create.NewExtrusion(True, curve_arr_array, sketch_plane, extrusion_height)
+            
+            if not new_extrusion:
+                t.RollBack()
+                return False, "Failed to create new extrusion (invalid geometry)"
+            
+            logger.debug("Created new extrusion: ID {}".format(new_extrusion.Id))
+            
+            # Set subcategory if found
+            if template_info['subcategory']:
+                try:
+                    subcat_param = new_extrusion.get_Parameter(BuiltInParameter.FAMILY_ELEM_SUBCATEGORY)
+                    if subcat_param and not subcat_param.IsReadOnly:
+                        subcat_param.Set(template_info['subcategory'].Id)
+                        logger.debug("Set subcategory to: 3D Zone")
+                except Exception as subcat_error:
+                    logger.debug("Could not set subcategory: {}".format(subcat_error))
+            
+            # Set family parameter values FIRST (before association)
+            if template_info['extrusion_start_param']:
+                try:
+                    fm.Set(template_info['extrusion_start_param'], 0.0)
+                except Exception as pre_set_error:
+                    logger.debug("Could not pre-set start family parameter: {}".format(pre_set_error))
+            
+            if template_info['extrusion_end_param'] and height is not None:
+                try:
+                    fm.Set(template_info['extrusion_end_param'], height)
+                except Exception as pre_set_error:
+                    logger.debug("Could not pre-set end family parameter: {}".format(pre_set_error))
+            
+            # Regenerate to commit family parameter values
+            family_doc.Regenerate()
+            
+            # Set element parameters directly (they're writable before association)
+            if template_info['extrusion_start_param']:
+                try:
+                    start_param = new_extrusion.get_Parameter(BuiltInParameter.EXTRUSION_START_PARAM)
+                    if start_param and not start_param.IsReadOnly:
+                        start_param.Set(0.0)
+                        logger.debug("Set extrusion start parameter directly on element: 0.0")
+                except Exception as set_error:
+                    logger.debug("Could not set start parameter directly: {}".format(set_error))
+            
+            if template_info['extrusion_end_param'] and height is not None:
+                try:
+                    end_param = new_extrusion.get_Parameter(BuiltInParameter.EXTRUSION_END_PARAM)
+                    if end_param and not end_param.IsReadOnly:
+                        end_param.Set(height)
+                        logger.debug("Set extrusion end parameter directly on element: {}".format(height))
+                except Exception as set_error:
+                    logger.debug("Could not set end parameter directly: {}".format(set_error))
+            
+            # Regenerate after setting element parameters
+            family_doc.Regenerate()
+            
+            # Set Top Offset and Bottom Offset (user-facing parameters)
+            if height is not None:
+                # Set Bottom Offset first
+                if template_info['bottom_offset_param']:
+                    try:
+                        fm.Set(template_info['bottom_offset_param'], 0.0)
+                        logger.debug("Set bottom offset parameter: 0.0")
+                    except Exception as bottom_error:
+                        logger.debug("Could not set bottom offset parameter: {}".format(bottom_error))
+                
+                # Set Top Offset
+                if template_info['top_offset_param']:
+                    try:
+                        fm.Set(template_info['top_offset_param'], height)
+                        logger.debug("Set top offset parameter: {}".format(height))
+                    except Exception as top_error:
+                        logger.debug("Could not set top offset parameter: {}".format(top_error))
+            
+            # Regenerate after setting family parameters
+            family_doc.Regenerate()
+            
+            # Associate ExtrusionEnd/ExtrusionStart to the extrusion element (if not already associated)
+            if template_info['extrusion_start_param']:
+                try:
+                    start_param = new_extrusion.get_Parameter(BuiltInParameter.EXTRUSION_START_PARAM)
+                    if start_param:
+                        # Check if already associated
+                        associated_param = fm.GetAssociatedFamilyParameter(start_param)
+                        if not associated_param:
+                            fm.AssociateElementParameterToFamilyParameter(start_param, template_info['extrusion_start_param'])
+                            logger.debug("Associated extrusion start parameter")
+                except Exception as assoc_error:
+                    logger.debug("Could not associate start parameter: {}".format(assoc_error))
+            
+            if template_info['extrusion_end_param']:
+                try:
+                    end_param = new_extrusion.get_Parameter(BuiltInParameter.EXTRUSION_END_PARAM)
+                    if end_param:
+                        # Check if already associated
+                        associated_param = fm.GetAssociatedFamilyParameter(end_param)
+                        if not associated_param:
+                            fm.AssociateElementParameterToFamilyParameter(end_param, template_info['extrusion_end_param'])
+                            logger.debug("Associated extrusion end parameter")
+                except Exception as assoc_error:
+                    logger.debug("Could not associate end parameter: {}".format(assoc_error))
+            
+            # Regenerate after association
+            family_doc.Regenerate()
+            
+            # Associate material parameter (if not already associated)
+            if template_info['material_param']:
+                try:
+                    mat_param = new_extrusion.get_Parameter(BuiltInParameter.MATERIAL_ID_PARAM)
+                    if mat_param:
+                        associated_param = fm.GetAssociatedFamilyParameter(mat_param)
+                        if not associated_param:
+                            fm.AssociateElementParameterToFamilyParameter(mat_param, template_info['material_param'])
+                            logger.debug("Associated material parameter")
+                except Exception as assoc_error:
+                    logger.debug("Could not associate material parameter: {}".format(assoc_error))
+            
+            # Set extrusion start/end values (verify they're still correct after association)
+            if template_info['extrusion_start_param']:
+                try:
+                    fm.Set(template_info['extrusion_start_param'], 0.0)
+                except Exception:
+                    pass
+            
+            if template_info['extrusion_end_param'] and height is not None:
+                param_set_success = False
+                try:
+                    # Method 1: Try setting via FamilyManager
+                    try:
+                        fm.Set(template_info['extrusion_end_param'], height)
+                        family_doc.Regenerate()
+                        param_set_success = True
+                    except Exception:
+                        pass
+                    
+                    # Method 2: Set directly on element parameter
+                    try:
+                        element_end_param = new_extrusion.get_Parameter(BuiltInParameter.EXTRUSION_END_PARAM)
+                        if element_end_param and not element_end_param.IsReadOnly:
+                            element_end_param.Set(height)
+                            family_doc.Regenerate()
+                            param_set_success = True
+                    except Exception:
+                        if not param_set_success:
+                            pass
+                    
+                    if not param_set_success:
+                        logger.warning("Failed to set extrusion end parameter for element {} - value may default to template value".format(element_number_str))
+                except Exception as end_error:
+                    logger.warning("Error setting extrusion end parameter for element {}: {}".format(element_number_str, end_error))
+            
+            t.Commit()
+            
+            # When editing an existing family via EditFamily(), the family document doesn't have a file path.
+            # We need to save it to a temporary file first, then load it from that file.
+            # IMPORTANT: Use the EXACT same family name so LoadFamily updates the existing family.
+            import tempfile
+            import os
+            temp_dir = tempfile.mkdtemp()
+            temp_family_path = op.join(temp_dir, "{}.rfa".format(existing_family.Name))
+            
+            from Autodesk.Revit.DB import SaveAsOptions, IFamilyLoadOptions, FamilySource
+            
+            try:
+                # Save family to temporary file
+                save_options = SaveAsOptions()
+                save_options.OverwriteExistingFile = True
+                family_doc.SaveAs(temp_family_path, save_options)
+                
+                # Close the family document before loading
+                family_doc.Close(False)
+                family_doc = None
+                
+                # Load the family from the temporary file
+                class FamilyLoadOptions(IFamilyLoadOptions):
+                    def OnFamilyFound(self, familyInUse, overwriteParameterValues):
+                        overwriteParameterValues[0] = True
+                        return True
+                    
+                    def OnSharedFamilyFound(self, sharedFamily, familyInUse, source, overwriteParameterValues):
+                        source[0] = FamilySource.Family
+                        overwriteParameterValues[0] = True
+                        return True
+                
+                load_options = FamilyLoadOptions()
+                
+                # Load from file path - this should update the existing family if names match
+                load_result = doc.LoadFamily(temp_family_path, load_options)
+                
+                # Clean up temporary file and directory
+                try:
+                    if op.exists(temp_family_path):
+                        os.remove(temp_family_path)
+                    if op.exists(temp_dir):
+                        os.rmdir(temp_dir)
+                except:
+                    pass
+                
+                # Check if LoadFamily succeeded
+                if isinstance(load_result, tuple):
+                    load_success = load_result[0] if len(load_result) > 0 else False
+                elif isinstance(load_result, bool):
+                    load_success = load_result
+                else:
+                    load_success = load_result is not None
+                
+                if not load_success:
+                    return False, "Failed to load updated family into project (LoadFamily returned False)"
+                
+                logger.debug("Updated family: {}".format(existing_family.Name))
+                return True, None
+                
+            except Exception as save_error:
+                # Clean up on error
+                if family_doc:
+                    try:
+                        family_doc.Close(False)
+                    except:
+                        pass
+                    family_doc = None
+                
+                try:
+                    if op.exists(temp_family_path):
+                        os.remove(temp_family_path)
+                    if op.exists(temp_dir):
+                        os.rmdir(temp_dir)
+                except:
+                    pass
+                
+                return False, "Error saving/loading updated family: {}".format(str(save_error))
+            
+        except Exception as recreate_error:
+                # Close document on error
+                if family_doc:
+                    try:
+                        family_doc.Close(False)
+                    except:
+                        pass
+                    family_doc = None
+                return False, "Error saving/loading updated family: {}".format(str(save_error))
+            
+        except Exception as recreate_error:
+            # Check transaction status before attempting rollback
+            try:
+                transaction_status = t.GetStatus()
+                if transaction_status == TransactionStatus.Started:
+                    t.RollBack()
+            except Exception as rollback_error:
+                pass
+            
+            logger.debug("Element {}: Error updating extrusion: {}, skipping".format(element_number_str, recreate_error))
+            if family_doc:
+                try:
+                    family_doc.Close(False)
+                except:
+                    pass
+                family_doc = None
+            return False, "Error updating extrusion: {}".format(str(recreate_error))
+            
+    except Exception as family_error:
+        logger.error("Error updating existing family for element {}: {}".format(element_number_str, family_error))
+        import traceback
+        logger.error(traceback.format_exc())
+        if family_doc:
+            try:
+                family_doc.Close(False)
+            except:
+                pass
+            family_doc = None
+        return False, "Error updating existing family: {}".format(str(family_error))
+
+
 def load_families(family_data_list, doc, app, progress_callback=None):
     """Load all families into the project (no transaction).
     
@@ -696,6 +1295,7 @@ def place_instances(family_data_list, doc, adapter, template_info=None, progress
     success_count = 0
     fail_count = 0
     failed_elements = []
+    created_instance_ids = []  # Track created instance IDs for selection
     
     t = Transaction(doc, "Place 3D Zone Instances")
     t.Start()
@@ -716,96 +1316,140 @@ def place_instances(family_data_list, doc, adapter, template_info=None, progress
                 progress_callback(progress)
             
             try:
-                if not loaded_family:
-                    logger.warning("Failed to load family: {}".format(output_family_name))
-                    fail_count += 1
-                    failed_elements.append({
-                        'element': spatial_element,
-                        'element_number_str': element_number_str,
-                        'element_name_str': element_name_str,
-                        'reason': 'Failed to load family'
-                    })
-                    continue
+                # Check if instance already exists
+                existing_instance = family_data.get('existing_instance')
                 
-                logger.debug("Loaded family: {}".format(loaded_family.Name))
-                
-                symbol_ids_set = loaded_family.GetFamilySymbolIds()
-                symbol_ids = list(symbol_ids_set) if symbol_ids_set else []
-                if not symbol_ids or len(symbol_ids) == 0:
-                    logger.warning("No symbols found in loaded family")
-                    fail_count += 1
-                    failed_elements.append({
-                        'element': spatial_element,
-                        'element_number_str': element_number_str,
-                        'element_name_str': element_name_str,
-                        'reason': 'No symbols found in loaded family'
-                    })
-                    continue
-                
-                symbol = doc.GetElement(symbol_ids[0])
-                
-                if symbol and not symbol.IsActive:
-                    symbol.Activate()
-                    doc.Regenerate()
-                
-                if not symbol:
-                    logger.warning("No active symbol found for family {}".format(loaded_family.Name))
-                    fail_count += 1
-                    failed_elements.append({
-                        'element': spatial_element,
-                        'element_number_str': element_number_str,
-                        'element_name_str': element_name_str,
-                        'reason': 'No active symbol found'
-                    })
-                    continue
-                
-                # Rooms-specific: Set Top Offset on symbol before instance creation
-                # This is handled by checking if adapter has a method for this
-                # Get template_info from family_data (preferred) or use parameter
-                elem_template_info = family_data.get('template_info') or template_info
-                if hasattr(adapter, 'set_symbol_parameters_before_placement') and elem_template_info:
-                    adapter.set_symbol_parameters_before_placement(symbol, height, elem_template_info, doc, element_number_str)
-                
-                # Get level
-                level_id = adapter.get_level_id(spatial_element)
-                level = doc.GetElement(level_id) if level_id else None
-                
-                # Create placement point with Z=0 relative to level
-                placement_point = XYZ(
-                    insertion_point.X,
-                    insertion_point.Y,
-                    0.0
-                )
-                
-                # Place instance
-                instance = doc.Create.NewFamilyInstance(
-                    placement_point,
-                    symbol,
-                    level,
-                    StructuralType.NonStructural
-                )
-                
-                if not instance:
-                    logger.warning("Failed to place instance for element {}".format(element_number_str))
-                    fail_count += 1
-                    failed_elements.append({
-                        'element': spatial_element,
-                        'element_number_str': element_number_str,
-                        'element_name_str': element_name_str,
-                        'reason': 'Failed to place instance'
-                    })
-                    continue
-                
-                logger.debug("Placed instance for element {}: {}".format(element_number_str, instance.Id))
-                
-                # Set phase if applicable
-                phase_id = adapter.get_phase_id(spatial_element)
-                adapter.set_phase_on_instance(instance, phase_id)
-                
-                # Copy properties using adapter
-                adapter.copy_properties_to_instance(spatial_element, instance, doc)
-                
-                success_count += 1
+                if existing_instance:
+                    # Instance already exists - update its parameters instead of creating new one
+                    logger.debug("Instance already exists for element {} - updating parameters".format(element_number_str))
+                    
+                    try:
+                        # Get template_info from family_data (preferred) or use parameter
+                        elem_template_info = family_data.get('template_info') or template_info
+                        
+                        # Update symbol parameters if adapter supports it
+                        symbol = existing_instance.Symbol
+                        if symbol and hasattr(adapter, 'set_symbol_parameters_before_placement') and elem_template_info:
+                            adapter.set_symbol_parameters_before_placement(symbol, height, elem_template_info, doc, element_number_str)
+                        
+                        # Set phase if applicable
+                        phase_id = adapter.get_phase_id(spatial_element)
+                        adapter.set_phase_on_instance(existing_instance, phase_id)
+                        
+                        # Copy properties using adapter (this updates existing instance parameters)
+                        adapter.copy_properties_to_instance(spatial_element, existing_instance, doc)
+                        
+                        logger.debug("Updated existing instance for element {}: {}".format(element_number_str, existing_instance.Id))
+                        created_instance_ids.append(existing_instance.Id)
+                        success_count += 1
+                        
+                    except Exception as update_error:
+                        logger.error("Error updating existing instance for element {}: {}".format(element_number_str, update_error))
+                        import traceback
+                        logger.error(traceback.format_exc())
+                        fail_count += 1
+                        failed_elements.append({
+                            'element': spatial_element,
+                            'element_number_str': element_number_str,
+                            'element_name_str': element_name_str,
+                            'reason': 'Error updating existing instance: {}'.format(str(update_error))
+                        })
+                        continue
+                    
+                else:
+                    # No existing instance - place new one
+                    if not loaded_family:
+                        logger.warning("Failed to load family: {}".format(output_family_name))
+                        fail_count += 1
+                        failed_elements.append({
+                            'element': spatial_element,
+                            'element_number_str': element_number_str,
+                            'element_name_str': element_name_str,
+                            'reason': 'Failed to load family'
+                        })
+                        continue
+                    
+                    logger.debug("Loaded family: {}".format(loaded_family.Name))
+                    
+                    symbol_ids_set = loaded_family.GetFamilySymbolIds()
+                    symbol_ids = list(symbol_ids_set) if symbol_ids_set else []
+                    if not symbol_ids or len(symbol_ids) == 0:
+                        logger.warning("No symbols found in loaded family")
+                        fail_count += 1
+                        failed_elements.append({
+                            'element': spatial_element,
+                            'element_number_str': element_number_str,
+                            'element_name_str': element_name_str,
+                            'reason': 'No symbols found in loaded family'
+                        })
+                        continue
+                    
+                    symbol = doc.GetElement(symbol_ids[0])
+                    
+                    if symbol and not symbol.IsActive:
+                        symbol.Activate()
+                        doc.Regenerate()
+                    
+                    if not symbol:
+                        logger.warning("No active symbol found for family {}".format(loaded_family.Name))
+                        fail_count += 1
+                        failed_elements.append({
+                            'element': spatial_element,
+                            'element_number_str': element_number_str,
+                            'element_name_str': element_name_str,
+                            'reason': 'No active symbol found'
+                        })
+                        continue
+                    
+                    # Rooms-specific: Set Top Offset on symbol before instance creation
+                    # This is handled by checking if adapter has a method for this
+                    # Get template_info from family_data (preferred) or use parameter
+                    elem_template_info = family_data.get('template_info') or template_info
+                    if hasattr(adapter, 'set_symbol_parameters_before_placement') and elem_template_info:
+                        adapter.set_symbol_parameters_before_placement(symbol, height, elem_template_info, doc, element_number_str)
+                    
+                    # Get level
+                    level_id = adapter.get_level_id(spatial_element)
+                    level = doc.GetElement(level_id) if level_id else None
+                    
+                    # Create placement point with Z=0 relative to level
+                    placement_point = XYZ(
+                        insertion_point.X,
+                        insertion_point.Y,
+                        0.0
+                    )
+                    
+                    # Place instance
+                    instance = doc.Create.NewFamilyInstance(
+                        placement_point,
+                        symbol,
+                        level,
+                        StructuralType.NonStructural
+                    )
+                    
+                    if not instance:
+                        logger.warning("Failed to place instance for element {}".format(element_number_str))
+                        fail_count += 1
+                        failed_elements.append({
+                            'element': spatial_element,
+                            'element_number_str': element_number_str,
+                            'element_name_str': element_name_str,
+                            'reason': 'Failed to place instance'
+                        })
+                        continue
+                    
+                    logger.debug("Placed instance for element {}: {}".format(element_number_str, instance.Id))
+                    
+                    # Set phase if applicable
+                    phase_id = adapter.get_phase_id(spatial_element)
+                    adapter.set_phase_on_instance(instance, phase_id)
+                    
+                    # Copy properties using adapter
+                    adapter.copy_properties_to_instance(spatial_element, instance, doc)
+                    
+                    # Track created instance ID
+                    created_instance_ids.append(instance.Id)
+                    success_count += 1
                 
             except Exception as place_error:
                 logger.error("Error placing family for element {}: {}".format(element_number_str, place_error))
@@ -827,5 +1471,5 @@ def place_instances(family_data_list, doc, adapter, template_info=None, progress
         logger.error(traceback.format_exc())
         fail_count += len(family_data_list) - success_count
     
-    return success_count, fail_count, failed_elements
+    return success_count, fail_count, failed_elements, created_instance_ids
 

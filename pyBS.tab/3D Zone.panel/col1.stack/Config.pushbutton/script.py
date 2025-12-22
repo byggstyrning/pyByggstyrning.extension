@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Configure 3D Zone parameter mappings.
+"""Configure spatial parameter mappings for 3D Zones, Rooms and Areas.
 
 Allows users to create, edit, and manage configurations for mapping
 parameters from spatial elements to contained elements.
 """
 
-__title__ = "Config"
+__title__ = "Edit Spatial\nMappings"
 __author__ = "Byggstyrning AB"
-__doc__ = "Configure 3D Zone parameter mappings"
+__doc__ = "Configure spatial parameter mappings for 3D Zones, Rooms and Areas"
 
 # Import standard libraries
 import sys
@@ -245,6 +245,25 @@ class ParameterMappingEntry(object):
     def __init__(self, SourceParameter="", TargetParameter=""):
         self._source_parameter = SourceParameter
         self._target_parameter = TargetParameter
+        # Set arrow image source
+        try:
+            arrow_path = op.join(tab_dir, 'lib', 'styles', 'icons', 'arrow.png')
+            if op.exists(arrow_path):
+                from System.Windows.Media.Imaging import BitmapImage
+                from System import Uri
+                bitmap = BitmapImage()
+                bitmap.BeginInit()
+                bitmap.UriSource = Uri(arrow_path)
+                bitmap.EndInit()
+                self._arrow_image_source = bitmap
+            else:
+                logger.debug("Arrow image not found at: {}".format(arrow_path))
+                self._arrow_image_source = None
+        except Exception as e:
+            logger.warning("Could not load arrow image: {}".format(str(e)))
+            import traceback
+            logger.debug(traceback.format_exc())
+            self._arrow_image_source = None
 
     @property
     def SourceParameter(self):
@@ -261,6 +280,10 @@ class ParameterMappingEntry(object):
     @TargetParameter.setter
     def TargetParameter(self, value):
         self._target_parameter = value
+    
+    @property
+    def ArrowImageSource(self):
+        return self._arrow_image_source
 
 class ParameterSelectorDialog(forms.WPFWindow):
     """Dialog for selecting source and target parameters side by side."""
@@ -330,8 +353,8 @@ class ParameterSelectorDialog(forms.WPFWindow):
     def load_styles(self):
         """Load the common styles ResourceDictionary."""
         try:
-            # Use the same path calculation as at the top of the file
-            styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
+            # Use tab_dir which is the extension root
+            styles_path = op.join(tab_dir, 'lib', 'styles', 'CommonStyles.xaml')
             
             if op.exists(styles_path):
                 from System.Windows.Markup import XamlReader
@@ -740,16 +763,83 @@ def get_source_element_instance_properties(doc, source_category, use_linked_docu
 
 # --- Main UI Class ---
 
+# Module-level cache for styles ResourceDictionary
+_styles_dict_cache = None
+
+def ensure_styles_loaded():
+    """Ensure CommonStyles are loaded into Application.Resources before XAML parsing."""
+    global _styles_dict_cache
+    
+    try:
+        from System.Windows import Application
+        from System.Windows.Markup import XamlReader
+        from System.IO import File
+        
+        # Check if styles are already loaded in Application.Resources
+        if Application.Current is not None and Application.Current.Resources is not None:
+            try:
+                test_resource = Application.Current.Resources['EnhancedDataGridStyle']
+                if test_resource is not None:
+                    return  # Already loaded
+            except:
+                pass
+        
+        # Load styles if not cached
+        if _styles_dict_cache is None:
+            # Calculate extension directory correctly
+            # tab_dir is already the extension root (pyByggstyrning.extension)
+            styles_path = op.join(tab_dir, 'lib', 'styles', 'CommonStyles.xaml')
+            
+            if op.exists(styles_path):
+                # Read and parse XAML
+                xaml_content = File.ReadAllText(styles_path)
+                _styles_dict_cache = XamlReader.Parse(xaml_content)
+                logger.debug("Loaded styles from: {}".format(styles_path))
+            else:
+                logger.warning("CommonStyles.xaml not found at: {}".format(styles_path))
+                return
+        
+        # Ensure Application.Current exists
+        if Application.Current is None:
+            from System.Windows import Application as App
+            app = App()
+        
+        # Merge into Application.Resources
+        if Application.Current.Resources is None:
+            from System.Windows import ResourceDictionary
+            Application.Current.Resources = ResourceDictionary()
+        
+        # Merge styles using MergedDictionaries (proper WPF way)
+        try:
+            Application.Current.Resources.MergedDictionaries.Add(_styles_dict_cache)
+        except:
+            # Fallback: try to copy resources manually if MergedDictionaries fails
+            try:
+                for key in _styles_dict_cache.Keys:
+                    try:
+                        if Application.Current.Resources[key] is None:
+                            pass
+                    except:
+                        Application.Current.Resources[key] = _styles_dict_cache[key]
+            except Exception as e:
+                logger.warning("Could not merge styles dictionary: {}".format(str(e)))
+    except Exception as e:
+        logger.warning("Could not load styles into Application.Resources: {}".format(str(e)))
+
+
 class Zone3DConfigEditorUI(forms.WPFWindow):
     """3D Zone Configuration Editor UI implementation."""
     
     def __init__(self):
         """Initialize the Configuration Editor UI."""
+        # Load styles BEFORE window initialization
+        ensure_styles_loaded()
+        
         # Initialize WPF window
         xaml_path = op.join(pushbutton_dir, 'Zone3DConfigEditor.xaml')
         forms.WPFWindow.__init__(self, xaml_path)
         
-        # Load common styles programmatically
+        # Also load styles into window resources as fallback
         self.load_styles()
         
         # Initialize data collections
@@ -818,8 +908,8 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
     def load_styles(self):
         """Load the common styles ResourceDictionary."""
         try:
-            # Use the same path calculation as at the top of the file
-            styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
+            # Use tab_dir which is the extension root
+            styles_path = op.join(tab_dir, 'lib', 'styles', 'CommonStyles.xaml')
             
             if op.exists(styles_path):
                 from System.Windows.Markup import XamlReader
@@ -838,15 +928,25 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
                 
                 # If it's a ResourceDictionary, merge its contents
                 if hasattr(styles_dict, 'Keys'):
+                    loaded_count = 0
                     for key in styles_dict.Keys:
                         self.Resources[key] = styles_dict[key]
+                        loaded_count += 1
+                    logger.debug("Loaded {} styles from: {}".format(loaded_count, styles_path))
+                    
+                    # Verify EnhancedDataGridStyle is loaded
+                    if 'EnhancedDataGridStyle' in self.Resources:
+                        logger.debug("EnhancedDataGridStyle found in window resources")
+                    else:
+                        logger.warning("EnhancedDataGridStyle NOT found in window resources")
                 else:
                     # Try to merge the entire dictionary
                     self.Resources.MergedDictionaries.Add(styles_dict)
-                    
-                logger.debug("Loaded styles from: {}".format(styles_path))
+                    logger.debug("Merged styles dictionary from: {}".format(styles_path))
         except Exception as e:
             logger.warning("Could not load styles: {}".format(str(e)))
+            import traceback
+            logger.error(traceback.format_exc())
     
     def EnabledCheckBox_Checked(self, sender, args):
         """Handle Enabled checkbox checked event."""
@@ -960,9 +1060,9 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
             
             # Save configurations
             if config.save_configs(revit.doc, all_configs):
-                self.update_status("Configuration updated")
+                self.update_status("Mapping updated")
             else:
-                self.update_status("Error updating configuration")
+                self.update_status("Error updating mapping")
         except Exception as e:
             logger.error("Error saving configuration from item: {}".format(str(e)))
             self.update_status("Error: {}".format(str(e)))
@@ -983,9 +1083,9 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
                     config_item = ConfigItem(cfg)
                     self.configs.Add(config_item)
                 
-                self.update_status("Loaded {} configurations".format(len(self.configs)))
+                self.update_status("Loaded {} mappings".format(len(self.configs)))
             else:
-                self.update_status("No configurations found")
+                self.update_status("No mappings found")
             
             self.refresh_ui()
             
@@ -993,7 +1093,7 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
             logger.error("Error loading configurations: {}".format(str(e)))
             import traceback
             logger.error("Stack trace: {}".format(traceback.format_exc()))
-            self.update_status("Error loading configurations: {}".format(str(e)))
+            self.update_status("Error loading mappings: {}".format(str(e)))
     
     def refresh_ui(self):
         """Force UI refresh."""
@@ -1264,7 +1364,7 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         # Validate form to update Save button state
         self.validate_form()
         
-        self.update_status("Adding new configuration")
+        self.update_status("Adding new mapping")
     
     def config_double_click(self, sender, args):
         """Handle double-click on configuration in list."""
@@ -1384,7 +1484,7 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         # Validate form to update Save button state
         self.validate_form()
         
-        self.update_status("Editing configuration: {}".format(selected_config.name))
+        self.update_status("Editing mapping: {}".format(selected_config.name))
     
     def load_category_options(self):
         """Load category options into list boxes."""
@@ -1422,7 +1522,7 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
                 # Build error message
                 errors = []
                 if self._validation_errors["name"]:
-                    errors.append("Configuration name is required")
+                    errors.append("Mapping name is required")
                 if self._validation_errors["source_category"]:
                     errors.append("A source category must be selected")
                 if self._validation_errors["mappings"]:
@@ -1609,17 +1709,17 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
                 # Go back to configs tab
                 self.back_button_click(None, None)
                 
-                self.update_status("Configuration saved successfully")
+                self.update_status("Mapping saved successfully")
             else:
-                self.update_status("Error saving configuration")
-                MessageBox.Show("Failed to save configuration.", "Error", MessageBoxButton.OK)
+                self.update_status("Error saving mapping")
+                MessageBox.Show("Failed to save mapping.", "Error", MessageBoxButton.OK)
             
         except Exception as e:
             logger.error("Error saving configuration: {}".format(str(e)))
             import traceback
             logger.error("Stack trace: {}".format(traceback.format_exc()))
-            self.update_status("Error saving configuration: {}".format(str(e)))
-            MessageBox.Show("Error saving configuration: {}".format(str(e)), "Error", MessageBoxButton.OK)
+            self.update_status("Error saving mapping: {}".format(str(e)))
+            MessageBox.Show("Error saving mapping: {}".format(str(e)), "Error", MessageBoxButton.OK)
     
     def delete_button_click(self, sender, args):
         """Handle delete button click."""
@@ -1631,7 +1731,7 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         
         # Confirm deletion
         result = MessageBox.Show(
-            "Are you sure you want to delete this configuration?\n\n{}".format(selected_config.name),
+            "Are you sure you want to delete this mapping?\n\n{}".format(selected_config.name),
             "Confirm Deletion",
             MessageBoxButton.YesNo
         )
@@ -1644,17 +1744,17 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
             if config.delete_config(revit.doc, config_id):
                 # Reload configurations
                 self.load_configurations()
-                self.update_status("Configuration deleted successfully")
+                self.update_status("Mapping deleted successfully")
             else:
-                self.update_status("Error deleting configuration")
-                MessageBox.Show("Failed to delete configuration.", "Error", MessageBoxButton.OK)
+                self.update_status("Error deleting mapping")
+                MessageBox.Show("Failed to delete mapping.", "Error", MessageBoxButton.OK)
         
         except Exception as e:
             logger.error("Error deleting configuration: {}".format(str(e)))
             import traceback
             logger.error("Stack trace: {}".format(traceback.format_exc()))
-            self.update_status("Error deleting configuration: {}".format(str(e)))
-            MessageBox.Show("Error deleting configuration: {}".format(str(e)), "Error", MessageBoxButton.OK)
+            self.update_status("Error deleting mapping: {}".format(str(e)))
+            MessageBox.Show("Error deleting mapping: {}".format(str(e)), "Error", MessageBoxButton.OK)
     
     def tab_selection_changed(self, sender, args):
         """Handle tab selection change."""
@@ -1684,7 +1784,7 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         # Update UI
         self.editConfigTab.IsEnabled = False
         self.tabControl.SelectedItem = self.configsTab
-        self.update_status("Returned to configurations list")
+        self.update_status("Returned to mappings list")
     
     def add_parameter_mapping_button_click(self, sender, args):
         """Handle add parameter mapping button click."""
@@ -1806,13 +1906,13 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
                 self.load_configurations()
                 # Reselect the moved item
                 self.configsListView.SelectedIndex = selected_index - 1
-                self.update_status("Configuration moved up")
+                self.update_status("Mapping moved up")
             else:
-                MessageBox.Show("Failed to reorder configurations.", "Error", MessageBoxButton.OK)
+                MessageBox.Show("Failed to reorder mappings.", "Error", MessageBoxButton.OK)
         
         except Exception as e:
-            logger.error("Error moving configuration up: {}".format(str(e)))
-            MessageBox.Show("Error moving configuration: {}".format(str(e)), "Error", MessageBoxButton.OK)
+            logger.error("Error moving mapping up: {}".format(str(e)))
+            MessageBox.Show("Error moving mapping: {}".format(str(e)), "Error", MessageBoxButton.OK)
     
     def move_down_button_click(self, sender, args):
         """Move selected configuration down in order."""
@@ -1837,13 +1937,13 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
                 self.load_configurations()
                 # Reselect the moved item
                 self.configsListView.SelectedIndex = selected_index + 1
-                self.update_status("Configuration moved down")
+                self.update_status("Mapping moved down")
             else:
-                MessageBox.Show("Failed to reorder configurations.", "Error", MessageBoxButton.OK)
+                MessageBox.Show("Failed to reorder mappings.", "Error", MessageBoxButton.OK)
         
         except Exception as e:
-            logger.error("Error moving configuration down: {}".format(str(e)))
-            MessageBox.Show("Error moving configuration: {}".format(str(e)), "Error", MessageBoxButton.OK)
+            logger.error("Error moving mapping down: {}".format(str(e)))
+            MessageBox.Show("Error moving mapping: {}".format(str(e)), "Error", MessageBoxButton.OK)
 
 # --- Main Execution ---
 

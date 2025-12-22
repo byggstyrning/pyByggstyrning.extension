@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Write parameters to elements based on configured zone mappings.
+"""Write parameters to elements based on configured spatial mappings.
 
-Executes all enabled configurations in order, writing parameters from
+Executes all enabled mappings in order, writing parameters from
 spatial elements (Rooms, Spaces, Areas, Mass/Generic Model) to contained elements.
 """
 
-__title__ = "Write"
+__title__ = "Write Mappings"
 __author__ = "Byggstyrning AB"
-__doc__ = "Execute all enabled 3D Zone configurations to write parameters to elements"
+__doc__ = "Write spatial mappings to elements"
 
 # Import standard libraries
 import sys

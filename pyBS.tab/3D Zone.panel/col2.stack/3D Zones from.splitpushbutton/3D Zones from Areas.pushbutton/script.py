@@ -36,7 +36,7 @@ splitpushbutton_dir = op.dirname(pushbutton_dir)
 stack_dir = op.dirname(splitpushbutton_dir)
 panel_dir = op.dirname(stack_dir)
 tab_dir = op.dirname(panel_dir)
-extension_dir = tab_dir
+extension_dir = op.dirname(tab_dir)  # Go up one more level to get extension root
 lib_path = op.join(extension_dir, 'lib')
 
 if lib_path not in sys.path:
@@ -140,7 +140,7 @@ if __name__ == '__main__':
     adapter = AreaAdapter()
     
     # Create zones using shared orchestration function
-    create_zones_from_spatial_elements(
+    success_count, fail_count, failed_elements, created_instance_ids = create_zones_from_spatial_elements(
         placed_areas,
         doc,
         adapter,

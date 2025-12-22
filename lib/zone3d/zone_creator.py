@@ -237,6 +237,7 @@ def create_zones_from_spatial_elements(
     fail_count = 0
     failed_elements = []
     family_data_list = []
+    created_instance_ids = []  # Initialize instance IDs list
     
     logger.debug("Starting to process {} {}...".format(len(selected_elements), element_type_name.lower()))
     
@@ -246,6 +247,25 @@ def create_zones_from_spatial_elements(
     
     # Cache families collection
     families_cache = FilteredElementCollector(doc).OfClass(Family).ToElements()
+    
+    # Cache zone instances for checking existing instances
+    from Autodesk.Revit.DB import FamilyInstance, BuiltInCategory, Category
+    all_generic_instances = FilteredElementCollector(doc)\
+        .OfClass(FamilyInstance)\
+        .OfCategory(BuiltInCategory.OST_GenericModel)\
+        .WhereElementIsNotElementType()\
+        .ToElements()
+    
+    # Filter to only 3DZone families
+    zone_instances_cache = []
+    family_name_prefix = adapter.get_family_name_prefix()
+    for instance in all_generic_instances:
+        try:
+            instance_family_name = instance.Symbol.Family.Name
+            if instance_family_name.startswith(family_name_prefix):
+                zone_instances_cache.append(instance)
+        except:
+            pass
     
     # Phase 1: Process elements and create family documents (0-50% progress)
     total_elements = len(selected_elements)
@@ -311,12 +331,42 @@ def create_zones_from_spatial_elements(
                 # Check if family already exists in project
                 existing_family = None
                 for fam in families_cache:
-                    if fam.Name == family_name_without_ext:
-                        existing_family = fam
-                        logger.debug("Family '{}' already exists in project, will reuse it".format(family_name_without_ext))
-                        break
+                    try:
+                        # Check if family is valid before accessing Name property
+                        # Deleted families will throw exceptions when accessing properties
+                        if fam and fam.Name == family_name_without_ext:
+                            existing_family = fam
+                            logger.debug("Family '{}' already exists in project".format(family_name_without_ext))
+                            break
+                    except Exception as fam_access_error:
+                        # Skip invalid/deleted families - they may have been deleted earlier in the loop
+                        logger.debug("Skipping invalid family reference in cache (may have been deleted): {}".format(fam_access_error))
+                        continue
                 
-                # Only create/modify family document if it doesn't exist
+                # If family exists, delete it and all its instances, then create a new one
+                if existing_family:
+                    # Store family name before deletion (in case it becomes invalid)
+                    existing_family_name = None
+                    try:
+                        existing_family_name = existing_family.Name
+                    except:
+                        existing_family_name = family_name_without_ext  # Fallback to expected name
+                    
+                    logger.debug("Family '{}' already exists for {} {} - deleting and recreating".format(
+                        existing_family_name, element_type_name.rstrip('s').lower(), element_number_str))
+                    
+                    # Delete all instances and the family itself
+                    success, error_reason = fc_module.delete_family_from_project(existing_family, doc)
+                    
+                    if not success:
+                        logger.warning("Failed to delete existing family '{}' for {} {}: {}. Will attempt to create new family anyway.".format(
+                            existing_family_name, element_type_name.rstrip('s').lower(), element_number_str, error_reason))
+                        # Continue to create new family - Revit may handle duplicate names or the deletion might have partially succeeded
+                    
+                    # Clear the existing_family reference so we create a new one
+                    existing_family = None
+                
+                # Create family if it doesn't exist (or was just deleted)
                 if not existing_family:
                     # Create family using shared function
                     success, family_doc, error_reason = fc_module.create_zone_family(
@@ -363,23 +413,6 @@ def create_zones_from_spatial_elements(
                         'height': height,
                         'template_info': template_info
                     })
-                else:
-                    # Family already exists, skip family document processing
-                    logger.debug("Skipping family document processing for {} {} - family already exists".format(
-                        element_type_name.rstrip('s').lower(), element_number_str))
-                    
-                    family_data_list.append({
-                        'spatial_element': spatial_element,
-                        'output_family_path': None,
-                        'insertion_point': insertion_point,
-                        'element_number_str': element_number_str,
-                        'element_name_str': element_name_str,
-                        'output_family_name': output_family_name,
-                        'family_name_without_ext': family_name_without_ext,
-                        'existing_family': existing_family,
-                        'height': height,
-                        'template_info': template_info
-                    })
                     
             except Exception as e:
                 logger.error("Error processing {} {} (ID: {}): {}".format(
@@ -411,7 +444,7 @@ def create_zones_from_spatial_elements(
             
             # Place instances (single transaction)
             # template_info is stored in each family_data dict
-            place_success, place_fail, place_failed = fc_module.place_instances(
+            place_success, place_fail, place_failed, created_instance_ids = fc_module.place_instances(
                 family_data_list, doc, adapter, None, progress_callback)
             
             success_count += place_success
@@ -437,5 +470,6 @@ def create_zones_from_spatial_elements(
     # Report failed elements
     report_failed_elements(failed_elements, element_type_name)
     
-    return success_count, fail_count, failed_elements
+    # Return instance IDs for selection (empty list if no instances created)
+    return success_count, fail_count, failed_elements, created_instance_ids
 
