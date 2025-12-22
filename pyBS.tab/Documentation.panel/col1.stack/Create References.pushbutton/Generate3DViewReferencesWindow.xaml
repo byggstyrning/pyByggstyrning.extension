@@ -11,13 +11,6 @@
     <!-- Styles will be loaded programmatically -->
     
     <Grid Margin="10">
-        <!-- Busy Indicator Overlay -->
-        <Border x:Name="busyOverlay" Style="{StaticResource BusyOverlayStyle}">
-            <StackPanel Style="{StaticResource BusyContentStyle}">
-                <ProgressBar x:Name="busyProgressBar" Style="{StaticResource BusyProgressBarStyle}"/>
-                <TextBlock x:Name="busyTextBlock" Style="{StaticResource BusyTextBlockStyle}" Text="Loading..."/>
-            </StackPanel>
-        </Border>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -25,15 +18,23 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
         
+        <!-- Busy Indicator Overlay -->
+        <Border x:Name="busyOverlay" Style="{DynamicResource BusyOverlayStyle}">
+            <StackPanel Style="{DynamicResource BusyContentStyle}">
+                <ProgressBar x:Name="busyProgressBar" Style="{DynamicResource BusyProgressBarStyle}"/>
+                <TextBlock x:Name="busyTextBlock" Style="{DynamicResource BusyTextBlockStyle}" Text="Loading..."/>
+            </StackPanel>
+        </Border>
+        
         <!-- Tool Information -->
         <StackPanel Grid.Row="0" Margin="0,0,0,10">
-            <TextBlock Text="Generate 3D View References" Style="{StaticResource HeaderTextBlockStyle}"/>
+            <TextBlock Text="Generate 3D View References" Style="{DynamicResource HeaderTextBlockStyle}"/>
             <TextBlock Text="This tool places 3D View Reference families at the location and extent of selected views." 
-                       Style="{StaticResource BodyTextBlockStyle}" Margin="0,5,0,0"/>
+                       Style="{DynamicResource BodyTextBlockStyle}" Margin="0,5,0,0"/>
         </StackPanel>
         
         <!-- View Categories -->
-        <GroupBox Grid.Row="1" Header="View Categories" Style="{StaticResource StandardGroupBoxStyle}">
+        <GroupBox Grid.Row="1" Header="View Categories" Style="{DynamicResource StandardGroupBoxStyle}">
             <WrapPanel x:Name="viewCategoriesPanel" Orientation="Horizontal" Margin="5">
                 <!-- View category checkboxes will be added here programmatically -->
             </WrapPanel>
@@ -61,7 +62,7 @@
             </Grid>
             
             <!-- DataGrid with Views -->
-            <DataGrid x:Name="viewsDataGrid" Grid.Row="1" Style="{StaticResource StandardDataGridStyle}"
+            <DataGrid x:Name="viewsDataGrid" Grid.Row="1" Style="{DynamicResource StandardDataGridStyle}"
                       SelectionMode="Extended" IsReadOnly="False">
                 <DataGrid.Columns>
                     <DataGridTemplateColumn Header="Select" Width="Auto">
@@ -82,10 +83,10 @@
         
         <!-- Action Buttons -->
         <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
-            <Button x:Name="createButton" Content="Create 3D View References" Click="CreateViewReferences_Click" Style="{StaticResource StandardButtonStyle}"/>
+            <Button x:Name="createButton" Content="Create 3D View References" Click="CreateViewReferences_Click" Style="{DynamicResource StandardButtonStyle}"/>
             <Button x:Name="isolateButton" Content="Isolate x created elements" Click="IsolateElements_Click" 
-                    IsEnabled="False" Style="{StaticResource SecondaryButtonStyle}"/>
-            <Button x:Name="cancelButton" Content="Cancel" Click="Cancel_Click" Style="{StaticResource SecondaryButtonStyle}"/>
+                    IsEnabled="False" Style="{DynamicResource StandardButtonStyle}"/>
+            <Button x:Name="cancelButton" Content="Cancel" Click="Cancel_Click" Style="{DynamicResource SecondaryButtonStyle}"/>
         </StackPanel>
     </Grid>
 </Window>

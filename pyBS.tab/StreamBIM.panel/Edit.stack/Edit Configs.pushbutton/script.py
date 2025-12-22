@@ -146,15 +146,77 @@ class MappingEntry(object):
     def RevitValue(self, value):
         self._revit_value = value
 
+# Helper function to load styles into Application.Resources before window creation
+def ensure_styles_loaded():
+    """Ensure CommonStyles are loaded into Application.Resources before XAML parsing."""
+    try:
+        from System.Windows import Application
+        from System.Windows.Markup import XamlReader
+        from System.IO import File
+        import os.path as op
+        
+        # Check if styles are already loaded
+        if Application.Current is not None and Application.Current.Resources is not None:
+            try:
+                # Try to access the resource to see if it exists
+                test_resource = Application.Current.Resources['BusyOverlayStyle']
+                if test_resource is not None:
+                    return  # Already loaded
+            except:
+                pass  # Resource doesn't exist, need to load it
+        
+        # Calculate styles path
+        script_dir = op.dirname(__file__)
+        stack_dir = op.dirname(script_dir)
+        panel_dir = op.dirname(stack_dir)
+        tab_dir = op.dirname(panel_dir)
+        extension_dir = op.dirname(tab_dir)
+        styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
+        
+        if op.exists(styles_path):
+            # Read and parse XAML
+            xaml_content = File.ReadAllText(styles_path)
+            styles_dict = XamlReader.Parse(xaml_content)
+            
+            # Ensure Application.Current exists
+            if Application.Current is None:
+                from System.Windows import Application as App
+                app = App()
+            
+            # Merge into Application.Resources
+            if Application.Current.Resources is None:
+                from System.Windows import ResourceDictionary
+                Application.Current.Resources = ResourceDictionary()
+            
+            # Merge styles using MergedDictionaries (proper WPF way)
+            try:
+                Application.Current.Resources.MergedDictionaries.Add(styles_dict)
+            except:
+                # Fallback: try to copy resources manually if MergedDictionaries fails
+                try:
+                    for key in styles_dict.Keys:
+                        try:
+                            if Application.Current.Resources[key] is None:
+                                pass
+                        except:
+                            Application.Current.Resources[key] = styles_dict[key]
+                except:
+                    logger.warning("Could not merge styles dictionary")
+    except Exception as e:
+        logger.warning("Could not pre-load styles into Application.Resources: {}".format(str(e)))
+
 class ConfigEditorUI(forms.WPFWindow):
     """Configuration Editor UI implementation."""
     
     def __init__(self):
         """Initialize the Configuration Editor UI."""
+        # Load styles into Application.Resources BEFORE creating window
+        ensure_styles_loaded()
+        
         # Initialize WPF window
         forms.WPFWindow.__init__(self, 'ConfigEditor.xaml')
         
-        # Load styles ResourceDictionary
+        # Load styles ResourceDictionary (for window-specific resources if needed)
         self.load_styles()
         
         # Initialize StreamBIM API client
@@ -190,7 +252,7 @@ class ConfigEditorUI(forms.WPFWindow):
         # Load configurations
         self.load_configurations()
 
-        # Try automatic login
+        # Try automatic login (but don't show dialog if it fails - check before window creation)
         self.try_automatic_login()
     
     def load_styles(self):
@@ -206,7 +268,6 @@ class ConfigEditorUI(forms.WPFWindow):
             
             if op.exists(styles_path):
                 from System.Windows import Application
-                from System.Uri import Uri
                 from System.Windows.Markup import XamlReader
                 from System.IO import File
                 
@@ -264,12 +325,6 @@ class ConfigEditorUI(forms.WPFWindow):
             return True
         else:
             self.update_status("No saved StreamBIM login found. Please log in using the ChecklistImporter first.")
-            # Show a message to the user
-            MessageBox.Show(
-                "No saved StreamBIM login found. Please log in using the ChecklistImporter tool first.",
-                "StreamBIM Login Required",
-                MessageBoxButton.OK
-            )
             return False
         
     def load_configurations(self):
@@ -1171,5 +1226,17 @@ if __name__ == '__main__':
     logger.debug("StreamBIM API module location: {}".format(streambim_api.__file__))
     logger.debug("save_configs_with_pickle function: {}".format(save_configs_with_pickle))
     
-    # Show the Configuration Editor UI
-    ConfigEditorUI().ShowDialog()
+    # Check for saved login BEFORE creating the window
+    temp_client = streambim_api.StreamBIMClient()
+    temp_client.load_tokens()
+    
+    if not temp_client.idToken:
+        # No saved login found - show error and exit without opening window
+        MessageBox.Show(
+            "No saved StreamBIM login found. Please log in using the ChecklistImporter tool first.",
+            "StreamBIM Login Required",
+            MessageBoxButton.OK
+        )
+    else:
+        # Show the Configuration Editor UI
+        ConfigEditorUI().ShowDialog()

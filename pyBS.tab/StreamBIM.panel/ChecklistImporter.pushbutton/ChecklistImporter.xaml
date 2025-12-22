@@ -2,30 +2,31 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="StreamBIM Checklist Importer" Width="600" Height="800" WindowStartupLocation="CenterScreen">
     <!-- Styles will be loaded programmatically -->
-    <Grid Margin="10">
-        <!-- Busy Indicator Overlay -->
-        <Border x:Name="busyOverlay" Style="{StaticResource BusyOverlayStyle}">
-            <StackPanel Style="{StaticResource BusyContentStyle}">
-                <ProgressBar x:Name="busyProgressBar" Style="{StaticResource BusyProgressBarStyle}"/>
-                <TextBlock x:Name="busyTextBlock" Style="{StaticResource BusyTextBlockStyle}" Text="Loading..."/>
-            </StackPanel>
-        </Border>
+    <Grid Margin="{DynamicResource GridMargin}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
+        
+        <!-- Busy Indicator Overlay -->
+        <Border x:Name="busyOverlay" Style="{DynamicResource BusyOverlayStyle}">
+            <StackPanel Style="{DynamicResource BusyContentStyle}">
+                <ProgressBar x:Name="busyProgressBar" Style="{DynamicResource BusyProgressBarStyle}"/>
+                <TextBlock x:Name="busyTextBlock" Style="{DynamicResource BusyTextBlockStyle}" Text="Loading..."/>
+            </StackPanel>
+        </Border>
 
         <StackPanel Grid.Row="0">
-            <TextBlock Text="StreamBIM Checklist Importer" FontSize="16" FontWeight="Bold" Margin="0,0,0,10"/>
-            <TextBlock Text="Import properties from StreamBIM to Revit instance parameters" Margin="0,0,0,15"/>
+            <TextBlock Text="StreamBIM Checklist Importer" FontSize="16" FontWeight="Bold" Style="{DynamicResource HeaderTextBlockStyle}"/>
+            <TextBlock Text="Import properties from StreamBIM to Revit instance parameters" Style="{DynamicResource BodyTextBlockStyle}" Margin="0,5,0,0"/>
         </StackPanel>
 
         <!-- Main Content with TabControl -->
         <TabControl Grid.Row="1" x:Name="tabControl">
             <!-- Login Tab -->
             <TabItem Header="1. Login" x:Name="loginTab">
-                <Grid Margin="10">
+                <Grid Margin="{DynamicResource GridMargin}">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
@@ -41,42 +42,42 @@
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
 
-                    <TextBlock Text="Server Region:" Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Margin="0,10,0,10"/>
-                    <ComboBox x:Name="serverRegionComboBox" Grid.Row="0" Grid.Column="1" Margin="0,10,0,10" SelectionChanged="server_region_selection_changed"/>
+                    <TextBlock Text="Server Region:" Grid.Row="0" Grid.Column="0" Style="{DynamicResource LabelTextBlockStyle}"/>
+                    <ComboBox x:Name="serverRegionComboBox" Grid.Row="0" Grid.Column="1" Style="{DynamicResource StandardComboBoxStyle}" SelectionChanged="server_region_selection_changed"/>
 
-                    <TextBlock x:Name="customUrlLabel" Text="Custom URL:" Grid.Row="1" Grid.Column="0" Style="{StaticResource LabelTextBlockStyle}" Visibility="Collapsed"/>
-                    <TextBox x:Name="customUrlTextBox" Grid.Row="1" Grid.Column="1" Margin="0,10,0,10" Style="{StaticResource WatermarkTextBoxStyle}" Tag="Enter custom StreamBIM server URL" Visibility="Collapsed"/>
+                    <TextBlock x:Name="customUrlLabel" Text="Custom URL:" Grid.Row="1" Grid.Column="0" Style="{DynamicResource LabelTextBlockStyle}" Visibility="Collapsed"/>
+                    <TextBox x:Name="customUrlTextBox" Grid.Row="1" Grid.Column="1" Style="{DynamicResource PlaceholderTextBoxStyle}" Tag="Enter custom StreamBIM server URL" Visibility="Collapsed"/>
 
-                    <TextBlock Text="Username:" Grid.Row="2" Grid.Column="0" Style="{StaticResource LabelTextBlockStyle}"/>
-                    <TextBox x:Name="usernameTextBox" Grid.Row="2" Grid.Column="1" Margin="0,10,0,10" Style="{StaticResource WatermarkTextBoxStyle}" Tag="Enter username"/>
+                    <TextBlock Text="Username:" Grid.Row="2" Grid.Column="0" Style="{DynamicResource LabelTextBlockStyle}"/>
+                    <TextBox x:Name="usernameTextBox" Grid.Row="2" Grid.Column="1" Style="{DynamicResource PlaceholderTextBoxStyle}" Tag="Enter username"/>
 
-                    <TextBlock Text="Password:" Grid.Row="3" Grid.Column="0" VerticalAlignment="Center" Margin="0,10,0,10"/>
-                    <PasswordBox x:Name="passwordBox" Grid.Row="3" Grid.Column="1" Margin="0,10,0,10"/>
+                    <TextBlock Text="Password:" Grid.Row="3" Grid.Column="0" Style="{DynamicResource LabelTextBlockStyle}"/>
+                    <PasswordBox x:Name="passwordBox" Grid.Row="3" Grid.Column="1" Style="{DynamicResource PlaceholderPasswordBoxStyle}"/>
 
-                    <TextBlock x:Name="mfaCodeLabel" Text="MFA Code:" Grid.Row="4" Grid.Column="0" Style="{StaticResource LabelTextBlockStyle}" Visibility="Collapsed"/>
-                    <TextBox x:Name="mfaCodeTextBox" Grid.Row="4" Grid.Column="1" Margin="0,10,0,10" Style="{StaticResource WatermarkTextBoxStyle}" Tag="Enter MFA verification code" Visibility="Collapsed"/>
+                    <TextBlock x:Name="mfaCodeLabel" Text="MFA Code:" Grid.Row="4" Grid.Column="0" Style="{DynamicResource LabelTextBlockStyle}" Visibility="Collapsed"/>
+                    <TextBox x:Name="mfaCodeTextBox" Grid.Row="4" Grid.Column="1" Style="{DynamicResource PlaceholderTextBoxStyle}" Tag="Enter MFA verification code" Visibility="Collapsed"/>
 
-                    <StackPanel Grid.Row="5" Grid.Column="1" Orientation="Horizontal" Margin="0,10,0,10">
-                        <Button x:Name="loginButton" Content="Login" Width="100" Height="30" Margin="0,0,10,0" Style="{StaticResource StandardButtonStyle}"/>
-                        <Button x:Name="verifyMfaButton" Content="Verify MFA" Width="100" Height="30" Margin="0,0,10,0" Visibility="Collapsed" Style="{StaticResource StandardButtonStyle}"/>
-                        <Button x:Name="logoutButton" Content="Logout" Width="100" Height="30" IsEnabled="False" Style="{StaticResource SecondaryButtonStyle}"/>
+                    <StackPanel Grid.Row="5" Grid.Column="1" Orientation="Horizontal" Margin="{DynamicResource StackPanelMargin}">
+                        <Button x:Name="loginButton" Content="Login" Width="100" Height="30" Margin="0,0,10,0" Style="{DynamicResource StandardButtonStyle}"/>
+                        <Button x:Name="verifyMfaButton" Content="Verify MFA" Width="100" Height="30" Margin="0,0,10,0" Visibility="Collapsed" Style="{DynamicResource StandardButtonStyle}"/>
+                        <Button x:Name="logoutButton" Content="Logout" Width="100" Height="30" IsEnabled="False" Style="{DynamicResource SecondaryButtonStyle}"/>
                     </StackPanel>
                     
-                    <TextBlock x:Name="loginStatusTextBlock" Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,10,0,0" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="loginStatusTextBlock" Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Style="{DynamicResource StatusTextBlockStyle}"/>
                 </Grid>
             </TabItem>
 
             <!-- Project Selection Tab -->
             <TabItem Header="2. Select Project" x:Name="projectTab" IsEnabled="False">
-                <Grid Margin="10">
+                <Grid Margin="{DynamicResource GridMargin}">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Text="Select a StreamBIM Project:" Grid.Row="0" Margin="0,0,0,10"/>
-                    <ListView x:Name="projectsListView" Grid.Row="1" Margin="0,0,0,10" SelectionMode="Single" MouseDoubleClick="projects_list_double_click">
+                    <TextBlock Text="Select a StreamBIM Project:" Grid.Row="0" Style="{DynamicResource SubheaderTextBlockStyle}"/>
+                    <ListView x:Name="projectsListView" Grid.Row="1" Style="{DynamicResource StandardListBoxStyle}" SelectionMode="Single" MouseDoubleClick="projects_list_double_click">
                         <ListView.View>
                             <GridView>
                                 <GridViewColumn Header="ID" DisplayMemberBinding="{Binding Id}" Width="50"/>
@@ -91,7 +92,7 @@
 
             <!-- Checklist Selection Tab -->
             <TabItem Header="3. Select Checklist" x:Name="checklistTab" IsEnabled="False">
-                <Grid Margin="10">
+                <Grid Margin="{DynamicResource GridMargin}">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
@@ -99,19 +100,19 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Text="Select a StreamBIM Checklist:" Grid.Row="0" Margin="0,0,0,10"/>
+                    <TextBlock Text="Select a StreamBIM Checklist:" Grid.Row="0" Style="{DynamicResource SubheaderTextBlockStyle}"/>
                     
                     <!-- Search Bar -->
-                    <Grid Grid.Row="1" Margin="0,0,0,10">
+                    <Grid Grid.Row="1" Margin="{DynamicResource TextBlockBottomMargin}">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="Search:" Grid.Column="0" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                        <TextBox x:Name="checklistSearchBox" Grid.Column="1" Margin="0,0,0,0" Style="{StaticResource WatermarkTextBoxStyle}" Tag="Type to search checklists..."/>
+                        <TextBox x:Name="checklistSearchBox" Grid.Column="1" Style="{DynamicResource PlaceholderTextBoxStyle}" Tag="Type to search checklists..."/>
                     </Grid>
                     
-                    <ListView x:Name="checklistsListView" Grid.Row="2" Margin="0,0,0,10" SelectionMode="Single" MouseDoubleClick="checklists_list_double_click">
+                    <ListView x:Name="checklistsListView" Grid.Row="2" Style="{DynamicResource StandardListBoxStyle}" SelectionMode="Single" MouseDoubleClick="checklists_list_double_click">
                         <ListView.View>
                             <GridView>
                                 <GridViewColumn Header="ID" DisplayMemberBinding="{Binding Id}" Width="50"/>
@@ -125,7 +126,7 @@
 
             <!-- Parameter Selection Tab -->
             <TabItem Header="4. Select Parameters" x:Name="parameterTab" IsEnabled="False">
-                <Grid Margin="10">
+                <Grid Margin="{DynamicResource GridMargin}">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
@@ -143,39 +144,39 @@
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
 
-                    <TextBlock Text="Selected StreamBIM Checklist:" Grid.Row="0" Grid.Column="0" Margin="0,10,0,5"/>
-                    <TextBlock x:Name="selectedChecklistTextBlock" Grid.Row="0" Grid.Column="1" Margin="0,15,0,5" TextWrapping="Wrap" FontStyle="Italic"/>
+                    <TextBlock Text="Selected StreamBIM Checklist:" Grid.Row="0" Grid.Column="0" Style="{DynamicResource LabelTextBlockStyle}"/>
+                    <TextBlock x:Name="selectedChecklistTextBlock" Grid.Row="0" Grid.Column="1" Style="{DynamicResource SecondaryTextBlockStyle}" Margin="0,5,0,0"/>
                     
-                    <TextBlock Text="StreamBIM Properties:" Grid.Row="1" Grid.Column="0" Margin="0,10,0,5"/>
-                    <ComboBox x:Name="streamBIMPropertiesComboBox" Grid.Row="1" Grid.Column="1" Margin="0,10,0,5"/>
+                    <TextBlock Text="StreamBIM Properties:" Grid.Row="1" Grid.Column="0" Style="{DynamicResource LabelTextBlockStyle}"/>
+                    <ComboBox x:Name="streamBIMPropertiesComboBox" Grid.Row="1" Grid.Column="1" Style="{DynamicResource StandardComboBoxStyle}"/>
                     
-                    <TextBlock Text="Preview Values:" Grid.Row="2" Grid.Column="0" Margin="0,15,0,5" FontStyle="Italic"/>
-                    <TextBlock x:Name="previewValuesTextBlock" Grid.Row="2" Grid.Column="1" Margin="0,15,0,5" TextWrapping="Wrap" FontStyle="Italic"/>
+                    <TextBlock Text="Preview Values:" Grid.Row="2" Grid.Column="0" Style="{DynamicResource SecondaryTextBlockStyle}"/>
+                    <TextBlock x:Name="previewValuesTextBlock" Grid.Row="2" Grid.Column="1" Style="{DynamicResource SecondaryTextBlockStyle}"/>
                     
-                    <TextBlock Text="Revit Instance Parameters:" Grid.Row="3" Grid.Column="0" Margin="0,15,0,5"/>
-                    <TextBlock Text="(From visible elements)" Grid.Row="3" Grid.Column="0" Margin="0,35,0,5" FontStyle="Italic"/>
-                    <ComboBox x:Name="revitParametersComboBox" Grid.Row="3" Grid.Column="1" Margin="0,15,0,5"/>
+                    <TextBlock Text="Revit Instance Parameters:" Grid.Row="3" Grid.Column="0" Style="{DynamicResource LabelTextBlockStyle}"/>
+                    <TextBlock Text="(From visible elements)" Grid.Row="3" Grid.Column="0" Style="{DynamicResource SecondaryTextBlockStyle}" Margin="0,20,0,0"/>
+                    <ComboBox x:Name="revitParametersComboBox" Grid.Row="3" Grid.Column="1" Style="{DynamicResource StandardComboBoxStyle}"/>
                     
                     
                     
-                    <CheckBox x:Name="onlyVisibleElementsCheckBox" Content="Only Apply to Visible Elements" Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,15,0,5" IsChecked="True" Visibility="Collapsed" />
+                    <CheckBox x:Name="onlyVisibleElementsCheckBox" Content="Only Apply to Visible Elements" Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" Style="{DynamicResource StandardCheckBoxStyle}" IsChecked="True" Visibility="Collapsed" />
                     
-                    <TextBlock Text="Summary:" Grid.Row="5" Grid.Column="0" Margin="0,15,0,5"/>
-                    <TextBlock x:Name="summaryTextBlock" Grid.Row="5" Grid.Column="1" Margin="0,15,0,5" TextWrapping="Wrap" 
+                    <TextBlock Text="Summary:" Grid.Row="5" Grid.Column="0" Style="{DynamicResource LabelTextBlockStyle}"/>
+                    <TextBlock x:Name="summaryTextBlock" Grid.Row="5" Grid.Column="1" Style="{DynamicResource BodyTextBlockStyle}" 
                               Text="No parameters selected yet."/>
                     
                     <!-- Parameter Mapping Section -->
-                    <CheckBox x:Name="enableMappingCheckBox" Content="Enable Parameter Mapping" Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,15,0,5" IsChecked="False" />
-                    <Grid Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,40,0,0" x:Name="mappingGrid" Visibility="Collapsed">
+                    <CheckBox x:Name="enableMappingCheckBox" Content="Enable Parameter Mapping" Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Style="{DynamicResource StandardCheckBoxStyle}" IsChecked="False" />
+                    <Grid Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,25,0,0" x:Name="mappingGrid" Visibility="Collapsed">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
                         
-                        <TextBlock Text="Parameter Mapping" Grid.Row="0" FontWeight="Bold" Margin="0,0,0,5"/>
+                        <TextBlock Text="Parameter Mapping" Grid.Row="0" Style="{DynamicResource SubheaderTextBlockStyle}"/>
                         
-                        <DataGrid x:Name="mappingDataGrid" Grid.Row="1" AutoGenerateColumns="False" Margin="0,5,0,5" 
+                        <DataGrid x:Name="mappingDataGrid" Grid.Row="1" Style="{DynamicResource StandardDataGridStyle}" AutoGenerateColumns="False" 
                                   CanUserAddRows="True" CanUserDeleteRows="True" Height="150">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="Checklist Value" 
@@ -187,20 +188,20 @@
                             </DataGrid.Columns>
                         </DataGrid>
                         
-                        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,5,0,0">
-                            <Button x:Name="addNewRowButton" Content="Add new row" Width="120" Height="30"/>
+                        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="{DynamicResource StackPanelMargin}">
+                            <Button x:Name="addNewRowButton" Content="Add new row" Width="120" Height="30" Style="{DynamicResource StandardButtonStyle}"/>
                         </StackPanel>
                     </Grid>
                     
-                    <ProgressBar x:Name="progressBar" Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2" Height="20" Margin="0,15,0,5" Visibility="Collapsed"/>
-                    <TextBlock x:Name="progressText" Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,0,0" TextAlignment="Center" Visibility="Collapsed"/>
+                    <ProgressBar x:Name="progressBar" Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2" Height="20" Margin="{DynamicResource TextBlockBottomMargin}" Visibility="Collapsed"/>
+                    <TextBlock x:Name="progressText" Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2" Style="{DynamicResource StatusTextBlockStyle}" TextAlignment="Center" Visibility="Collapsed"/>
 
-                    <Separator Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="2" Height="2" Margin="0,10,0,10" HorizontalAlignment="Stretch" Background="Gray" />
+                    <Separator Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="2" Height="2" Margin="{DynamicResource TextBlockBottomMargin}" HorizontalAlignment="Stretch" Background="Gray" />
                     
-                    <StackPanel Grid.Row="9" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,15,0,0">
-                        <Button x:Name="saveMappingButton" Content="Save Mapping" Width="120" Height="30" Margin="0,0,10,0"/>
-                        <Button x:Name="importButton" Content="Import Values" Width="120" Height="30" Margin="0,0,10,0"/>
-                        <Button x:Name="isolateButton" Content="Isolate Updated Elements" Width="150" Height="30" IsEnabled="False"/>
+                    <StackPanel Grid.Row="9" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="{DynamicResource StackPanelMargin}">
+                        <Button x:Name="saveMappingButton" Content="Save Mapping" Width="120" Height="30" Style="{DynamicResource StandardButtonStyle}"/>
+                        <Button x:Name="importButton" Content="Import Values" Width="120" Height="30" Style="{DynamicResource StandardButtonStyle}"/>
+                        <Button x:Name="isolateButton" Content="Isolate Updated Elements" Width="150" Height="30" IsEnabled="False" Style="{DynamicResource SecondaryButtonStyle}"/>
                     </StackPanel>
                 </Grid>
             </TabItem>

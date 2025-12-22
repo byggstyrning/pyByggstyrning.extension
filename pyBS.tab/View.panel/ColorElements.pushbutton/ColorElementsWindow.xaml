@@ -3,7 +3,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Color Elements" 
     Height="700" 
-    Width="450"
+    Width="500"
     ResizeMode="CanResizeWithGrip"
     WindowStartupLocation="CenterScreen"
     ShowInTaskbar="True">
@@ -11,50 +11,53 @@
     <!-- Styles will be loaded programmatically -->
     
     <Grid>
-        <!-- Busy Indicator Overlay -->
-        <Border x:Name="busyOverlay" Style="{StaticResource BusyOverlayStyle}">
-            <StackPanel Style="{StaticResource BusyContentStyle}">
-                <ProgressBar x:Name="busyProgressBar" Style="{StaticResource BusyProgressBarStyle}"/>
-                <TextBlock x:Name="busyTextBlock" Style="{StaticResource BusyTextBlockStyle}" Text="Loading..."/>
-            </StackPanel>
-        </Border>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto" MinHeight="50"/>
         </Grid.RowDefinitions>
         
+        <!-- Busy Indicator Overlay -->
+        <Border x:Name="busyOverlay" Style="{DynamicResource BusyOverlayStyle}">
+            <StackPanel Style="{DynamicResource BusyContentStyle}">
+                <ProgressBar x:Name="busyProgressBar" Style="{DynamicResource BusyProgressBarStyle}"/>
+                <TextBlock x:Name="busyTextBlock" Style="{DynamicResource BusyTextBlockStyle}" Text="Loading..."/>
+            </StackPanel>
+        </Border>
+        
         <!-- Main Content -->
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="150"/>
+                <ColumnDefinition Width="200"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
             
             <!-- Left Panel - Categories -->
-            <Border Style="{StaticResource PanelBorderStyle}" Margin="10,5,5,5">
+            <Border Style="{DynamicResource PanelBorderStyle}" Margin="10,5,5,5">
                 <DockPanel>
-                    <TextBlock Text="Category" Style="{StaticResource SubheaderTextBlockStyle}" DockPanel.Dock="Top" Margin="5"/>
-                    <CheckBox x:Name="selectAllCategoriesCheckBox" Content="Select All" Style="{StaticResource StandardCheckBoxStyle}" Margin="5,0,5,5" DockPanel.Dock="Top" IsThreeState="True" Checked="SelectAllCategories_Changed" Unchecked="SelectAllCategories_Changed" Indeterminate="SelectAllCategories_Changed"/>
+                    <TextBlock Text="Category" Style="{DynamicResource SubheaderTextBlockStyle}" DockPanel.Dock="Top" Margin="5"/>
+                    <CheckBox x:Name="selectAllCategoriesCheckBox" Content="Select All" Style="{DynamicResource StandardCheckBoxStyle}" Margin="5,0,5,5" DockPanel.Dock="Top" IsThreeState="True" VerticalAlignment="Center" VerticalContentAlignment="Center" Checked="SelectAllCategories_Changed" Unchecked="SelectAllCategories_Changed" Indeterminate="SelectAllCategories_Changed"/>
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
-                        <ListBox x:Name="categoryListBox" Style="{StaticResource StandardListBoxStyle}" BorderThickness="0">
+                        <ListBox x:Name="categoryListBox" Style="{DynamicResource StandardListBoxStyle}" BorderThickness="0">
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
-                                    <Grid Background="Transparent">
-                                        <CheckBox Content="{Binding name}" Tag="{Binding}" IsChecked="{Binding IsSelected, Mode=TwoWay}"/>
+                                    <Grid Background="Transparent" VerticalAlignment="Center">
+                                        <CheckBox Content="{Binding name}" Tag="{Binding}" IsChecked="{Binding IsSelected, Mode=TwoWay}" Margin="0" Padding="0,0,0,1" VerticalAlignment="Center" VerticalContentAlignment="Center"/>
                                     </Grid>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                             <ListBox.ItemContainerStyle>
                                 <Style TargetType="ListBoxItem">
-                                    <Setter Property="Padding" Value="2,0"/>
+                                    <Setter Property="Padding" Value="0"/>
+                                    <Setter Property="Margin" Value="0"/>
+                                    <Setter Property="VerticalContentAlignment" Value="Center"/>
                                     <Setter Property="Template">
                                         <Setter.Value>
                                             <ControlTemplate TargetType="ListBoxItem">
                                                 <Border Background="{TemplateBinding Background}" 
                                                         BorderBrush="{TemplateBinding BorderBrush}"
                                                         BorderThickness="{TemplateBinding BorderThickness}">
-                                                    <ContentPresenter />
+                                                    <ContentPresenter VerticalAlignment="Center"/>
                                                 </Border>
                                             </ControlTemplate>
                                         </Setter.Value>
@@ -77,8 +80,8 @@
                 
                 <!-- Parameter Type Selection -->
                 <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="5">
-                    <RadioButton x:Name="instanceRadioButton" Content="Instance" IsChecked="True" Style="{StaticResource StandardRadioButtonStyle}"/>
-                    <RadioButton x:Name="typeRadioButton" Content="Type" Style="{StaticResource StandardRadioButtonStyle}" Margin="15,5,5,5"/>
+                    <RadioButton x:Name="instanceRadioButton" Content="Instance" IsChecked="True" GroupName="ParameterType" Style="{DynamicResource SegmentedRadioButtonFirstStyle}"/>
+                    <RadioButton x:Name="typeRadioButton" Content="Type" GroupName="ParameterType" Style="{DynamicResource SegmentedRadioButtonLastStyle}"/>
                 </StackPanel>
                 
                 <!-- Parameter Selection -->
@@ -87,12 +90,14 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <ComboBox x:Name="parameterSelector" Style="{StaticResource StandardComboBoxStyle}" Margin="0"/>
-                    <Button Grid.Column="1" Content="🔄" Width="40" Margin="0,0,0,0" ToolTip="Refresh Parameters" x:Name="refreshParametersButton" Style="{StaticResource SecondaryButtonStyle}"/>
+                    <ComboBox x:Name="parameterSelector" Style="{DynamicResource SearchableComboBoxStyle}" Tag="Select parameter..." Margin="0"/>
+                    <Button Grid.Column="1" Width="30" Height="30" Margin="4,0,0,0" Padding="0" ToolTip="Refresh Parameters" x:Name="refreshParametersButton" Background="Transparent" BorderThickness="0" Cursor="Hand">
+                        <Image x:Name="refreshParametersImage" Stretch="Uniform" Width="30" Height="30"/>
+                    </Button>
                 </Grid>
                 
                 <!-- Values and Colors -->
-                <Border Grid.Row="2" Style="{StaticResource PanelBorderStyle}">
+                <Border Grid.Row="2" Style="{DynamicResource PanelBorderStyle}">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
@@ -100,21 +105,21 @@
                         </Grid.RowDefinitions>
                         
                         <!-- Header -->
-                        <Border Grid.Row="0" Style="{StaticResource HeaderBorderStyle}">
+                        <Border Grid.Row="0" Style="{DynamicResource HeaderBorderStyle}">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="35"/>
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="70"/>
                                 </Grid.ColumnDefinitions>
-                                <CheckBox Grid.Column="0" Margin="10,5" x:Name="headerCheckBox" Checked="HeaderCheckBox_Changed" Unchecked="HeaderCheckBox_Changed" Style="{StaticResource StandardCheckBoxStyle}"/>
-                                <TextBlock Grid.Column="1" Text="Value" Style="{StaticResource LabelTextBlockStyle}" Margin="5"/>
-                                <TextBlock Grid.Column="2" Text="Color" Style="{StaticResource LabelTextBlockStyle}" Margin="5"/>
+                                <CheckBox Grid.Column="0" Margin="10,5" x:Name="headerCheckBox" Checked="HeaderCheckBox_Changed" Unchecked="HeaderCheckBox_Changed" Style="{DynamicResource StandardCheckBoxStyle}"/>
+                                <TextBlock Grid.Column="1" Text="Value" Style="{DynamicResource LabelTextBlockStyle}" Margin="5"/>
+                                <TextBlock Grid.Column="2" Text="Color" Style="{DynamicResource LabelTextBlockStyle}" Margin="5"/>
                             </Grid>
                         </Border>
                         
                         <!-- Values -->
-                        <ListBox Grid.Row="1" x:Name="valuesListBox" Style="{StaticResource StandardListBoxStyle}" BorderThickness="0" SelectionMode="Extended" HorizontalContentAlignment="Stretch">
+                        <ListBox Grid.Row="1" x:Name="valuesListBox" Style="{DynamicResource StandardListBoxStyle}" BorderThickness="0" SelectionMode="Extended" HorizontalContentAlignment="Stretch">
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <Grid HorizontalAlignment="Stretch">
@@ -142,7 +147,7 @@
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="Override Projection/Cut Lines" VerticalAlignment="Center"/>
-                        <CheckBox Grid.Column="1" Style="{StaticResource ToggleSwitchStyle}" x:Name="overrideProjectionCheckbox"/>
+                        <CheckBox Grid.Column="1" Style="{DynamicResource ToggleSwitchStyle}" x:Name="overrideProjectionCheckbox"/>
                     </Grid>
                     
                     <Grid Margin="0,5">
@@ -151,7 +156,7 @@
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="Select Elements in Properties" VerticalAlignment="Center"/>
-                        <CheckBox Grid.Column="1" Style="{StaticResource ToggleSwitchStyle}" x:Name="showElementsCheckbox"/>
+                        <CheckBox Grid.Column="1" Style="{DynamicResource ToggleSwitchStyle}" x:Name="showElementsCheckbox"/>
                     </Grid>
 
                     <Grid Margin="0,5">
@@ -159,17 +164,17 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <Button Grid.Column="0" Content="Reset Colors" Style="{StaticResource DangerButtonStyle}" Margin="5,0" x:Name="resetButton"/>
-                        <Button Grid.Column="1" Content="Apply Colors" Style="{StaticResource SuccessButtonStyle}" Margin="5,10" x:Name="applyButton"/>
+                        <Button Grid.Column="0" Content="Reset Colors" Style="{DynamicResource StandardButtonStyle}" Margin="5,10" x:Name="resetButton"/>
+                        <Button Grid.Column="1" Content="Apply Colors" Style="{DynamicResource SuccessButtonStyle}" Margin="5,10" x:Name="applyButton"/>
                     </Grid>
                 </StackPanel>
             </Grid>
         </Grid>
         
         <!-- Status Bar -->
-        <Border Grid.Row="2" Style="{StaticResource StandardStatusBarStyle}">
+        <Border Grid.Row="2" Style="{DynamicResource StatusBarBorderStyle}">
             <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="80">
-                <TextBlock x:Name="statusText" Style="{StaticResource StatusTextBlockStyle}"/>
+                <TextBlock x:Name="statusText" Style="{DynamicResource StatusTextBlockStyle}"/>
             </ScrollViewer>
         </Border>
     </Grid>

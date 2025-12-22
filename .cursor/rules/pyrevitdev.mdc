@@ -134,6 +134,137 @@ Managing scopes and event handlers in WPF UIs is critical for maintaining functi
 - **Testing UIs**  
   Thoroughly test your WPF windows. Monitor for memory leaks by repeatedly opening and closing windows, and verify that event handlers are responsive over long sessions.
 
+## 6. Common Pitfalls and Debugging Patterns
+
+Based on real-world debugging sessions, here are critical patterns to avoid and debugging strategies:
+
+### Initialization Code Placement
+
+- **CRITICAL: Check Indentation Carefully**  
+  Initialization code must be in the correct scope. A common error is placing initialization code inside exception handlers of other methods, causing it to never execute. Always verify that:
+  - Initialization code is directly in `__init__`'s try block, not nested in other method's exception handlers
+  - Event handler creation, view initialization, and data loading happen in the correct order
+  - Code is at the correct indentation level (same as other `__init__` statements)
+
+- **Initialize Attributes Early**  
+  Always initialize instance attributes that may be accessed in cleanup methods (like `OnClosing`) to `None` at the start of `__init__`:
+  ```python
+  def __init__(self):
+      self.active_view = None  # Prevent AttributeError in OnClosing
+      try:
+          # ... initialization code ...
+  ```
+
+- **Use hasattr() for Defensive Checks**  
+  When accessing attributes in cleanup or error handlers, always check if they exist first:
+  ```python
+  if hasattr(self, 'active_view') and self.active_view:
+      # Safe to use self.active_view
+  ```
+
+### Path Calculation Errors
+
+- **Verify Directory Navigation**  
+  When calculating paths to shared resources (like styles), carefully count directory levels:
+  ```python
+  script_dir = op.dirname(__file__)           # script.py directory
+  panel_dir = op.dirname(script_dir)          # panel directory
+  tab_dir = op.dirname(panel_dir)            # tab directory
+  extension_dir = op.dirname(tab_dir)        # extension root (NOT op.dirname(op.dirname(tab_dir)))
+  ```
+  Common mistake: going up one level too many with `op.dirname(op.dirname(...))` when only one level is needed.
+
+### XAML Structure Requirements
+
+- **Property Setters Before Children**  
+  In XAML, property setters (like `Grid.RowDefinitions`) must come BEFORE child elements. This is a WPF parsing requirement:
+  ```xml
+  <!-- CORRECT -->
+  <Grid>
+      <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+      </Grid.RowDefinitions>
+      <Border Grid.Row="0">...</Border>
+  </Grid>
+  
+  <!-- INCORRECT - will cause parsing errors -->
+  <Grid>
+      <Border>...</Border>
+      <Grid.RowDefinitions>...</Grid.RowDefinitions>
+  </Grid>
+  ```
+
+- **Style TargetType Must Match Element Type**  
+  Styles with `TargetType` can only be applied to matching element types. If you need similar styling for different element types, create separate styles:
+  ```xml
+  <!-- Style for StatusBar -->
+  <Style x:Key="StandardStatusBarStyle" TargetType="StatusBar">...</Style>
+  
+  <!-- Separate style for Border used as status bar -->
+  <Style x:Key="StatusBarBorderStyle" TargetType="Border">...</Style>
+  ```
+
+### Resource Loading and XAML Parsing
+
+- **StaticResource vs DynamicResource**  
+  - `StaticResource`: Resolved at XAML parse time. Use when resources are guaranteed to exist when XAML loads.
+  - `DynamicResource`: Resolved at runtime. Use when resources may be loaded after XAML parsing (e.g., styles loaded programmatically):
+  ```xml
+  <!-- Use DynamicResource when styles load after XAML parsing -->
+  <Border Style="{DynamicResource BusyOverlayStyle}">...</Border>
+  ```
+
+- **Loading Styles Before XAML Parsing**  
+  If using `StaticResource`, ensure styles are loaded into `Application.Resources` BEFORE `WPFWindow.__init__()` is called. Otherwise, use `DynamicResource` or load styles into window Resources after XAML loads.
+
+### UI Stack Limitations
+
+- **PyRevit Stack Item Limit**  
+  PyRevit stacks can only contain 2 or 3 items maximum. If you need more items, split into multiple stacks or remove less critical items:
+  ```yaml
+  # bundle.yaml - CORRECT (2-3 items)
+  layout:
+    - Config
+    - Monitor
+    - Write
+  
+  # INCORRECT (4 items - will cause error)
+  layout:
+    - Config
+    - Monitor
+    - Write
+    - Debug Areas  # Remove or move to separate stack
+  ```
+
+### Debugging Initialization Issues
+
+- **Symptoms of Initialization Code Not Running**  
+  If initialization code appears correct but doesn't execute:
+  1. Check indentation - code may be nested in wrong scope
+  2. Verify it's in `__init__`'s try block, not another method's exception handler
+  3. Check for silent exceptions - add explicit logging around initialization steps
+  4. Verify method calls are actually being made (not just defined)
+
+- **Verification Pattern**  
+  When debugging initialization, verify execution order:
+  ```python
+  def __init__(self):
+      self.active_view = None
+      try:
+          # Step 1: Load styles
+          ensure_styles_loaded()
+          
+          # Step 2: Create window
+          WPFWindow.__init__(self, xaml_file)
+          
+          # Step 3: Initialize attributes
+          self.active_view = get_active_view(doc)
+          
+          # Step 4: Load data
+          self.load_categories()
+  ```
+  If any step fails silently, subsequent steps won't execute.
+
 ---
 
-This Markdown file outlines the essential rules and best practices for PyRevit development with a focus on code structure, debugging, WPF integration, IronPython 2.7 practices, and managing scopes and events for WPF windows.  
+This Markdown file outlines the essential rules and best practices for PyRevit development with a focus on code structure, debugging, WPF integration, IronPython 2.7 practices, managing scopes and events for WPF windows, and common pitfalls to avoid.  

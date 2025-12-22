@@ -359,6 +359,10 @@ class ResetColorsHandler(UI.IExternalEventHandler):
             # Check if window is still active
             if not self.ui.is_window_active:
                 return
+            
+            # Don't reset colors during initialization
+            if getattr(self.ui, '_is_initializing', False):
+                return
                 
             active_doc = uiapp.ActiveUIDocument.Document
             # Use the specific view if provided, otherwise use the active view
@@ -415,22 +419,123 @@ class ResetColorsHandler(UI.IExternalEventHandler):
 
 
 
+# Module-level cache for styles ResourceDictionary
+_styles_dict_cache = None
+
+# Helper function to load styles into Application.Resources before window creation
+def ensure_styles_loaded():
+    """Ensure CommonStyles are loaded into Application.Resources before XAML parsing."""
+    global _styles_dict_cache
+    
+    try:
+        from System.Windows import Application
+        from System.Windows.Markup import XamlReader
+        from System.IO import File
+        import os.path as op
+        
+        
+        # Check if styles are already loaded in Application.Resources
+        if Application.Current is not None and Application.Current.Resources is not None:
+            try:
+                test_resource = Application.Current.Resources['BusyOverlayStyle']
+                if test_resource is not None:
+                    return  # Already loaded
+            except:
+                pass
+        
+        # Load styles if not cached
+        if _styles_dict_cache is None:
+            # Calculate styles path
+            script_dir = op.dirname(__file__)
+            panel_dir = op.dirname(script_dir)
+            tab_dir = op.dirname(panel_dir)
+            extension_dir = op.dirname(tab_dir)  # Fixed: was op.dirname(op.dirname(tab_dir))
+            styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
+            
+            if op.exists(styles_path):
+                # Read and parse XAML
+                xaml_content = File.ReadAllText(styles_path)
+                _styles_dict_cache = XamlReader.Parse(xaml_content)
+            else:
+                logger.warning("CommonStyles.xaml not found at: {}".format(styles_path))
+                return
+        
+        # Ensure Application.Current exists (don't create new one if it doesn't exist)
+        # In Revit context, Application.Current might be managed by Revit
+        if Application.Current is None:
+            # Try to get or create Application
+            try:
+                from System.Windows import Application as AppClass
+                # Don't create new Application - let WPFWindow handle it
+                logger.debug("Application.Current is None, styles will be loaded after window creation")
+                return
+            except:
+                pass
+        
+        # Merge into Application.Resources if Application.Current exists
+        if Application.Current is not None:
+            if Application.Current.Resources is None:
+                from System.Windows import ResourceDictionary
+                Application.Current.Resources = ResourceDictionary()
+            
+            # Merge styles using MergedDictionaries
+            try:
+                # Check if already merged
+                merged = False
+                for merged_dict in Application.Current.Resources.MergedDictionaries:
+                    if merged_dict == _styles_dict_cache:
+                        merged = True
+                        break
+                
+                if not merged:
+                    Application.Current.Resources.MergedDictionaries.Add(_styles_dict_cache)
+                    logger.debug("Merged CommonStyles into Application.Resources")
+            except Exception as merge_error:
+                logger.warning("Could not merge styles via MergedDictionaries: {}".format(str(merge_error)))
+                # Fallback: copy resources manually
+                try:
+                    for key in _styles_dict_cache.Keys:
+                        try:
+                            # Check if key already exists
+                            existing = Application.Current.Resources[key]
+                            if existing is None:
+                                Application.Current.Resources[key] = _styles_dict_cache[key]
+                        except:
+                            # Key doesn't exist, add it
+                            Application.Current.Resources[key] = _styles_dict_cache[key]
+                    logger.debug("Manually copied CommonStyles into Application.Resources")
+                except Exception as copy_error:
+                    logger.warning("Could not copy styles manually: {}".format(str(copy_error)))
+    except Exception as e:
+        logger.warning("Could not pre-load styles into Application.Resources: {}".format(str(e)))
+        import traceback
+        logger.debug("Style loading error: {}".format(traceback.format_exc()))
+
 # Main UI Class
 class RevitColorizerWindow(WPFWindow):
     """Main WPF window for the Revit Colorizer tool."""
     
     def __init__(self):
+        # Initialize active_view to None to prevent AttributeError in OnClosing
+        self.active_view = None
         try:
+            # Load styles into Application.Resources BEFORE creating window
+            ensure_styles_loaded()
+            
             # Create XAML file path
             xaml_file = os.path.join(
                 os.path.dirname(__file__), 
                 "ColorElementsWindow.xaml"
             )
             
-            # Load XAML
-            WPFWindow.__init__(self, xaml_file)
             
-            # Load styles ResourceDictionary
+            # Load XAML
+            try:
+                WPFWindow.__init__(self, xaml_file)
+            except Exception as ex:
+                raise
+            
+            # Load styles ResourceDictionary (for window-specific resources if needed)
             self.load_styles()
             
             # Store references
@@ -450,11 +555,26 @@ class RevitColorizerWindow(WPFWindow):
             # Flag indicating if the window is active
             self.is_window_active = True
             
+            # Flag to prevent color resets during initialization
+            self._is_initializing = True
+            
             # Flag to prevent selection storage during restore process
             self._processing_restored_selection = False
             
             # Flag to prevent recursive updates when handling select all checkbox
             self._updating_select_all = False
+            
+            # Track previous checkbox state to handle indeterminate transitions correctly
+            self._previous_select_all_state = None
+            
+            # Flag to prevent duplicate processing when both checkbox changed and listbox clicked fire
+            self._processing_category_selection = False
+            
+            # Flag to prevent on_parameter_selected from processing during programmatic loading
+            self._loading_parameters = False
+            
+            # Flag to prevent clearing values during selection restoration
+            self._restoring_selection = False
             
             # Variable to store selected category names for persistence between views
             self.selected_category_names = []
@@ -479,33 +599,80 @@ class RevitColorizerWindow(WPFWindow):
             
             # Create a custom CategoryItem class
             self.CategoryItem = self.create_custom_category_item_class()
+            
+            # Create external event handlers
+            self.apply_colors_handler = ApplyColorsHandler(self)
+            self.apply_colors_event = UI.ExternalEvent.Create(self.apply_colors_handler)
+            
+            self.reset_colors_handler = ResetColorsHandler(self)
+            self.reset_colors_event = UI.ExternalEvent.Create(self.reset_colors_handler)
+            
+            # Get active view
+            self.active_view = get_active_view(doc)
+            if not self.active_view:
+                self.Close()
+                return
+                
+            # Register for view activation events
+            self.uiapp.ViewActivating += self.on_view_activating
+            self.uiapp.ViewActivated += self.on_view_activated
+                
+            # Set up UI event handlers
+            self.setup_ui_components()
+            
+            # Apply SearchableComboBoxStyle programmatically after styles are loaded
+            if "SearchableComboBoxStyle" in self.Resources if self.Resources else False:
+                try:
+                    self.parameterSelector.Style = self.Resources["SearchableComboBoxStyle"]
+                    # Set DisplayMemberPath so the ComboBox displays the parameter name
+                    self.parameterSelector.DisplayMemberPath = "display_name"
+                except Exception as ex:
+                    self.logger.error("Error applying SearchableComboBoxStyle: {}".format(str(ex)))
+            
+            # Load data
+            self.load_categories()
+            
+            # Mark initialization as complete (allow color resets now)
+            self._is_initializing = False
+            
+            # Show startup message
+            self.statusText.Text = "Ready. Select a category to begin."
+            
+        except Exception as ex:
+            UI.TaskDialog.Show("Error", "Failed to initialize Revit Colorizer: " + str(ex))
+            logger.error("Initialization error: %s", str(ex))
+            self.Close()
     
     def load_styles(self):
         """Load the common styles ResourceDictionary."""
         try:
+            
             import os.path as op
             script_dir = op.dirname(__file__)
             panel_dir = op.dirname(script_dir)
             tab_dir = op.dirname(panel_dir)
-            extension_dir = op.dirname(op.dirname(tab_dir))
+            extension_dir = op.dirname(tab_dir)  # Fix: Only go up ONE level from tab_dir
             styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
+            
             
             if op.exists(styles_path):
                 from System.Windows import Application
-                from System.Uri import Uri
                 from System.Windows.Markup import XamlReader
                 from System.IO import File
                 
                 # Read XAML content
                 xaml_content = File.ReadAllText(styles_path)
                 
+                
                 # Parse as ResourceDictionary
                 styles_dict = XamlReader.Parse(xaml_content)
+                
                 
                 # Merge into window resources
                 if self.Resources is None:
                     from System.Windows import ResourceDictionary
                     self.Resources = ResourceDictionary()
+                
                 
                 # If it's a ResourceDictionary, merge its contents
                 if hasattr(styles_dict, 'Keys'):
@@ -531,37 +698,6 @@ class RevitColorizerWindow(WPFWindow):
                 self.busyOverlay.Visibility = Visibility.Collapsed
         except Exception as e:
             logger.debug("Error setting busy indicator: {}".format(str(e)))
-            
-            # Create external event handlers
-            self.apply_colors_handler = ApplyColorsHandler(self)
-            self.apply_colors_event = UI.ExternalEvent.Create(self.apply_colors_handler)
-            
-            self.reset_colors_handler = ResetColorsHandler(self)
-            self.reset_colors_event = UI.ExternalEvent.Create(self.reset_colors_handler)
-            
-            # Get active view
-            self.active_view = get_active_view(doc)
-            if not self.active_view:
-                self.Close()
-                return
-                
-            # Register for view activation events
-            self.uiapp.ViewActivating += self.on_view_activating
-            self.uiapp.ViewActivated += self.on_view_activated
-                
-            # Set up UI event handlers
-            self.setup_ui_components()
-            
-            # Load data
-            self.load_categories()
-            
-            # Show startup message
-            self.statusText.Text = "Ready. Select a category to begin."
-            
-        except Exception as ex:
-            UI.TaskDialog.Show("Error", "Failed to initialize Revit Colorizer: " + str(ex))
-            logger.error("Initialization error: %s", str(ex))
-            self.Close()
     
     def create_custom_values_info_class(self):
         """Create a completely custom version of ValuesInfo that doesn't use strip_accents."""
@@ -696,9 +832,32 @@ class RevitColorizerWindow(WPFWindow):
         # Parameter selection
         self.parameterSelector.SelectionChanged += self.on_parameter_selected
         self.parameterSelector.DropDownClosed += self.on_parameter_dropdown_closed
+        self.parameterSelector.DropDownOpened += self.on_parameter_dropdown_opened
+        
+        # Store unfiltered parameter list for search filtering
+        self.all_parameters = []
 
         # Refresh parameters button
         self.refreshParametersButton.Click += self.on_refresh_parameters
+        # Load refresh icon image
+        try:
+            script_dir = os.path.dirname(__file__)
+            panel_dir = os.path.dirname(script_dir)
+            tab_dir = os.path.dirname(panel_dir)
+            extension_dir = os.path.dirname(tab_dir)
+            refresh_icon_path = os.path.join(extension_dir, 'lib', 'styles', 'icons', 'refresh.png')
+            if os.path.exists(refresh_icon_path):
+                from System.Windows.Media.Imaging import BitmapImage
+                from System import Uri
+                bitmap = BitmapImage()
+                bitmap.BeginInit()
+                bitmap.UriSource = Uri(refresh_icon_path)
+                bitmap.EndInit()
+                self.refreshParametersImage.Source = bitmap
+            else:
+                logger.warning("Refresh icon not found at: {}".format(refresh_icon_path))
+        except Exception as e:
+            logger.warning("Could not load refresh icon: {}".format(str(e)))
         
         # Values list
         self.valuesListBox.MouseDoubleClick += self.on_value_double_click
@@ -730,7 +889,7 @@ class RevitColorizerWindow(WPFWindow):
 
     def load_categories(self):
         """Load categories from the current view."""
-        try:            
+        try:
             if not self.selected_category_names:
                 self.store_selected_categories()
             
@@ -881,7 +1040,9 @@ class RevitColorizerWindow(WPFWindow):
                 current_cat_id = get_elementid_value(element.Category.Id)
                 
                 # Skip excluded categories and already processed categories
-                if current_cat_id in excluded_cats or any(x.int_id == current_cat_id for x in categories):
+                if current_cat_id in excluded_cats:
+                    continue
+                if any(x.int_id == current_cat_id for x in categories):
                     continue
                     
                 # Get instance parameters
@@ -919,19 +1080,40 @@ class RevitColorizerWindow(WPFWindow):
     def on_category_listbox_clicked(self, sender, args):
         """Handle mouse clicks on the category list box to detect checkbox clicks."""
         try:
-            def delayed_process():
-                self.process_category_selection()
-
-            # Use a short delay to ensure the checkbox state has been updated
-            self.System.Windows.Threading.Dispatcher.CurrentDispatcher.BeginInvoke(
-                self.System.Action(delayed_process),
-                self.System.Windows.Threading.DispatcherPriority.Background)
+            
+            # Don't schedule delayed processing - on_category_checkbox_changed will handle it synchronously
+            # This prevents duplicate processing when both events fire
+            # The checkbox changed handler will process the selection immediately
             
             self.apply_colors_event.Raise()
+            
             
         except Exception as ex:
             self.statusText.Text = "Error handling category click: " + str(ex)
             self.logger.error("Category click error: %s", str(ex))
+    
+    def get_parameter_count(self):
+        """Safely get the count of parameters, handling both ItemsSource and Items."""
+        if self.parameterSelector.ItemsSource is not None:
+            return self.parameterSelector.ItemsSource.Count
+        else:
+            return self.parameterSelector.Items.Count
+    
+    def _ensure_placeholder_visible(self):
+        """Programmatically ensure placeholder is visible when no item is selected."""
+        try:
+            # Access template elements to control visibility directly
+            template = self.parameterSelector.Template
+            if template:
+                placeholder_text = template.FindName("PlaceholderText", self.parameterSelector)
+                content_site = template.FindName("ContentSite", self.parameterSelector)
+                if placeholder_text:
+                    placeholder_text.Visibility = System.Windows.Visibility.Visible
+                if content_site:
+                    content_site.Visibility = System.Windows.Visibility.Collapsed
+        except:
+            # If template access fails, just ensure SelectedItem and SelectedIndex are cleared
+            pass
     
     def get_selected_categories(self):
         """Get all selected categories."""
@@ -944,36 +1126,71 @@ class RevitColorizerWindow(WPFWindow):
     def process_category_selection(self):
         """Process the current category selection state."""
         try:
-            # Store currently selected parameter name to try to preserve it
-            current_param_name = None
-            if self.parameterSelector.SelectedItem:
-                current_param_name = self.parameterSelector.SelectedItem.parameter_info.name
             
-            # Get current parameter type (instance/type)
-            current_param_type_is_instance = self.instanceRadioButton.IsChecked
+            # Prevent duplicate processing when both checkbox changed and listbox clicked fire
+            if getattr(self, '_processing_category_selection', False):
+                return
             
-            # Load parameters for all selected categories while preserving selection
-            self.load_parameters_for_categories(current_param_name, current_param_type_is_instance)
+            self._processing_category_selection = True
             
-            # Count the number of selected categories
-            selected_count = sum(1 for item in self.categoryListBox.Items if item.IsSelected)
-            
-            if selected_count == 0:
-                self.statusText.Text = "No categories selected."
-                self.valuesListBox.Items.Clear()
-                self.reset_colors_event.Raise()
-            
-            # Force an update to the UI
-            self.categoryListBox.UpdateLayout()
-            
-            # Update the stored selected categories after all processing is done
-            # But only if we're not in the middle of a restore operation
-            if not self._processing_restored_selection:
-                self.store_selected_categories()
-                # Also update the select all checkbox state when not restoring
-                self.update_select_all_checkbox_state()
+            try:
+                # Store currently selected parameter name to try to preserve it
+                # Handle both ItemsSource and Items scenarios
+                current_param_name = None
+                try:
+                    if self.parameterSelector.SelectedItem:
+                        current_param_name = self.parameterSelector.SelectedItem.parameter_info.name
+                except:
+                    # If accessing SelectedItem fails (e.g., when ItemsSource is being changed), skip preservation
+                    current_param_name = None
+                
+                # Get current parameter type (instance/type)
+                current_param_type_is_instance = self.instanceRadioButton.IsChecked
+                
+                # Load parameters for all selected categories while preserving selection
+                self.load_parameters_for_categories(current_param_name, current_param_type_is_instance)
+                
+                
+                # Count the number of selected categories
+                selected_count = sum(1 for item in self.categoryListBox.Items if item.IsSelected)
+                
+                if selected_count == 0:
+                    self.statusText.Text = "No categories selected."
+                    # Clear parameter selector and show placeholder
+                    # Explicitly clear selection first
+                    self.parameterSelector.SelectedItem = None
+                    self.parameterSelector.SelectedIndex = -1
+                    # Then clear ItemsSource and Items
+                    if self.parameterSelector.ItemsSource is not None:
+                        self.parameterSelector.ItemsSource = None
+                    self.parameterSelector.Items.Clear()
+                    # Force UI update to ensure placeholder shows
+                    self.parameterSelector.UpdateLayout()
+                    # Programmatically ensure placeholder is visible
+                    self._ensure_placeholder_visible()
+                    # Clear values listbox
+                    if self.valuesListBox.ItemsSource is not None:
+                        self.valuesListBox.ItemsSource = None
+                    self.valuesListBox.Items.Clear()
+                    # Don't reset colors during initialization
+                    if not getattr(self, '_is_initializing', False):
+                        self.reset_colors_event.Raise()
+                
+                # Force an update to the UI
+                self.categoryListBox.UpdateLayout()
+                
+                # Update the stored selected categories after all processing is done
+                # But only if we're not in the middle of a restore operation
+                if not self._processing_restored_selection:
+                    self.store_selected_categories()
+                    # Also update the select all checkbox state when not restoring
+                    self.update_select_all_checkbox_state()
+            finally:
+                # Always clear the flag when done
+                self._processing_category_selection = False
             
         except Exception as ex:
+            self._processing_category_selection = False  # Make sure to clear flag on error
             self.statusText.Text = "Error processing category selection: " + str(ex)
             self.logger.error("Process category selection error: %s", str(ex))
     
@@ -985,16 +1202,44 @@ class RevitColorizerWindow(WPFWindow):
             preserve_param_type_is_instance: Whether the parameter to preserve is an instance parameter
         """
         try:
-            # Clear parameter list
+            
+            # Set flag to prevent on_parameter_selected from processing during programmatic loading
+            self._loading_parameters = True
+            
+            # Clear parameter list - handle both ItemsSource and Items
+            
+            # Clear ItemsSource first if it's set, then clear Items
+            if self.parameterSelector.ItemsSource is not None:
+                self.parameterSelector.ItemsSource = None
             self.parameterSelector.Items.Clear()
+            
             
             # Get all selected categories
             selected_categories = self.get_selected_categories()
             
             if not selected_categories:
                 self.statusText.Text = "No categories selected."
+                # Clear parameter selector and show placeholder
+                # Explicitly clear selection first
+                self.parameterSelector.SelectedItem = None
+                self.parameterSelector.SelectedIndex = -1
+                # Then clear ItemsSource and Items
+                if self.parameterSelector.ItemsSource is not None:
+                    self.parameterSelector.ItemsSource = None
+                self.parameterSelector.Items.Clear()
+                # Force UI update to ensure placeholder shows
+                self.parameterSelector.UpdateLayout()
+                # Programmatically ensure placeholder is visible
+                self._ensure_placeholder_visible()
+                # Clear values listbox
+                if self.valuesListBox.ItemsSource is not None:
+                    self.valuesListBox.ItemsSource = None
                 self.valuesListBox.Items.Clear()
-                self.reset_colors_event.Raise()
+                # Don't reset colors during initialization
+                if not getattr(self, '_is_initializing', False):
+                    self.reset_colors_event.Raise()
+                # Clear loading flag before returning
+                self._loading_parameters = False
                 return
             
             # If parameter type was not specified to preserve, use current selection
@@ -1042,21 +1287,47 @@ class RevitColorizerWindow(WPFWindow):
                     category_param_names = [p.name for p in category_params]
                     common_params = [p for p in common_params if p.name in category_param_names]
             
+            # Store all parameters for search filtering
+            self.all_parameters = []
+            for param in common_params:
+                self.all_parameters.append(self.ParameterDisplayItem(param))
+            
             # Add common parameters to dropdown with display wrapper
+            # Check if ItemsSource is set (SearchableComboBox uses ItemsSource)
             selected_index = -1
-            for i, param in enumerate(common_params):
-                self.parameterSelector.Items.Add(self.ParameterDisplayItem(param))
+            params_added = 0
+            
+            # If ItemsSource was set, we need to use ItemsSource instead of Items
+            # Create a new collection and set it as ItemsSource
+            from System.Collections.ObjectModel import ObservableCollection
+            items_collection = ObservableCollection[Object]()
+            
+            for i, param_item in enumerate(self.all_parameters):
+                items_collection.Add(param_item)
+                params_added += 1
                 # Check if this is the parameter to preserve
-                if preserve_param_name and param.name == preserve_param_name:
+                if preserve_param_name and param_item.parameter_info.name == preserve_param_name:
                     selected_index = i
             
-            # Restore selection if possible, otherwise select first parameter
+            # Set ItemsSource (this will work whether ItemsSource was previously set or not)
+            self.parameterSelector.ItemsSource = items_collection
+            
+            
+            # Clear the loading flag before setting selection (which may trigger SelectionChanged)
+            self._loading_parameters = False
+            
+            # Restore selection if possible, otherwise leave unselected (show placeholder)
             if selected_index >= 0:
+                self.parameterSelector.SelectedIndex = selected_index
                 param_description = "unique" if all_categories_selected else "common"
                 self.statusText.Text = "Loaded {} {} parameters, maintained selection of '{}'.".format(
                     len(common_params), param_description, preserve_param_name)
-            elif self.parameterSelector.Items.Count > 0:
-                self.parameterSelector.SelectedIndex = 0
+            elif self.get_parameter_count() > 0:
+                # Don't auto-select - explicitly set to -1 to show placeholder
+                self.parameterSelector.SelectedIndex = -1
+                # Ensure placeholder is visible
+                self.parameterSelector.UpdateLayout()
+                self._ensure_placeholder_visible()
                 param_type_name = "instance" if is_instance else "type"
                 
                 if all_categories_selected:
@@ -1076,12 +1347,20 @@ class RevitColorizerWindow(WPFWindow):
                         self.statusText.Text = "Loaded {} common {} parameters for {} selected categories.".format(
                             len(common_params), param_type_name, len(selected_categories))
             else:
+                # No parameters found - ensure placeholder is visible
+                self.parameterSelector.SelectedIndex = -1
+                self.parameterSelector.UpdateLayout()
+                self._ensure_placeholder_visible()
                 param_description = "unique" if all_categories_selected else "common"
                 self.statusText.Text = "No {} {} parameters found for the selected categories.".format(
                     param_description, "instance" if is_instance else "type")
+                if self.valuesListBox.ItemsSource is not None:
+                    self.valuesListBox.ItemsSource = None
                 self.valuesListBox.Items.Clear()
                 
         except Exception as ex:
+            # Make sure to clear the loading flag on error
+            self._loading_parameters = False
             self.statusText.Text = "Error loading parameters: " + str(ex)
             self.logger.error("Parameter loading error: %s", str(ex))
     
@@ -1097,20 +1376,64 @@ class RevitColorizerWindow(WPFWindow):
     def on_parameter_selected(self, sender, args):
         """Handle parameter selection change."""
         try:
-            # Clear current values list
-            if hasattr(self, 'valuesListBox') and self.valuesListBox:
-                self.valuesListBox.ItemsSource = None
+            # Skip processing if we're in the middle of programmatically loading parameters
+            if getattr(self, '_loading_parameters', False):
+                return
+            
+            # Skip clearing values if we're restoring selection (to prevent clearing during ItemsSource restoration)
+            restoring_selection = getattr(self, '_restoring_selection', False)
+            
+            # Store the selected parameter name for restoration after dropdown closes (if filtering occurred)
+            # This ensures we can restore the selection even if ItemsSource is cleared
+            if self.parameterSelector.SelectedItem:
+                try:
+                    self._selected_param_name_before_search = self.parameterSelector.SelectedItem.parameter_info.name
+                except:
+                    pass
+                # Update visibility: show ContentSite, hide PlaceholderText when item is selected
+                try:
+                    if self.parameterSelector.Template:
+                        content_site = self.parameterSelector.Template.FindName("ContentSite", self.parameterSelector)
+                        placeholder_text = self.parameterSelector.Template.FindName("PlaceholderText", self.parameterSelector)
+                        if content_site and placeholder_text:
+                            from System.Windows import Visibility
+                            content_site.Visibility = Visibility.Visible
+                            placeholder_text.Visibility = Visibility.Collapsed
+                except Exception as ex:
+                    self.logger.debug("Error updating ComboBox visibility: {}".format(str(ex)))
+            else:
+                # Update visibility: hide ContentSite, show PlaceholderText when no item is selected
+                try:
+                    if self.parameterSelector.Template:
+                        content_site = self.parameterSelector.Template.FindName("ContentSite", self.parameterSelector)
+                        placeholder_text = self.parameterSelector.Template.FindName("PlaceholderText", self.parameterSelector)
+                        if content_site and placeholder_text:
+                            from System.Windows import Visibility
+                            content_site.Visibility = Visibility.Collapsed
+                            placeholder_text.Visibility = Visibility.Visible
+                except Exception as ex:
+                    self.logger.debug("Error updating ComboBox visibility: {}".format(str(ex)))
+            
+            # Only clear values if we're not restoring (to prevent clearing during ItemsSource restoration)
+            if not restoring_selection:
+                # Clear current values list
+                if hasattr(self, 'valuesListBox') and self.valuesListBox:
+                    if self.valuesListBox.ItemsSource is not None:
+                        self.valuesListBox.ItemsSource = None
 
-            # Clear listbox checkboxes and header checkbox
-            self.valuesListBox.Items.Clear()
-            self.headerCheckBox.IsChecked = False
+                # Clear listbox checkboxes and header checkbox
+                self.valuesListBox.Items.Clear()
+                self.headerCheckBox.IsChecked = False
 
-            # Set selection to none
-            self.uidoc.Selection.SetElementIds(self.System.Collections.Generic.List[self.DB.ElementId]())
-
+                # Set selection to none
+                self.uidoc.Selection.SetElementIds(self.System.Collections.Generic.List[self.DB.ElementId]())
+            
             # Get selected parameter and category
             selected_param = self.get_selected_parameter()
             if not selected_param:
+                # If restoring and no selection, don't clear values - they should already be set
+                if restoring_selection:
+                    return
                 return
             
             # Fetch values for the parameter
@@ -1119,7 +1442,12 @@ class RevitColorizerWindow(WPFWindow):
             # Set values to list
             if values:
                 self.valuesListBox.ItemsSource = values
+                # Force immediate UI update
                 self.valuesListBox.UpdateLayout()
+                self.valuesListBox.InvalidateVisual()
+                # Also update the window to ensure visibility
+                self.UpdateLayout()
+                
                 
                 # Check for matching schema file
                 schema_path = self.check_for_matching_schema(selected_param.name)
@@ -1143,6 +1471,7 @@ class RevitColorizerWindow(WPFWindow):
                     len(values) if values else 0, param_source_txt, selected_param.name)
 
             self.apply_colors_event.Raise()
+            
         except Exception as ex:
             self.statusText.Text = "Error selecting parameter: " + str(ex)
             self.logger.error("Parameter selection error: %s", str(ex))
@@ -1150,10 +1479,389 @@ class RevitColorizerWindow(WPFWindow):
     def on_parameter_dropdown_closed(self, sender, args):
         """Handle parameter dropdown closed event."""
         try:
-            self.on_parameter_selected(sender, args)
+            
+            # Only clear and restore if items have been filtered (current count < all_parameters count)
+            # This prevents clearing items when dropdown closes due to programmatic selection changes
+            if hasattr(self, 'all_parameters') and self.all_parameters:
+                current_count = self.get_parameter_count()
+                all_count = len(self.all_parameters)
+                
+                # Only restore if items have been filtered (fewer items than all_parameters)
+                if current_count < all_count:
+                    
+                    # Store current selection name BEFORE clearing (for reliable restoration)
+                    current_selection_name = None
+                    if self.parameterSelector.SelectedItem:
+                        try:
+                            current_selection_name = self.parameterSelector.SelectedItem.parameter_info.name
+                        except:
+                            pass
+                    
+                    # Also check if we have a stored name from dropdown opened or previous selection
+                    if hasattr(self, '_selected_param_name_before_search') and self._selected_param_name_before_search:
+                        current_selection_name = self._selected_param_name_before_search
+                    
+                    # Set flag to prevent on_parameter_selected from clearing values during restoration
+                    # MUST be set BEFORE clearing ItemsSource, as clearing triggers SelectionChanged
+                    self._restoring_selection = True
+                    
+                    # Temporarily hide values listbox to prevent showing wrong values during restoration
+                    values_listbox_was_visible = True
+                    if hasattr(self, 'valuesListBox') and self.valuesListBox:
+                        values_listbox_was_visible = self.valuesListBox.Visibility == System.Windows.Visibility.Visible
+                        if values_listbox_was_visible:
+                            self.valuesListBox.Visibility = System.Windows.Visibility.Hidden
+                    
+                    # Clear search filter and restore all parameters
+                    # Handle both ItemsSource and Items
+                    if self.parameterSelector.ItemsSource is not None:
+                        self.parameterSelector.ItemsSource = None
+                    self.parameterSelector.Items.Clear()
+                    
+                    
+                    # Temporarily remove SelectionChanged handler to prevent auto-selection of first item
+                    # when ItemsSource is set
+                    try:
+                        self.parameterSelector.SelectionChanged -= self.on_parameter_selected
+                    except:
+                        pass
+                    
+                    # Set SelectedIndex to -1 BEFORE setting ItemsSource to prevent auto-selection
+                    self.parameterSelector.SelectedIndex = -1
+                    
+                    # Restore using ItemsSource (SearchableComboBox uses ItemsSource)
+                    from System.Collections.ObjectModel import ObservableCollection
+                    items_collection = ObservableCollection[Object]()
+                    for param_item in self.all_parameters:
+                        items_collection.Add(param_item)
+                    self.parameterSelector.ItemsSource = items_collection
+                    
+                    
+                    # Restore selection after ItemsSource is set (match by parameter name)
+                    if current_selection_name:
+                        try:
+                            # Find the matching item by parameter name
+                            target_item = None
+                            for item in items_collection:
+                                if hasattr(item, 'parameter_info') and item.parameter_info.name == current_selection_name:
+                                    target_item = item
+                                    break
+                            
+                            if target_item:
+                                # Set selection IMMEDIATELY with handler still removed to prevent event firing
+                                self.parameterSelector.SelectedItem = target_item
+                                
+                                # Re-add SelectionChanged handler AFTER selection is set
+                                try:
+                                    self.parameterSelector.SelectionChanged += self.on_parameter_selected
+                                except:
+                                    pass
+                                
+                                # Explicitly call on_parameter_selected to ensure values listbox is populated
+                                # Now that handler is re-added, this will work correctly
+                                self.on_parameter_selected(self.parameterSelector, None)
+                                
+                                # Force UI refresh to ensure values listbox is visible
+                                if hasattr(self, 'valuesListBox') and self.valuesListBox:
+                                    self.valuesListBox.UpdateLayout()
+                                    self.valuesListBox.InvalidateVisual()
+                                    # Restore visibility if it was hidden
+                                    if values_listbox_was_visible:
+                                        self.valuesListBox.Visibility = Visibility.Visible
+                        except Exception as ex:
+                            self.logger.debug("Error restoring selection: {}".format(str(ex)))
+                            # Re-add handler even on error to prevent losing it
+                            try:
+                                self.parameterSelector.SelectionChanged += self.on_parameter_selected
+                            except:
+                                pass
+                            # Restore visibility even on error
+                            if hasattr(self, 'valuesListBox') and self.valuesListBox and values_listbox_was_visible:
+                                self.valuesListBox.Visibility = Visibility.Visible
+                    else:
+                        # Re-add handler even if no selection to restore
+                        try:
+                            self.parameterSelector.SelectionChanged += self.on_parameter_selected
+                        except:
+                            pass
+                        # Restore visibility
+                        if hasattr(self, 'valuesListBox') and self.valuesListBox and values_listbox_was_visible:
+                            self.valuesListBox.Visibility = Visibility.Visible
+                    
+                    # Clear restoration flag AFTER all restoration is complete
+                    self._restoring_selection = False
+                    
+                    
+                    # Clear stored selection references
+                    if hasattr(self, '_selected_item_before_search'):
+                        self._selected_item_before_search = None
+                    if hasattr(self, '_selected_param_name_before_search'):
+                        self._selected_param_name_before_search = None
         except Exception as ex:
             self.statusText.Text = "Error processing parameter selection: " + str(ex)
             self.logger.error("Parameter dropdown closed error: %s", str(ex))
+    
+    def on_parameter_dropdown_opened(self, sender, args):
+        """Handle parameter dropdown opened event - initialize search filter."""
+        try:
+            # Store current selection before filtering (store by name for reliable restoration)
+            if self.parameterSelector.SelectedItem:
+                self._selected_item_before_search = self.parameterSelector.SelectedItem
+                # Also store the parameter name for reliable matching
+                try:
+                    self._selected_param_name_before_search = self.parameterSelector.SelectedItem.parameter_info.name
+                except:
+                    self._selected_param_name_before_search = None
+            
+            # Use Dispatcher to wait for popup to be fully rendered before finding SearchTextBox
+            from System.Windows.Threading import DispatcherPriority
+            self.parameterSelector.Dispatcher.BeginInvoke(
+                DispatcherPriority.Loaded,
+                System.Action(self._initialize_search_textbox)
+            )
+        except Exception as ex:
+            self.logger.error("Error initializing search filter: %s", str(ex))
+            import traceback
+            self.logger.debug("Traceback: %s", traceback.format_exc())
+    
+    def _initialize_search_textbox(self):
+        """Initialize the search textbox after popup is loaded."""
+        try:
+            
+            # Check if template exists
+            if not self.parameterSelector.Template:
+                self.logger.warning("ComboBox has no template")
+                return
+            
+            # Try to find Popup first
+            popup = self.parameterSelector.Template.FindName("Popup", self.parameterSelector)
+            
+            # Try to find SearchTextBox directly
+            search_textbox = self.parameterSelector.Template.FindName("SearchTextBox", self.parameterSelector)
+            
+            # If not found directly, try traversing visual tree from Popup
+            if not search_textbox and popup:
+                try:
+                    # Try to find SearchTextBox in Popup's visual tree
+                    from System.Windows.Media import VisualTreeHelper
+                    if popup.Child:
+                        # Try to find by name in visual tree
+                        def find_child_by_name(parent, name):
+                            if parent is None:
+                                return None
+                            if hasattr(parent, 'Name') and parent.Name == name:
+                                return parent
+                            for i in range(VisualTreeHelper.GetChildrenCount(parent)):
+                                child = VisualTreeHelper.GetChild(parent, i)
+                                result = find_child_by_name(child, name)
+                                if result:
+                                    return result
+                            return None
+                        
+                        search_textbox = find_child_by_name(popup.Child, "SearchTextBox")
+                except Exception as ex:
+                    self.logger.debug("Error traversing visual tree: {}".format(str(ex)))
+            
+            if search_textbox:
+                self.logger.debug("Found SearchTextBox successfully")
+                # Clear search text
+                search_textbox.Text = ""
+                # Wire up TextChanged event if not already done
+                if not hasattr(self, '_search_textbox_wired'):
+                    search_textbox.TextChanged += self.on_search_text_changed
+                    search_textbox.KeyDown += self.on_search_textbox_keydown
+                    search_textbox.PreviewKeyDown += self.on_search_textbox_preview_keydown
+                    self._search_textbox_wired = True
+                    self.logger.debug("Wired up SearchTextBox events")
+                # Focus the search textbox
+                search_textbox.Focus()
+                self.logger.debug("Focused SearchTextBox")
+            else:
+                self.logger.warning("SearchTextBox not found in ComboBox template")
+                if not popup:
+                    self.logger.warning("Popup not found in ComboBox template")
+        except Exception as ex:
+            self.logger.error("Error finding search textbox: %s", str(ex))
+            import traceback
+            self.logger.debug("Traceback: %s", traceback.format_exc())
+    
+    def on_search_text_changed(self, sender, args):
+        """Handle search text changed event - filter parameters."""
+        try:
+            
+            search_text = sender.Text.lower().strip()
+            
+            # Clear current items - handle ItemsSource
+            if self.parameterSelector.ItemsSource is not None:
+                self.parameterSelector.ItemsSource = None
+            self.parameterSelector.Items.Clear()
+            
+            
+            if not hasattr(self, 'all_parameters') or not self.all_parameters:
+                return
+            
+            # Use ItemsSource for SearchableComboBox
+            from System.Collections.ObjectModel import ObservableCollection
+            filtered_collection = ObservableCollection[Object]()
+            
+            if not search_text:
+                # Show all parameters if search is empty
+                for param_item in self.all_parameters:
+                    filtered_collection.Add(param_item)
+            else:
+                # Filter parameters based on search text
+                for param_item in self.all_parameters:
+                    param_name = param_item.display_name.lower()
+                    if search_text in param_name:
+                        filtered_collection.Add(param_item)
+            
+            self.parameterSelector.ItemsSource = filtered_collection
+            
+            # Try to restore selection if it matches the filter
+            if hasattr(self, '_selected_item_before_search') and self._selected_item_before_search:
+                try:
+                    # Use ItemsSource since we just set it
+                    for item in filtered_collection:
+                        if item == self._selected_item_before_search:
+                            self.parameterSelector.SelectedItem = item
+                            break
+                except Exception as ex:
+                    self.logger.debug("Error restoring selection in filter: {}".format(str(ex)))
+        except Exception as ex:
+            self.logger.error("Error filtering parameters: %s", str(ex))
+    
+    def on_search_textbox_preview_keydown(self, sender, args):
+        """Handle PreviewKeyDown events - intercept arrow keys before they're handled."""
+        try:
+            from System.Windows.Input import Key
+            
+            # Handle Down arrow key - move focus to first item in results
+            if args.Key == Key.Down:
+                args.Handled = True
+                # Use Dispatcher to set focus after current event completes
+                from System.Windows.Threading import DispatcherPriority
+                self.parameterSelector.Dispatcher.BeginInvoke(
+                    DispatcherPriority.Input,
+                    System.Action(lambda: self._focus_first_item())
+                )
+                return
+            
+            # Handle Up arrow key
+            elif args.Key == Key.Up:
+                if self.parameterSelector.Items.Count > 0:
+                    args.Handled = True
+                    from System.Windows.Threading import DispatcherPriority
+                    self.parameterSelector.Dispatcher.BeginInvoke(
+                        DispatcherPriority.Input,
+                        System.Action(lambda: self._focus_last_item())
+                    )
+                return
+            
+            # Handle Enter key
+            elif args.Key == Key.Enter:
+                if self.parameterSelector.SelectedIndex >= 0:
+                    args.Handled = True
+                    self.parameterSelector.IsDropDownOpen = False
+                return
+            
+            # Handle Escape key
+            elif args.Key == Key.Escape:
+                args.Handled = True
+                self.parameterSelector.IsDropDownOpen = False
+                return
+                
+        except Exception as ex:
+            self.logger.error("Error handling search textbox preview keydown: %s", str(ex))
+    
+    def _focus_first_item(self):
+        """Focus the first ComboBoxItem."""
+        try:
+            first_item = self._find_first_combobox_item()
+            if first_item:
+                first_item.Focus()
+                if self.parameterSelector.Items.Count > 0:
+                    self.parameterSelector.SelectedIndex = 0
+        except Exception as ex:
+            self.logger.debug("Error focusing first item: {}".format(str(ex)))
+    
+    def _focus_last_item(self):
+        """Focus the last ComboBoxItem."""
+        try:
+            last_item = self._find_last_combobox_item()
+            if last_item:
+                last_item.Focus()
+                self.parameterSelector.SelectedIndex = self.parameterSelector.Items.Count - 1
+        except Exception as ex:
+            self.logger.debug("Error focusing last item: {}".format(str(ex)))
+    
+    def on_search_textbox_keydown(self, sender, args):
+        """Handle keyboard events in search textbox - enable arrow key navigation."""
+        # Note: PreviewKeyDown handles arrow keys, this handler is kept for compatibility
+        # but arrow keys are intercepted in PreviewKeyDown before reaching here
+        pass
+    
+    def _find_first_combobox_item(self):
+        """Find the first ComboBoxItem in the dropdown."""
+        try:
+            from System.Windows.Controls import ComboBoxItem
+            from System.Windows.Media import VisualTreeHelper
+            
+            if not self.parameterSelector.Template:
+                return None
+            
+            popup = self.parameterSelector.Template.FindName("Popup", self.parameterSelector)
+            if not popup or not popup.Child:
+                return None
+            
+            # Traverse visual tree to find first ComboBoxItem
+            def find_first_combobox_item(parent):
+                if parent is None:
+                    return None
+                if isinstance(parent, ComboBoxItem):
+                    return parent
+                child_count = VisualTreeHelper.GetChildrenCount(parent)
+                for i in range(child_count):
+                    child = VisualTreeHelper.GetChild(parent, i)
+                    result = find_first_combobox_item(child)
+                    if result:
+                        return result
+                return None
+            
+            return find_first_combobox_item(popup.Child)
+        except Exception as ex:
+            self.logger.debug("Error finding first ComboBoxItem: {}".format(str(ex)))
+            return None
+    
+    def _find_last_combobox_item(self):
+        """Find the last ComboBoxItem in the dropdown."""
+        try:
+            from System.Windows.Controls import ComboBoxItem
+            from System.Windows.Media import VisualTreeHelper
+            
+            if not self.parameterSelector.Template:
+                return None
+            
+            popup = self.parameterSelector.Template.FindName("Popup", self.parameterSelector)
+            if not popup or not popup.Child:
+                return None
+            
+            # Traverse visual tree to find all ComboBoxItems, return last one
+            items = []
+            def find_all_combobox_items(parent):
+                if parent is None:
+                    return
+                if isinstance(parent, ComboBoxItem):
+                    items.append(parent)
+                child_count = VisualTreeHelper.GetChildrenCount(parent)
+                for i in range(child_count):
+                    child = VisualTreeHelper.GetChild(parent, i)
+                    find_all_combobox_items(child)
+            
+            find_all_combobox_items(popup.Child)
+            return items[-1] if items else None
+        except Exception as ex:
+            self.logger.debug("Error finding last ComboBoxItem: {}".format(str(ex)))
+            return None
     
     def on_value_click(self, sender, args):
         """Handle value item click to select Revit elements based on value."""
@@ -1373,17 +2081,34 @@ class RevitColorizerWindow(WPFWindow):
             checkbox_state = self.selectAllCategoriesCheckBox.IsChecked
             
             # Determine the action based on checkbox state
-            # If checkbox is indeterminate (None), we select all
-            # If checkbox is checked (True), we keep all selected 
-            # If checkbox is unchecked (False), we deselect all
-            if checkbox_state is None:  # Indeterminate state - select all
-                is_checked = True
-                # Force checkbox to checked state after handling indeterminate click
-                self.selectAllCategoriesCheckBox.IsChecked = True
+            # Handle indeterminate state based on previous state:
+            # - If previous was True and now None: transitioning to unchecked (False)
+            # - If previous was False and now None: transitioning to checked (True)
+            # - If previous was None: treat as checked (True)
+            if checkbox_state is None:  # Indeterminate state
+                if self._previous_select_all_state == True:
+                    # Was checked, now indeterminate - user is unchecking
+                    is_checked = False
+                    self.selectAllCategoriesCheckBox.IsChecked = False
+                elif self._previous_select_all_state == False:
+                    # Was unchecked, now indeterminate - user is checking
+                    is_checked = True
+                    self.selectAllCategoriesCheckBox.IsChecked = True
+                else:
+                    # Previous state unknown or None - default to checked
+                    is_checked = True
+                    self.selectAllCategoriesCheckBox.IsChecked = True
             elif checkbox_state == True:  # Checked state - keep all selected
                 is_checked = True
-            else:  # Unchecked state (False) - deselect all
+            elif checkbox_state == False:  # Unchecked state - deselect all
                 is_checked = False
+            else:
+                # Fallback: if state is unexpected, deselect all
+                is_checked = False
+                self.selectAllCategoriesCheckBox.IsChecked = False
+            
+            # Store current state for next time
+            self._previous_select_all_state = checkbox_state if checkbox_state is not None else (True if is_checked else False)
             
             # Update all category items
             if self.categoryListBox.Items:
@@ -1444,6 +2169,7 @@ class RevitColorizerWindow(WPFWindow):
     def on_category_checkbox_changed(self, category_item):
         """Handle category checkbox selection changed event."""
         try:
+            
             # Skip processing if we're in the middle of restoring selection or updating select all
             if self._processing_restored_selection or getattr(self, '_updating_select_all', False):
                 return
@@ -1453,6 +2179,7 @@ class RevitColorizerWindow(WPFWindow):
                 
             # Directly process the selection which will handle the category storage if needed
             self.process_category_selection()
+            
                 
         except Exception as ex:
             self.statusText.Text = "Error handling category checkbox: " + str(ex)
@@ -1464,17 +2191,36 @@ class RevitColorizerWindow(WPFWindow):
             # Store current selections
             current_param_type_is_instance = self.instanceRadioButton.IsChecked
             current_param_name = None
-            if self.parameterSelector.SelectedItem:
-                current_param_name = self.parameterSelector.SelectedItem.parameter_info.name
+            try:
+                if self.parameterSelector.SelectedItem:
+                    current_param_name = self.parameterSelector.SelectedItem.parameter_info.name
+            except:
+                # If accessing SelectedItem fails (e.g., when ItemsSource is being changed), skip preservation
+                current_param_name = None
                 
-            # Clear and reload parameters
+            # Clear and reload parameters - handle ItemsSource
+            if self.parameterSelector.ItemsSource is not None:
+                self.parameterSelector.ItemsSource = None
             self.parameterSelector.Items.Clear()
             selected_categories = self.get_selected_categories()
             
             if not selected_categories:
                 self.statusText.Text = "No categories selected."
+                # Clear parameter selector and show placeholder
+                # Explicitly clear selection first
+                self.parameterSelector.SelectedItem = None
+                self.parameterSelector.SelectedIndex = -1
+                # Force UI update to ensure placeholder shows
+                self.parameterSelector.UpdateLayout()
+                # Programmatically ensure placeholder is visible
+                self._ensure_placeholder_visible()
+                # Clear values listbox
+                if self.valuesListBox.ItemsSource is not None:
+                    self.valuesListBox.ItemsSource = None
                 self.valuesListBox.Items.Clear()
-                self.reset_colors_event.Raise()
+                # Don't reset colors during initialization
+                if not getattr(self, '_is_initializing', False):
+                    self.reset_colors_event.Raise()
                 return
                 
             # Get parameters (common or unique based on selection)
@@ -1505,25 +2251,45 @@ class RevitColorizerWindow(WPFWindow):
                     category_param_names = [p.name for p in category_params]
                     common_params = [p for p in common_params if p.name in category_param_names]
                 
-            # Add parameters to dropdown
+            # Store all parameters for search filtering
+            self.all_parameters = []
+            for param in common_params:
+                self.all_parameters.append(self.ParameterDisplayItem(param))
+            
+            # Add parameters to dropdown using ItemsSource
+            from System.Collections.ObjectModel import ObservableCollection
+            items_collection = ObservableCollection[Object]()
             selected_index = -1
-            for i, param in enumerate(common_params):
-                self.parameterSelector.Items.Add(self.ParameterDisplayItem(param))
-                if current_param_name and param.name == current_param_name:
+            for i, param_item in enumerate(self.all_parameters):
+                items_collection.Add(param_item)
+                if current_param_name and param_item.parameter_info.name == current_param_name:
                     selected_index = i
+            
+            self.parameterSelector.ItemsSource = items_collection
                     
-            # Restore selection
+            # Restore selection if possible, otherwise leave unselected (show placeholder)
             if selected_index >= 0:
+                self.parameterSelector.SelectedIndex = selected_index
                 param_description = "unique" if all_categories_selected else "common"
                 self.statusText.Text = "Refreshed {} parameters, maintained selection of '{}'.".format(param_description, current_param_name)
-            elif self.parameterSelector.Items.Count > 0:
-                self.parameterSelector.SelectedIndex = 0
+            elif self.get_parameter_count() > 0:
+                # Don't auto-select - explicitly set to -1 to show placeholder
+                self.parameterSelector.SelectedIndex = -1
+                # Ensure placeholder is visible
+                self.parameterSelector.UpdateLayout()
+                self._ensure_placeholder_visible()
                 param_description = "unique" if all_categories_selected else "common"
                 self.statusText.Text = "Refreshed {} {} parameters.".format(len(common_params), param_description)
             else:
+                # No parameters found - ensure placeholder is visible
+                self.parameterSelector.SelectedIndex = -1
+                self.parameterSelector.UpdateLayout()
+                self._ensure_placeholder_visible()
                 param_type = "instance" if current_param_type_is_instance else "type"
                 param_description = "unique" if all_categories_selected else "common"
                 self.statusText.Text = "No {} {} parameters found.".format(param_description, param_type)
+                if self.valuesListBox.ItemsSource is not None:
+                    self.valuesListBox.ItemsSource = None
                 self.valuesListBox.Items.Clear()
                 return
                 
@@ -1582,7 +2348,7 @@ class RevitColorizerWindow(WPFWindow):
                 self.logger.error("Error unregistering view events: %s", str(ex))
                 
             # Only reset colors if we actually have a valid view
-            if self.active_view:
+            if hasattr(self, 'active_view') and self.active_view:
                 try:
                     # Set the specific view in the handler and then raise the event
                     self.reset_colors_handler.set_specific_view(self.active_view)
@@ -1624,7 +2390,7 @@ class RevitColorizerWindow(WPFWindow):
                 self.logger.error("Error unregistering view events: %s", str(ex))
                 
             # Only reset colors if we actually have a valid view
-            if self.active_view:
+            if hasattr(self, 'active_view') and self.active_view:
                 try:
                     # Set the specific view in the handler and then raise the event
                     self.reset_colors_handler.set_specific_view(self.active_view)
@@ -1646,8 +2412,8 @@ class RevitColorizerWindow(WPFWindow):
     def on_view_activating(self, sender, args):
         """Handle Revit view activating events (fires BEFORE the view changes)."""
         try:
-            # Skip if window is not active
-            if not self.is_window_active:
+            # Skip if window is not active or still initializing
+            if not self.is_window_active or getattr(self, '_is_initializing', False):
                 return
             
             # Store the current view before it changes
@@ -2019,8 +2785,17 @@ if __name__ == "__main__":
     
     if active_view:
         # Start the UI
-        colorizer_ui = RevitColorizerWindow()
-        colorizer_ui.Show()
+        try:
+            
+            colorizer_ui = RevitColorizerWindow()
+            
+            
+            
+            colorizer_ui.Show()
+            
+        except Exception as ex:
+            logger.error("Error showing window: {}".format(str(ex)))
+            raise
     else:
         UI.TaskDialog.Show(
             "PyRevit Colorizer", 

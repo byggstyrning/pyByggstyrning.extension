@@ -164,8 +164,6 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
             styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
             
             if op.exists(styles_path):
-                from System.Windows import Application
-                from System.Uri import Uri
                 from System.Windows.Markup import XamlReader
                 from System.IO import File
                 

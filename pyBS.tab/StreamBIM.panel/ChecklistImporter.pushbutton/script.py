@@ -269,15 +269,16 @@ class StreamBIMImporterUI(forms.WPFWindow):
         """Load the common styles ResourceDictionary."""
         try:
             import os.path as op
-            script_dir = op.dirname(__file__)
-            panel_dir = op.dirname(script_dir)
+            # Use the same path calculation as at the top of the file
+            # Note: variable names are misleading - panel_dir is actually pushbutton dir, tab_dir is actually panel dir
+            # script_path -> panel_dir (pushbutton) -> tab_dir (panel) -> extension_dir (two levels up from tab_dir)
+            script_path = __file__
+            panel_dir = op.dirname(script_path)
             tab_dir = op.dirname(panel_dir)
             extension_dir = op.dirname(op.dirname(tab_dir))
             styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
             
             if op.exists(styles_path):
-                from System.Windows import Application
-                from System.Uri import Uri
                 from System.Windows.Markup import XamlReader
                 from System.IO import File
                 
@@ -1084,13 +1085,13 @@ class StreamBIMImporterUI(forms.WPFWindow):
             # Commit all changes
             t.Commit()
             
-            except Exception as e:
-                t.RollBack()
-                logger.error("Error during import: {}".format(str(e)))
-                self.update_status("Error during import: {}".format(str(e)))
-                # Hide busy indicator on error
-                self.set_busy(False)
-                return
+        except Exception as e:
+            t.RollBack()
+            logger.error("Error during import: {}".format(str(e)))
+            self.update_status("Error during import: {}".format(str(e)))
+            # Hide busy indicator on error
+            self.set_busy(False)
+            return
         
         # Update UI
         self.update_status("Import complete. Updated {}/{} elements.".format(updated, processed))

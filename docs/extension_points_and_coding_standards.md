@@ -193,6 +193,162 @@ Extend configuration options:
 
 To maintain consistency across the pyByggstyrning extension, developers should adhere to the following coding standards based on the analysis of the existing codebase.
 
+### 0. Common Pitfalls and Debugging
+
+#### 0.1 Path Calculation Consistency
+
+**CRITICAL**: When calculating paths to shared resources (like styles), always use the same path calculation method throughout the file.
+
+**Problem**: Different path calculations in the same file can lead to resources not being found, causing silent failures.
+
+**Solution**: 
+- Calculate the extension directory once at the top of the file
+- Reuse the same calculation pattern in all methods (especially `load_styles()`)
+- Be aware that variable names can be misleading:
+  - `panel_dir` may actually be the pushbutton directory
+  - `tab_dir` may actually be the panel directory
+  - Always trace the actual directory structure
+
+**Example - CORRECT**:
+```python
+# At top of file
+import os.path as op
+script_path = __file__
+panel_dir = op.dirname(script_path)      # Actually pushbutton dir
+tab_dir = op.dirname(panel_dir)          # Actually panel dir
+extension_dir = op.dirname(op.dirname(tab_dir))  # Extension root
+
+# In load_styles() method - use SAME calculation
+def load_styles(self):
+    import os.path as op
+    script_path = __file__
+    panel_dir = op.dirname(script_path)
+    tab_dir = op.dirname(panel_dir)
+    extension_dir = op.dirname(op.dirname(tab_dir))  # Same as top
+    styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
+```
+
+**Example - INCORRECT**:
+```python
+# Different calculation in load_styles() - WRONG!
+def load_styles(self):
+    import os.path as op
+    script_dir = op.dirname(__file__)
+    panel_dir = op.dirname(script_dir)   # Different variable name
+    tab_dir = op.dirname(panel_dir)
+    extension_dir = op.dirname(tab_dir)   # Wrong - one level too few!
+```
+
+#### 0.2 Unused Imports Can Cause Silent Failures
+
+**CRITICAL**: Unused imports that fail to import can prevent entire code blocks from executing, even if the import isn't used.
+
+**Problem**: An unused `from System.Uri import Uri` import that fails will cause an `ImportError` that prevents the entire `load_styles()` method from executing, even though `Uri` is never used.
+
+**Solution**:
+- Remove all unused imports
+- Only import what you actually use
+- If an import fails, the entire try block may fail silently
+
+**Example - INCORRECT**:
+```python
+if op.exists(styles_path):
+    from System.Windows import Application  # Not used
+    from System.Uri import Uri              # Not used AND causes ImportError!
+    from System.Windows.Markup import XamlReader
+    from System.IO import File
+```
+
+**Example - CORRECT**:
+```python
+if op.exists(styles_path):
+    from System.Windows.Markup import XamlReader
+    from System.IO import File
+    # Only import what you actually use
+```
+
+#### 0.3 StaticResource vs DynamicResource for Programmatically Loaded Styles
+
+**Important**: When styles are loaded programmatically AFTER XAML parsing, use `DynamicResource` instead of `StaticResource`.
+
+**Problem**: `StaticResource` resolves at XAML parse time, but if styles are loaded in Python code after `WPFWindow.__init__()`, they won't be available yet.
+
+**Solution**:
+- Use `DynamicResource` for styles that are loaded programmatically
+- Use `StaticResource` only if styles are guaranteed to exist at XAML parse time
+
+**Example - CORRECT**:
+```xml
+<!-- Styles loaded programmatically after XAML parsing -->
+<PasswordBox Style="{DynamicResource PlaceholderPasswordBoxStyle}"/>
+```
+
+**Example - INCORRECT**:
+```xml
+<!-- Will fail if style loaded after XAML parsing -->
+<PasswordBox Style="{StaticResource PlaceholderPasswordBoxStyle}"/>
+```
+
+#### 0.4 PasswordBox Requires Separate Style Definition
+
+**Important**: `PasswordBox` cannot use `TextBox` styles directly. Create a matching style for `PasswordBox` that mirrors the `TextBox` style.
+
+**Solution**:
+- Create `PlaceholderPasswordBoxStyle` in `CommonStyles.xaml` with `TargetType="PasswordBox"`
+- Match the visual properties (padding, border, corner radius, triggers) from the `TextBox` style
+- Note: PasswordBox doesn't support placeholder text, so omit that part
+
+**Example**:
+```xml
+<!-- In CommonStyles.xaml -->
+<Style x:Key="PlaceholderPasswordBoxStyle" TargetType="PasswordBox">
+    <Setter Property="Padding" Value="5,3"/>
+    <Setter Property="Template">
+        <Setter.Value>
+            <ControlTemplate TargetType="PasswordBox">
+                <!-- Match TextBox template but without placeholder -->
+            </ControlTemplate>
+        </Setter.Value>
+    </Setter>
+</Style>
+```
+
+#### 0.5 Debugging Path Issues
+
+When debugging path calculation issues:
+
+1. **Log the actual calculated paths** - Don't assume, verify:
+   ```python
+   logger.debug("Calculated path: {}".format(styles_path))
+   logger.debug("Path exists: {}".format(op.exists(styles_path)))
+   ```
+
+2. **Check file existence** - Always verify the file exists before trying to load it:
+   ```python
+   if op.exists(styles_path):
+       # Load styles
+   else:
+       logger.warning("Styles file not found at: {}".format(styles_path))
+   ```
+
+3. **Verify resource loading** - After loading, verify resources are actually available:
+   ```python
+   if 'PlaceholderPasswordBoxStyle' in [str(k) for k in self.Resources.Keys]:
+       logger.debug("Style loaded successfully")
+   else:
+       logger.warning("Style not found in resources")
+   ```
+
+4. **Check for silent exceptions** - Wrap style loading in try/except and log errors:
+   ```python
+   try:
+       # Load styles
+   except Exception as e:
+       logger.warning("Could not load styles: {}".format(str(e)))
+       import traceback
+       logger.debug("Error details: {}".format(traceback.format_exc()))
+   ```
+
 ### 1. File Organization
 
 #### 1.1 Directory Structure

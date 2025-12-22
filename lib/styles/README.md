@@ -8,7 +8,7 @@ All custom UI windows now use a centralized style system (`CommonStyles.xaml`) t
 - Consistent look and feel across all tools
 - Easy maintenance and updates
 - No external dependencies (no Xceed toolkit required)
-- Custom watermark textboxes, busy indicators, and styled controls
+- Custom placeholder textboxes, busy indicators, and styled controls
 
 ## Usage
 
@@ -84,7 +84,7 @@ Call `self.load_styles()` in your `__init__` method after `WPFWindow.__init__()`
 
 ### Input Controls
 
-- **WatermarkTextBoxStyle** - TextBox with watermark placeholder (use `Tag` property for watermark text)
+- **PlaceholderTextBoxStyle** - TextBox with placeholder placeholder (use `Tag` property for placeholder text)
 - **StandardComboBoxStyle** - Styled ComboBox
 - **StandardCheckBoxStyle** - Styled CheckBox
 - **StandardRadioButtonStyle** - Styled RadioButton
@@ -124,11 +124,11 @@ Then use `self.set_busy(True, "Loading...")` and `self.set_busy(False)` in Pytho
 
 ## Examples
 
-### Watermark TextBox
+### Placeholder TextBox
 
 ```xml
 <TextBox x:Name="usernameTextBox" 
-         Style="{StaticResource WatermarkTextBoxStyle}" 
+         Style="{StaticResource PlaceholderTextBoxStyle}" 
          Tag="Enter username"/>
 ```
 
@@ -164,7 +164,7 @@ When updating existing XAML files:
 
 - [ ] Remove inline `<Style>` definitions from `<Window.Resources>`
 - [ ] Add comment: `<!-- Styles will be loaded programmatically -->`
-- [ ] Replace TextBox with WatermarkTextBox style where needed
+- [ ] Replace TextBox with PlaceholderTextBox style where needed
 - [ ] Apply button styles (StandardButtonStyle, SecondaryButtonStyle, etc.)
 - [ ] Apply text block styles (HeaderTextBlockStyle, LabelTextBlockStyle, etc.)
 - [ ] Add busy overlay to Grid if needed
