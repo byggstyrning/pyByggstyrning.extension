@@ -171,6 +171,8 @@ def inspect_template_family(family_doc):
         'extrusion': None,
         'extrusion_start_param': None,
         'extrusion_end_param': None,
+        'top_offset_param': None,  # User-facing parameter that controls height
+        'bottom_offset_param': None,  # User-facing parameter for bottom offset
         'material_param': None,
         'subcategory': None
     }
@@ -189,26 +191,82 @@ def inspect_template_family(family_doc):
         fm = family_doc.FamilyManager
         
         # Find extrusion start/end parameters
-        # Template uses ExtrusionStart and ExtrusionEnd
+        # Template may use ExtrusionStart/ExtrusionEnd or NVExtrusionStart/NVExtrusionEnd
         param_names_to_try = [
-            "ExtrusionStart", "ExtrusionEnd",  # Template family parameters (prioritized)
+            "NVExtrusionStart", "NVExtrusionEnd",  # Template family parameters (NV prefix - prioritized)
+            "ExtrusionStart", "ExtrusionEnd",  # Alternative template family parameters
             "Extrusion Start", "Extrusion End",
             "Start", "End"
         ]
         
         for param_name in param_names_to_try:
             try:
+                # #region agent log
+                debug_log("param_lookup:trying", "Trying to find parameter", {
+                    "param_name": param_name,
+                    "hypothesisId": "ALL"
+                })
+                # #endregion
                 param = fm.get_Parameter(param_name)
                 if param:
                     if "Start" in param_name or "start" in param_name.lower():
                         if not result['extrusion_start_param']:
                             result['extrusion_start_param'] = param
                             logger.debug("Found extrusion start parameter: {}".format(param_name))
+                            # #region agent log
+                            debug_log("param_lookup:found_start", "Found extrusion start parameter", {
+                                "param_name": param_name,
+                                "param_id": str(param.Id) if param else None,
+                                "hypothesisId": "ALL"
+                            })
+                            # #endregion
                     elif "End" in param_name or "end" in param_name.lower():
                         if not result['extrusion_end_param']:
                             result['extrusion_end_param'] = param
                             logger.debug("Found extrusion end parameter: {}".format(param_name))
+                            # #region agent log
+                            debug_log("param_lookup:found_end", "Found extrusion end parameter", {
+                                "param_name": param_name,
+                                "param_id": str(param.Id) if param else None,
+                                "hypothesisId": "ALL"
+                            })
+                            # #endregion
+                else:
+                    # #region agent log
+                    debug_log("param_lookup:not_found", "Parameter not found", {
+                        "param_name": param_name,
+                        "hypothesisId": "ALL"
+                    })
+                    # #endregion
             except Exception as e:
+                # #region agent log
+                debug_log("param_lookup:error", "Error looking up parameter", {
+                    "param_name": param_name,
+                    "error": str(e),
+                    "hypothesisId": "ALL"
+                })
+                # #endregion
+                pass
+        
+        # Find Top Offset and Bottom Offset parameters (user-facing parameters)
+        # These are the parameters that actually control the height
+        offset_param_names = [
+            "Top Offset", "TopOffset", "Top Offset (default)",
+            "Bottom Offset", "BottomOffset", "Bottom Offset (default)"
+        ]
+        for param_name in offset_param_names:
+            try:
+                param = fm.get_Parameter(param_name)
+                if param:
+                    if "Top" in param_name or "top" in param_name.lower():
+                        if not result['top_offset_param']:
+                            result['top_offset_param'] = param
+                            logger.debug("Found top offset parameter: {}".format(param_name))
+                    elif "Bottom" in param_name or "bottom" in param_name.lower():
+                        if not result['bottom_offset_param']:
+                            result['bottom_offset_param'] = param
+                            logger.debug("Found bottom offset parameter: {}".format(param_name))
+            except:
                 pass
         
         # Find material parameter
@@ -370,6 +428,16 @@ def extract_room_boundary_loops(room, doc, levels_cache=None):
                                 top_z = lvl.Elevation
                                 break
                         height = top_z - base_z
+                        # #region agent log
+                        debug_log("height_calc:room", "Calculated height for room", {
+                            "room_id": str(room.Id),
+                            "base_z": base_z,
+                            "top_z": top_z,
+                            "height": height,
+                            "height_mm": height * 304.8 if height else None,  # Convert feet to mm for comparison
+                            "hypothesisId": "C,E"
+                        })
+                        # #endregion
         except Exception as e:
             logger.debug("Error calculating height: {}".format(e))
             height = 10.0  # Default fallback
@@ -416,8 +484,109 @@ class RoomItem(object):
         """Representation for debugging."""
         return self.display_text
 
+class RoomSelectorWindow(forms.WPFWindow):
+    """Custom WPF window for selecting rooms with search functionality."""
+    
+    def __init__(self, room_items):
+        """Initialize the room selector window.
+        
+        Args:
+            room_items: List of RoomItem objects
+        """
+        # Load XAML file
+        xaml_path = op.join(pushbutton_dir, 'RoomSelector.xaml')
+        forms.WPFWindow.__init__(self, xaml_path)
+        
+        # Load common styles programmatically
+        self.load_styles()
+        
+        # Store all room items and filtered items
+        self.all_room_items = room_items
+        self.filtered_room_items = list(room_items)
+        
+        # Store selected rooms (will be populated when Create is clicked)
+        self.selected_rooms = None
+        
+        # Bind collection to ListView
+        self.roomsListView.ItemsSource = self.filtered_room_items
+        
+        # Set up event handlers
+        self.createButton.Click += self.create_button_click
+        self.cancelButton.Click += self.cancel_button_click
+    
+    def load_styles(self):
+        """Load the common styles ResourceDictionary."""
+        try:
+            styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
+            
+            if op.exists(styles_path):
+                from System.Windows.Markup import XamlReader
+                from System.IO import File
+                
+                # Read XAML content
+                xaml_content = File.ReadAllText(styles_path)
+                
+                # Parse as ResourceDictionary
+                styles_dict = XamlReader.Parse(xaml_content)
+                
+                # Merge into window resources
+                if self.Resources is None:
+                    from System.Windows import ResourceDictionary
+                    self.Resources = ResourceDictionary()
+                
+                # Merge styles into existing resources
+                if hasattr(styles_dict, 'MergedDictionaries'):
+                    for merged_dict in styles_dict.MergedDictionaries:
+                        self.Resources.MergedDictionaries.Add(merged_dict)
+                
+                # Copy individual resources
+                for key in styles_dict.Keys:
+                    self.Resources[key] = styles_dict[key]
+        except Exception as e:
+            logger.debug("Could not load styles: {}".format(e))
+    
+    def searchTextBox_TextChanged(self, sender, args):
+        """Handle search text box text changed event."""
+        try:
+            search_text = sender.Text.lower() if sender.Text else ""
+            
+            # Filter room items based on search text
+            if search_text:
+                self.filtered_room_items = [
+                    item for item in self.all_room_items
+                    if search_text in item.display_text.lower()
+                ]
+            else:
+                self.filtered_room_items = list(self.all_room_items)
+            
+            # Update ListView
+            self.roomsListView.ItemsSource = self.filtered_room_items
+        except Exception as e:
+            logger.debug("Error filtering rooms: {}".format(e))
+    
+    def create_button_click(self, sender, args):
+        """Handle Create button click - collect selected rooms and close."""
+        # Collect all selected room items
+        selected_items = []
+        for item in self.roomsListView.SelectedItems:
+            selected_items.append(item)
+        
+        # Extract Room elements from selected items
+        if selected_items:
+            self.selected_rooms = [item.room for item in selected_items]
+        else:
+            self.selected_rooms = []
+        
+        # Close window
+        self.Close()
+    
+    def cancel_button_click(self, sender, args):
+        """Handle Cancel button click - close without selection."""
+        self.selected_rooms = None
+        self.Close()
+
 def show_room_filter_dialog(rooms, doc):
-    """Show a pyRevit native forms dialog to filter and select rooms.
+    """Show a custom WPF dialog to filter and select rooms.
     
     Args:
         rooms: List of Room elements
@@ -491,23 +660,12 @@ def show_room_filter_dialog(rooms, doc):
     existing_count = sum(1 for item in room_items if item.has_zone)
     logger.debug("Found {} rooms with existing 3D zones".format(existing_count))
     
-    # Show selection dialog with search/filter capability
-    # forms.SelectFromList supports multiple selection and built-in search
-    selected_items = forms.SelectFromList.show(
-        room_items,
-        title="Select Rooms for 3D Zone Creation",
-        multiselect=True,
-        button_name='Create Zones',
-        width=500,
-        height=600
-    )
+    # Show custom WPF selection dialog
+    dialog = RoomSelectorWindow(room_items)
+    dialog.ShowDialog()
     
     # Return selected rooms (or None if cancelled)
-    if selected_items:
-        selected_rooms = [item.room for item in selected_items]
-        return selected_rooms
-    else:
-        return None
+    return dialog.selected_rooms
 
 # --- Main Execution ---
 
@@ -738,6 +896,17 @@ if __name__ == '__main__':
                 # Extract room boundary loops (pass cached levels for performance)
                 loops, insertion_point, height = extract_room_boundary_loops(room, doc, levels_cache_sorted)
                 
+                # #region agent log
+                debug_log("room_processing:after_extract", "After extracting room boundary loops", {
+                    "room_number": room_number_str,
+                    "loops_count": len(loops) if loops else 0,
+                    "has_insertion_point": insertion_point is not None,
+                    "height": height,
+                    "will_process": loops and insertion_point and height > 0,
+                    "hypothesisId": "ALL"
+                })
+                # #endregion
+                
                 if not loops or not insertion_point or height <= 0:
                     logger.debug("Room {} (ID: {}) - invalid boundary data, skipping".format(
                         room_number_str, room_id))
@@ -771,6 +940,16 @@ if __name__ == '__main__':
                         existing_family = fam
                         logger.debug("Family '{}' already exists in project, will reuse it".format(family_name_without_ext))
                         break
+                
+                # #region agent log
+                debug_log("family_check:existing", "Checking if family exists", {
+                    "room_number": room_number_str,
+                    "family_name": family_name_without_ext,
+                    "existing_family_found": existing_family is not None,
+                    "will_create_new": existing_family is None,
+                    "hypothesisId": "ALL"
+                })
+                # #endregion
                 
                 # Only create/modify family document if it doesn't exist
                 if not existing_family:
@@ -1015,13 +1194,24 @@ if __name__ == '__main__':
                                 family_create = family_doc.FamilyCreate
                                 
                                 # #region agent log
-                                debug_log("extrusion:before_create", "Before NewExtrusion", {"room_number": room_number_str, "loop_count": curve_arr_array.Size, "height": height})
+                                debug_log("extrusion:before_create", "Before NewExtrusion", {
+                                    "room_number": room_number_str,
+                                    "loop_count": curve_arr_array.Size,
+                                    "height": height,
+                                    "height_mm": height * 304.8 if height else None,
+                                    "hypothesisId": "E"
+                                })
                                 # #endregion
                                 
                                 new_extrusion = family_create.NewExtrusion(True, curve_arr_array, sketch_plane, height)
                                 
                                 # #region agent log
-                                debug_log("extrusion:after_create", "After NewExtrusion", {"room_number": room_number_str, "success": new_extrusion is not None})
+                                debug_log("extrusion:after_create", "After NewExtrusion", {
+                                    "room_number": room_number_str,
+                                    "success": new_extrusion is not None,
+                                    "height_passed": height,
+                                    "hypothesisId": "E"
+                                })
                                 # #endregion
                                 
                                 if new_extrusion:
@@ -1037,7 +1227,168 @@ if __name__ == '__main__':
                                         except Exception as subcat_error:
                                             logger.debug("Could not set subcategory: {}".format(subcat_error))
                                     
-                                    # Re-associate parameters if they exist
+                                    # FIX: Set FAMILY PARAMETER values FIRST, then associate
+                                    # When associating a family parameter to an instance parameter in Revit,
+                                    # it copies the CURRENT VALUE of the family parameter INTO the instance parameter.
+                                    # So we must set the family parameter value FIRST, regenerate to commit it,
+                                    # THEN associate (which will copy the correct value into the element parameter).
+                                    # #region agent log
+                                    debug_log("extrusion_params:before_pre_set", "Setting FAMILY parameters FIRST before association", {
+                                        "room_number": room_number_str,
+                                        "height": height,
+                                        "has_start_param": template_info['extrusion_start_param'] is not None,
+                                        "has_end_param": template_info['extrusion_end_param'] is not None,
+                                        "hypothesisId": "ALL"
+                                    })
+                                    # #endregion
+                                    
+                                    # Set family parameter values FIRST (before association)
+                                    if template_info['extrusion_start_param']:
+                                        try:
+                                            fm.Set(template_info['extrusion_start_param'], 0.0)
+                                            # #region agent log
+                                            debug_log("extrusion_params:pre_set_start_family", "Set family start param BEFORE association", {
+                                                "room_number": room_number_str,
+                                                "value": 0.0,
+                                                "hypothesisId": "ALL"
+                                            })
+                                            # #endregion
+                                        except Exception as pre_set_error:
+                                            logger.debug("Could not pre-set start family parameter: {}".format(pre_set_error))
+                                            # #region agent log
+                                            debug_log("extrusion_params:pre_set_start_error", "Pre-set start family param failed", {
+                                                "room_number": room_number_str,
+                                                "error": str(pre_set_error),
+                                                "hypothesisId": "ALL"
+                                            })
+                                            # #endregion
+                                    
+                                    if template_info['extrusion_end_param']:
+                                        try:
+                                            fm.Set(template_info['extrusion_end_param'], height)
+                                            # #region agent log
+                                            debug_log("extrusion_params:pre_set_end_family", "Set family end param BEFORE association", {
+                                                "room_number": room_number_str,
+                                                "value": height,
+                                                "hypothesisId": "ALL"
+                                            })
+                                            # #endregion
+                                        except Exception as pre_set_error:
+                                            logger.debug("Could not pre-set end family parameter: {}".format(pre_set_error))
+                                            # #region agent log
+                                            debug_log("extrusion_params:pre_set_end_error", "Pre-set end family param failed", {
+                                                "room_number": room_number_str,
+                                                "error": str(pre_set_error),
+                                                "hypothesisId": "ALL"
+                                            })
+                                            # #endregion
+                                    
+                                    # Regenerate to commit family parameter values
+                                    family_doc.Regenerate()
+                                    
+                                    # Verify family parameter values before association
+                                    if template_info['extrusion_end_param']:
+                                        try:
+                                            # Get current family parameter value via FamilyType
+                                            family_type_param = fm.CurrentType.get_Parameter(template_info['extrusion_end_param'].Definition)
+                                            if family_type_param:
+                                                current_family_value = family_type_param.AsDouble()
+                                                # #region agent log
+                                                debug_log("extrusion_params:family_value_before_assoc", "Family parameter value before association", {
+                                                    "room_number": room_number_str,
+                                                    "family_param_value": current_family_value,
+                                                    "target_value": height,
+                                                    "match": abs(current_family_value - height) < 0.001,
+                                                    "param_name": template_info['extrusion_end_param'].Definition.Name,
+                                                    "hypothesisId": "ALL"
+                                                })
+                                                # #endregion
+                                            else:
+                                                # #region agent log
+                                                debug_log("extrusion_params:family_value_not_found", "Family parameter not found on type", {
+                                                    "room_number": room_number_str,
+                                                    "param_name": template_info['extrusion_end_param'].Definition.Name,
+                                                    "hypothesisId": "ALL"
+                                                })
+                                                # #endregion
+                                        except Exception as verify_error:
+                                            logger.debug("Could not verify family parameter value: {}".format(verify_error))
+                                            # #region agent log
+                                            debug_log("extrusion_params:family_value_error", "Error verifying family parameter", {
+                                                "room_number": room_number_str,
+                                                "error": str(verify_error),
+                                                "error_type": type(verify_error).__name__,
+                                                "hypothesisId": "ALL"
+                                            })
+                                            # #endregion
+                                    
+                                    # Also check element parameter value BEFORE association
+                                    if template_info['extrusion_end_param']:
+                                        try:
+                                            end_param_before = new_extrusion.get_Parameter(BuiltInParameter.EXTRUSION_END_PARAM)
+                                            if end_param_before:
+                                                # #region agent log
+                                                debug_log("extrusion_params:element_value_before_assoc", "Element parameter value BEFORE association", {
+                                                    "room_number": room_number_str,
+                                                    "element_param_value": end_param_before.AsDouble(),
+                                                    "target_value": height,
+                                                    "is_readonly": end_param_before.IsReadOnly,
+                                                    "hypothesisId": "ALL"
+                                                })
+                                                # #endregion
+                                        except Exception as elem_before_error:
+                                            logger.debug("Could not get element parameter before association: {}".format(elem_before_error))
+                                    
+                                    # FIX: DO NOT associate parameters - this makes them read-only in the project
+                                    # Instead, set the values directly on the element in the family editor
+                                    # Then we can set them on instances in the project without read-only issues
+                                    # #region agent log
+                                    debug_log("extrusion_params:skip_association", "Skipping parameter association - will set directly on element", {
+                                        "room_number": room_number_str,
+                                        "reason": "Association makes parameters read-only in project",
+                                        "hypothesisId": "ALL"
+                                    })
+                                    # #endregion
+                                    
+                                    # Set element parameters directly (they're writable before association)
+                                    if template_info['extrusion_start_param']:
+                                        try:
+                                            start_param = new_extrusion.get_Parameter(BuiltInParameter.EXTRUSION_START_PARAM)
+                                            if start_param and not start_param.IsReadOnly:
+                                                start_param.Set(0.0)
+                                                logger.debug("Set extrusion start parameter directly on element: 0.0")
+                                        except Exception as set_error:
+                                            logger.debug("Could not set start parameter directly: {}".format(set_error))
+                                    
+                                    if template_info['extrusion_end_param']:
+                                        try:
+                                            end_param = new_extrusion.get_Parameter(BuiltInParameter.EXTRUSION_END_PARAM)
+                                            if end_param and not end_param.IsReadOnly:
+                                                end_param.Set(height)
+                                                logger.debug("Set extrusion end parameter directly on element: {}".format(height))
+                                                # #region agent log
+                                                debug_log("extrusion_params:set_element_direct", "Set end parameter directly on element", {
+                                                    "room_number": room_number_str,
+                                                    "height": height,
+                                                    "element_param_value": end_param.AsDouble() if end_param else None,
+                                                    "hypothesisId": "ALL"
+                                                })
+                                                # #endregion
+                                        except Exception as set_error:
+                                            logger.debug("Could not set end parameter directly: {}".format(set_error))
+                                            # #region agent log
+                                            debug_log("extrusion_params:set_element_direct_error", "Error setting element parameter directly", {
+                                                "room_number": room_number_str,
+                                                "error": str(set_error),
+                                                "hypothesisId": "ALL"
+                                            })
+                                            # #endregion
+                                    
+                                    # Regenerate after setting element parameters
+                                    family_doc.Regenerate()
+                                    
+                                    # FIX: Associate ExtrusionEnd/ExtrusionStart to the extrusion element
+                                    # This allows the formulas (ExtrusionEnd = Top Offset) to work
                                     if template_info['extrusion_start_param']:
                                         try:
                                             start_param = new_extrusion.get_Parameter(BuiltInParameter.EXTRUSION_START_PARAM)
@@ -1053,8 +1404,88 @@ if __name__ == '__main__':
                                             if end_param:
                                                 fm.AssociateElementParameterToFamilyParameter(end_param, template_info['extrusion_end_param'])
                                                 logger.debug("Associated extrusion end parameter")
+                                                # #region agent log
+                                                debug_log("extrusion_params:association", "Associated end parameter", {
+                                                    "room_number": room_number_str,
+                                                    "element_param_value_after": end_param.AsDouble() if end_param else None,
+                                                    "hypothesisId": "B"
+                                                })
+                                                # #endregion
                                         except Exception as assoc_error:
                                             logger.debug("Could not associate end parameter: {}".format(assoc_error))
+                                            # #region agent log
+                                            debug_log("extrusion_params:association_error", "Association failed", {
+                                                "room_number": room_number_str,
+                                                "error": str(assoc_error),
+                                                "hypothesisId": "B"
+                                            })
+                                            # #endregion
+                                    
+                                    # Regenerate after association
+                                    family_doc.Regenerate()
+                                    
+                                    # FIX: Set Top Offset and Bottom Offset (user-facing parameters)
+                                    # These are the parameters that actually control the height
+                                    # The formulas (ExtrusionEnd = Top Offset) will automatically update ExtrusionEnd
+                                    if template_info['bottom_offset_param']:
+                                        try:
+                                            fm.Set(template_info['bottom_offset_param'], 0.0)
+                                            logger.debug("Set bottom offset parameter: 0.0")
+                                            # #region agent log
+                                            debug_log("extrusion_params:set_bottom_offset", "Set bottom offset parameter", {
+                                                "room_number": room_number_str,
+                                                "value": 0.0,
+                                                "hypothesisId": "ALL"
+                                            })
+                                            # #endregion
+                                        except Exception as bottom_error:
+                                            logger.debug("Could not set bottom offset parameter: {}".format(bottom_error))
+                                            # #region agent log
+                                            debug_log("extrusion_params:set_bottom_offset_error", "Error setting bottom offset", {
+                                                "room_number": room_number_str,
+                                                "error": str(bottom_error),
+                                                "hypothesisId": "ALL"
+                                            })
+                                            # #endregion
+                                    
+                                    if template_info['top_offset_param']:
+                                        try:
+                                            fm.Set(template_info['top_offset_param'], height)
+                                            logger.debug("Set top offset parameter: {}".format(height))
+                                            # #region agent log
+                                            debug_log("extrusion_params:set_top_offset", "Set top offset parameter", {
+                                                "room_number": room_number_str,
+                                                "height": height,
+                                                "hypothesisId": "ALL"
+                                            })
+                                            # #endregion
+                                        except Exception as top_error:
+                                            logger.debug("Could not set top offset parameter: {}".format(top_error))
+                                            # #region agent log
+                                            debug_log("extrusion_params:set_top_offset_error", "Error setting top offset", {
+                                                "room_number": room_number_str,
+                                                "error": str(top_error),
+                                                "hypothesisId": "ALL"
+                                            })
+                                            # #endregion
+                                    else:
+                                        # Fallback: if Top Offset not found, try setting ExtrusionEnd directly
+                                        if template_info['extrusion_end_param']:
+                                            try:
+                                                fm.Set(template_info['extrusion_end_param'], height)
+                                                logger.debug("Fallback: Set extrusion end parameter directly: {}".format(height))
+                                                # #region agent log
+                                                debug_log("extrusion_params:set_end_fallback", "Fallback: Set extrusion end directly (Top Offset not found)", {
+                                                    "room_number": room_number_str,
+                                                    "height": height,
+                                                    "hypothesisId": "ALL"
+                                                })
+                                                # #endregion
+                                            except Exception as fallback_error:
+                                                logger.debug("Could not set extrusion end parameter (fallback): {}".format(fallback_error))
+                                    
+                                    # Regenerate after setting offset parameters
+                                    family_doc.Regenerate()
                                     
                                     if template_info['material_param']:
                                         try:
@@ -1065,18 +1496,175 @@ if __name__ == '__main__':
                                         except Exception as assoc_error:
                                             logger.debug("Could not associate material parameter: {}".format(assoc_error))
                                     
-                                    # Set extrusion start/end values
+                                    # Set extrusion start/end values (verify they're still correct after association)
+                                    # #region agent log
+                                    debug_log("extrusion_params:before_set", "Before setting extrusion parameters", {
+                                        "room_number": room_number_str,
+                                        "height": height,
+                                        "has_start_param": template_info['extrusion_start_param'] is not None,
+                                        "has_end_param": template_info['extrusion_end_param'] is not None,
+                                        "hypothesisId": "A,B,C,D"
+                                    })
+                                    # #endregion
+                                    
                                     if template_info['extrusion_start_param']:
                                         try:
+                                            # #region agent log
+                                            debug_log("extrusion_params:set_start_before", "Before fm.Set start param", {
+                                                "room_number": room_number_str,
+                                                "param_name": template_info['extrusion_start_param'].Definition.Name if template_info['extrusion_start_param'] else None,
+                                                "param_storage_type": str(template_info['extrusion_start_param'].StorageType) if template_info['extrusion_start_param'] else None,
+                                                "value": 0.0,
+                                                "hypothesisId": "A,C,D"
+                                            })
+                                            # #endregion
                                             fm.Set(template_info['extrusion_start_param'], 0.0)
-                                        except:
+                                            # #region agent log
+                                            debug_log("extrusion_params:set_start_after", "After fm.Set start param", {
+                                                "room_number": room_number_str,
+                                                "success": True,
+                                                "hypothesisId": "A"
+                                            })
+                                            # #endregion
+                                        except Exception as start_error:
+                                            # #region agent log
+                                            debug_log("extrusion_params:set_start_error", "fm.Set start param failed", {
+                                                "room_number": room_number_str,
+                                                "error": str(start_error),
+                                                "error_type": type(start_error).__name__,
+                                                "hypothesisId": "A"
+                                            })
+                                            # #endregion
                                             pass
                                     
                                     if template_info['extrusion_end_param']:
+                                        # FIX: Set parameter value using multiple methods for reliability
+                                        param_set_success = False
+                                        
                                         try:
-                                            fm.Set(template_info['extrusion_end_param'], height)
-                                        except:
-                                            pass
+                                            # #region agent log
+                                            debug_log("extrusion_params:set_end_before", "Before setting end param", {
+                                                "room_number": room_number_str,
+                                                "param_name": template_info['extrusion_end_param'].Definition.Name if template_info['extrusion_end_param'] else None,
+                                                "param_storage_type": str(template_info['extrusion_end_param'].StorageType) if template_info['extrusion_end_param'] else None,
+                                                "height_value": height,
+                                                "hypothesisId": "A,B,C,D"
+                                            })
+                                            # #endregion
+                                            
+                                            # Method 1: Try setting via FamilyManager (family parameter)
+                                            try:
+                                                fm.Set(template_info['extrusion_end_param'], height)
+                                                # Regenerate to ensure parameter value propagates to element
+                                                family_doc.Regenerate()
+                                                # If fm.Set() doesn't throw, assume it succeeded
+                                                param_set_success = True
+                                                # #region agent log
+                                                debug_log("extrusion_params:set_end_success_fm", "FamilyManager.Set succeeded", {
+                                                    "room_number": room_number_str,
+                                                    "set_value": height,
+                                                    "regenerated": True,
+                                                    "hypothesisId": "A"
+                                                })
+                                                # #endregion
+                                            except Exception as fm_error:
+                                                # #region agent log
+                                                debug_log("extrusion_params:set_end_fm_failed", "FamilyManager.Set failed", {
+                                                    "room_number": room_number_str,
+                                                    "error": str(fm_error),
+                                                    "error_type": type(fm_error).__name__,
+                                                    "hypothesisId": "A"
+                                                })
+                                                # #endregion
+                                            
+                                            # Method 2: Always set directly on element parameter as well (ensures value is correct)
+                                            # Even if family parameter setting succeeded, set element parameter directly to be sure
+                                            try:
+                                                element_end_param = new_extrusion.get_Parameter(BuiltInParameter.EXTRUSION_END_PARAM)
+                                                # #region agent log
+                                                debug_log("extrusion_params:element_param_check", "Checking element parameter", {
+                                                    "room_number": room_number_str,
+                                                    "element_param_exists": element_end_param is not None,
+                                                    "is_readonly": element_end_param.IsReadOnly if element_end_param else None,
+                                                    "current_value": element_end_param.AsDouble() if element_end_param else None,
+                                                    "hypothesisId": "B"
+                                                })
+                                                # #endregion
+                                                if element_end_param and not element_end_param.IsReadOnly:
+                                                    element_end_param.Set(height)
+                                                    # Regenerate after setting element parameter
+                                                    family_doc.Regenerate()
+                                                    param_set_success = True
+                                                    # #region agent log
+                                                    debug_log("extrusion_params:set_end_success_element", "Element parameter.Set succeeded", {
+                                                        "room_number": room_number_str,
+                                                        "set_value": height,
+                                                        "regenerated": True,
+                                                        "hypothesisId": "B"
+                                                    })
+                                                    # #endregion
+                                                else:
+                                                    # #region agent log
+                                                    debug_log("extrusion_params:element_param_skipped", "Element parameter skipped", {
+                                                        "room_number": room_number_str,
+                                                        "reason": "read_only" if element_end_param and element_end_param.IsReadOnly else "not_found",
+                                                        "hypothesisId": "B"
+                                                    })
+                                                    # #endregion
+                                            except Exception as elem_error:
+                                                # #region agent log
+                                                debug_log("extrusion_params:set_end_element_failed", "Element parameter.Set failed", {
+                                                    "room_number": room_number_str,
+                                                    "error": str(elem_error),
+                                                    "error_type": type(elem_error).__name__,
+                                                    "hypothesisId": "B"
+                                                })
+                                                # #endregion
+                                                if not param_set_success:
+                                                    # Only mark as failed if family parameter also failed
+                                                    pass
+                                            
+                                            # Final verification
+                                            if param_set_success:
+                                                # Check element parameter (more reliable than family parameter)
+                                                element_param_value = None
+                                                try:
+                                                    elem_param = new_extrusion.get_Parameter(BuiltInParameter.EXTRUSION_END_PARAM)
+                                                    if elem_param:
+                                                        element_param_value = elem_param.AsDouble()
+                                                except:
+                                                    pass
+                                                
+                                                # #region agent log
+                                                debug_log("extrusion_params:set_end_final_verify", "Final verification after setting", {
+                                                    "room_number": room_number_str,
+                                                    "target_value": height,
+                                                    "element_param_value": element_param_value,
+                                                    "element_match": abs(element_param_value - height) < 0.001 if element_param_value is not None else False,
+                                                    "hypothesisId": "A,B,E"
+                                                })
+                                                # #endregion
+                                            else:
+                                                # #region agent log
+                                                debug_log("extrusion_params:set_end_all_methods_failed", "All parameter setting methods failed", {
+                                                    "room_number": room_number_str,
+                                                    "height": height,
+                                                    "hypothesisId": "A,B"
+                                                })
+                                                # #endregion
+                                                logger.warning("Failed to set extrusion end parameter for room {} - value may default to template value".format(room_number_str))
+                                            
+                                        except Exception as end_error:
+                                            # #region agent log
+                                            debug_log("extrusion_params:set_end_error", "Unexpected error setting end param", {
+                                                "room_number": room_number_str,
+                                                "error": str(end_error),
+                                                "error_type": type(end_error).__name__,
+                                                "height": height,
+                                                "hypothesisId": "A"
+                                            })
+                                            # #endregion
+                                            logger.warning("Error setting extrusion end parameter for room {}: {}".format(room_number_str, end_error))
                                 else:
                                     logger.debug("Room {}: Failed to create new extrusion (invalid geometry), skipping".format(room_number_str))
                                     t.RollBack()
@@ -1153,11 +1741,22 @@ if __name__ == '__main__':
                         'output_family_name': output_family_name,
                         'family_name_without_ext': family_name_without_ext,
                         'existing_family': existing_family,  # None if needs to be loaded, Family object if already exists
-                        'family_doc': family_doc  # Keep reference to open family doc (will close after loading)
+                        'family_doc': family_doc,  # Keep reference to open family doc (will close after loading)
+                        'height': height  # Store height to set on instance after creation
                     })
                 else:
                     # Family already exists, skip family document processing
                     logger.debug("Skipping family document processing for room {} - family already exists".format(room_number_str))
+                    
+                    # #region agent log
+                    debug_log("family_check:reusing_existing", "Reusing existing family - skipping extrusion creation", {
+                        "room_number": room_number_str,
+                        "family_name": family_name_without_ext,
+                        "height_calculated": height,
+                        "note": "Existing family will be reused - parameter setting code not executed",
+                        "hypothesisId": "ALL"
+                    })
+                    # #endregion
                     
                     # Store room data for second pass (loading/placing in project)
                     room_family_data.append({
@@ -1168,7 +1767,8 @@ if __name__ == '__main__':
                         'room_name_str': room_name_str,
                         'output_family_name': output_family_name,
                         'family_name_without_ext': family_name_without_ext,
-                        'existing_family': existing_family  # Use existing family
+                        'existing_family': existing_family,  # Use existing family
+                        'height': height  # Store height to set on instance after creation
                     })
 
                     
@@ -1311,6 +1911,72 @@ if __name__ == '__main__':
                             logger.warning("No active symbol found for family {}".format(loaded_family.Name))
                             fail_count += 1
                             continue
+                        
+                        # FIX: Set Top Offset parameter value on the loaded symbol BEFORE creating instances
+                        # Top Offset is the user-facing parameter that controls height
+                        # The formula (ExtrusionEnd = Top Offset) will automatically update ExtrusionEnd
+                        height = room_data.get('height')
+                        top_offset_set_on_symbol = False  # Track if Top Offset was set on symbol
+                        if height:
+                            try:
+                                # Get template info to find parameter names
+                                template_info = room_data.get('template_info')
+                                
+                                # Try Top Offset first (user-facing parameter)
+                                if template_info and template_info.get('top_offset_param'):
+                                    top_offset_name = template_info['top_offset_param'].Definition.Name
+                                    # Try various name variations
+                                    for param_name in [top_offset_name, "Top Offset", "TopOffset", "Top Offset (default)"]:
+                                        type_param = symbol.LookupParameter(param_name)
+                                        if type_param and not type_param.IsReadOnly:
+                                            type_param.Set(height)
+                                            logger.debug("Set top offset parameter {} to {} on loaded symbol".format(param_name, height))
+                                            # #region agent log
+                                            debug_log("instance_params:set_top_offset_before_create", "Set top offset on symbol before instance creation", {
+                                                "room_number": room_number_str,
+                                                "param_name": param_name,
+                                                "height": height,
+                                                "value_after": type_param.AsDouble() if type_param else None,
+                                                "hypothesisId": "ALL"
+                                            })
+                                            # #endregion
+                                            doc.Regenerate()
+                                            top_offset_set_on_symbol = True
+                                            break
+                                
+                                # Fallback: if Top Offset not found, try ExtrusionEnd
+                                if not top_offset_set_on_symbol:
+                                    if template_info and template_info.get('extrusion_end_param'):
+                                        end_param_name = template_info['extrusion_end_param'].Definition.Name
+                                        # Try both standard and NV parameter names
+                                        for param_name in [end_param_name, "ExtrusionEnd", "NVExtrusionEnd"]:
+                                            type_param = symbol.LookupParameter(param_name)
+                                            if type_param and not type_param.IsReadOnly:
+                                                type_param.Set(height)
+                                                logger.debug("Fallback: Set type parameter {} to {} on loaded symbol".format(param_name, height))
+                                                # #region agent log
+                                                debug_log("instance_params:set_symbol_type_before_create", "Fallback: Set type parameter on symbol before instance creation", {
+                                                    "room_number": room_number_str,
+                                                    "param_name": param_name,
+                                                    "height": height,
+                                                    "value_after": type_param.AsDouble() if type_param else None,
+                                                    "hypothesisId": "ALL"
+                                                })
+                                                # #endregion
+                                                doc.Regenerate()
+                                                break
+                            except Exception as symbol_set_error:
+                                logger.debug("Could not set type parameter on symbol: {}".format(symbol_set_error))
+                                # #region agent log
+                                debug_log("instance_params:set_symbol_type_error", "Error setting type parameter on symbol", {
+                                    "room_number": room_number_str,
+                                    "error": str(symbol_set_error),
+                                    "hypothesisId": "ALL"
+                                })
+                                # #endregion
+                        
+                        # Store flag in room_data for later use
+                        room_data['top_offset_set_on_symbol'] = top_offset_set_on_symbol
 
                         level_id = room.LevelId if hasattr(room, 'LevelId') and room.LevelId else None
                         level = doc.GetElement(level_id) if level_id else None
@@ -1391,6 +2057,7 @@ if __name__ == '__main__':
                                             value = source_mmi.AsString()
                                             if value:
                                                 target_mmi.Set(value)
+                            
                         except Exception as prop_error:
                             logger.debug("Error copying properties: {}".format(prop_error))
 

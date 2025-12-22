@@ -763,6 +763,7 @@
     <Style x:Key="StandardListBoxStyle" TargetType="ListBox">
         <Setter Property="Margin" Value="{StaticResource DefaultMargin}"/>
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="Background" Value="White"/>
     </Style>
     

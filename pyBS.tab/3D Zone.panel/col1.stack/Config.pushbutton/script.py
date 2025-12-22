@@ -275,6 +275,9 @@ class ParameterSelectorDialog(forms.WPFWindow):
         xaml_path = op.join(pushbutton_dir, 'ParameterSelector.xaml')
         forms.WPFWindow.__init__(self, xaml_path)
         
+        # Load common styles programmatically (same as Zone3DConfigEditorUI)
+        self.load_styles()
+        
         self.selected_source = None
         self.selected_target = None
         
@@ -323,6 +326,41 @@ class ParameterSelectorDialog(forms.WPFWindow):
         self.okButton.IsEnabled = has_source and has_target
         self.sourceParameterListBox.SelectionChanged += self.selection_changed
         self.targetParameterListBox.SelectionChanged += self.selection_changed
+    
+    def load_styles(self):
+        """Load the common styles ResourceDictionary."""
+        try:
+            # Use the same path calculation as at the top of the file
+            styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
+            
+            if op.exists(styles_path):
+                from System.Windows.Markup import XamlReader
+                from System.IO import File
+                
+                # Read XAML content
+                xaml_content = File.ReadAllText(styles_path)
+                
+                # Parse as ResourceDictionary
+                styles_dict = XamlReader.Parse(xaml_content)
+                
+                # Merge into window resources
+                if self.Resources is None:
+                    from System.Windows import ResourceDictionary
+                    self.Resources = ResourceDictionary()
+                
+                # If it's a ResourceDictionary, merge its contents
+                if hasattr(styles_dict, 'Keys'):
+                    for key in styles_dict.Keys:
+                        self.Resources[key] = styles_dict[key]
+                else:
+                    # Try to merge the entire dictionary
+                    self.Resources.MergedDictionaries.Add(styles_dict)
+                    
+                logger.debug("ParameterSelectorDialog: Loaded styles from: {}".format(styles_path))
+        except Exception as e:
+            logger.warning("ParameterSelectorDialog: Could not load styles: {}".format(str(e)))
+            import traceback
+            logger.error(traceback.format_exc())
     
     def sort_params_with_priority(self, params, priority_param):
         """Sort parameters list with priority parameter at the top.
@@ -711,6 +749,9 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         xaml_path = op.join(pushbutton_dir, 'Zone3DConfigEditor.xaml')
         forms.WPFWindow.__init__(self, xaml_path)
         
+        # Load common styles programmatically
+        self.load_styles()
+        
         # Initialize data collections
         self.configs = ObservableCollection[object]()
         self.parameter_mappings = ObservableCollection[object]()
@@ -773,6 +814,39 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         
         # Load configurations
         self.load_configurations()
+    
+    def load_styles(self):
+        """Load the common styles ResourceDictionary."""
+        try:
+            # Use the same path calculation as at the top of the file
+            styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
+            
+            if op.exists(styles_path):
+                from System.Windows.Markup import XamlReader
+                from System.IO import File
+                
+                # Read XAML content
+                xaml_content = File.ReadAllText(styles_path)
+                
+                # Parse as ResourceDictionary
+                styles_dict = XamlReader.Parse(xaml_content)
+                
+                # Merge into window resources
+                if self.Resources is None:
+                    from System.Windows import ResourceDictionary
+                    self.Resources = ResourceDictionary()
+                
+                # If it's a ResourceDictionary, merge its contents
+                if hasattr(styles_dict, 'Keys'):
+                    for key in styles_dict.Keys:
+                        self.Resources[key] = styles_dict[key]
+                else:
+                    # Try to merge the entire dictionary
+                    self.Resources.MergedDictionaries.Add(styles_dict)
+                    
+                logger.debug("Loaded styles from: {}".format(styles_path))
+        except Exception as e:
+            logger.warning("Could not load styles: {}".format(str(e)))
     
     def EnabledCheckBox_Checked(self, sender, args):
         """Handle Enabled checkbox checked event."""
@@ -1182,6 +1256,11 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         self.editConfigTab.IsEnabled = True
         self.tabControl.SelectedItem = self.editConfigTab
         
+        # Ensure parameter mapping buttons are enabled
+        self.addParameterMappingButton.IsEnabled = True
+        self.editParameterMappingButton.IsEnabled = False
+        self.deleteParameterMappingButton.IsEnabled = False
+        
         # Validate form to update Save button state
         self.validate_form()
         
@@ -1297,6 +1376,10 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         # Switch to edit tab
         self.editConfigTab.IsEnabled = True
         self.tabControl.SelectedItem = self.editConfigTab
+        
+        # Ensure parameter mapping buttons are enabled
+        self.addParameterMappingButton.IsEnabled = True
+        # Edit/Delete buttons will be enabled/disabled based on DataGrid selection
         
         # Validate form to update Save button state
         self.validate_form()

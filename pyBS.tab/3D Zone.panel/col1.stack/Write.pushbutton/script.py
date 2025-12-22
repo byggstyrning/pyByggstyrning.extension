@@ -119,6 +119,9 @@ class ConfigSelectorWindow(forms.WPFWindow):
         xaml_path = op.join(pushbutton_dir, 'ConfigSelector.xaml')
         forms.WPFWindow.__init__(self, xaml_path)
         
+        # Load common styles programmatically
+        self.load_styles()
+        
         # Store selected configs (will be populated when Write is clicked)
         self.selected_configs = None
         
@@ -134,6 +137,37 @@ class ConfigSelectorWindow(forms.WPFWindow):
         # Set up event handlers
         self.writeButton.Click += self.write_button_click
         self.cancelButton.Click += self.cancel_button_click
+    
+    def load_styles(self):
+        """Load the common styles ResourceDictionary."""
+        try:
+            styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
+            
+            if op.exists(styles_path):
+                from System.Windows.Markup import XamlReader
+                from System.IO import File
+                
+                # Read XAML content
+                xaml_content = File.ReadAllText(styles_path)
+                
+                # Parse as ResourceDictionary
+                styles_dict = XamlReader.Parse(xaml_content)
+                
+                # Merge into window resources
+                if self.Resources is None:
+                    from System.Windows import ResourceDictionary
+                    self.Resources = ResourceDictionary()
+                
+                # Merge styles into existing resources
+                if hasattr(styles_dict, 'MergedDictionaries'):
+                    for merged_dict in styles_dict.MergedDictionaries:
+                        self.Resources.MergedDictionaries.Add(merged_dict)
+                
+                # Copy individual resources
+                for key in styles_dict.Keys:
+                    self.Resources[key] = styles_dict[key]
+        except Exception as e:
+            logger.debug("Could not load styles: {}".format(e))
     
     def write_button_click(self, sender, args):
         """Handle Write button click - collect checked configs and close."""

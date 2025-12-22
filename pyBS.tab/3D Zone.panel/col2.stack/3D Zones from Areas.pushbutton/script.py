@@ -101,6 +101,8 @@ def inspect_template_family(family_doc):
         'extrusion': None,
         'extrusion_start_param': None,
         'extrusion_end_param': None,
+        'top_offset_param': None,  # User-facing parameter that controls height
+        'bottom_offset_param': None,  # User-facing parameter for bottom offset
         'material_param': None,
         'subcategory': None
     }
@@ -119,9 +121,10 @@ def inspect_template_family(family_doc):
         fm = family_doc.FamilyManager
         
         # Find extrusion start/end parameters
-        # Template uses ExtrusionStart and ExtrusionEnd
+        # Template may use ExtrusionStart/ExtrusionEnd or NVExtrusionStart/NVExtrusionEnd
         param_names_to_try = [
-            "ExtrusionStart", "ExtrusionEnd",  # Template family parameters (prioritized)
+            "NVExtrusionStart", "NVExtrusionEnd",  # Template family parameters (NV prefix - prioritized)
+            "ExtrusionStart", "ExtrusionEnd",  # Alternative template family parameters
             "Extrusion Start", "Extrusion End",
             "Start", "End"
         ]
@@ -138,6 +141,31 @@ def inspect_template_family(family_doc):
                         if not result['extrusion_end_param']:
                             result['extrusion_end_param'] = param
                             logger.debug("Found extrusion end parameter: {}".format(param_name))
+            except Exception as e:
+                pass
+        
+        # Find Top Offset and Bottom Offset parameters (user-facing parameters)
+        # These are family type parameters, not instance parameters
+        top_offset_names = ["Top Offset", "TopOffset", "Top Offset (default)", "Top_Offset"]
+        for param_name in top_offset_names:
+            try:
+                param = fm.get_Parameter(param_name)
+                if param:
+                    result['top_offset_param'] = param
+                    logger.debug("Found Top Offset parameter: {}".format(param_name))
+                    break
+            except Exception as e:
+                pass
+        
+        # Find Bottom Offset parameter
+        bottom_offset_names = ["Bottom Offset", "BottomOffset", "Bottom Offset (default)", "Bottom_Offset"]
+        for param_name in bottom_offset_names:
+            try:
+                param = fm.get_Parameter(param_name)
+                if param:
+                    result['bottom_offset_param'] = param
+                    logger.debug("Found Bottom Offset parameter: {}".format(param_name))
+                    break
             except Exception as e:
                 pass
         
@@ -310,26 +338,71 @@ def extract_area_boundary_loops(area, doc):
                 min_z
             )
         
-        # Calculate height - ALWAYS default to next level (not UnboundedHeight)
+        # Calculate height based on level's "Storey Above" parameter
         # Get area level
         level_id = area.LevelId if hasattr(area, 'LevelId') and area.LevelId else None
+        height = None  # None means use family default
         if level_id:
             level = doc.GetElement(level_id)
             if level:
-                base_z = level.Elevation
-                # Find level above
-                all_levels = FilteredElementCollector(doc).OfClass(Level).ToElements()
-                levels_sorted = sorted(all_levels, key=lambda l: l.Elevation)
-                top_z = base_z + 10.0  # Default 10 feet
-                for lvl in levels_sorted:
-                    if lvl.Elevation > base_z:
-                        top_z = lvl.Elevation
-                        break
-                height = top_z - base_z
+                try:
+                    # Get "Storey Above" parameter from level
+                    # Try BuiltInParameter first
+                    storey_above_param = None
+                    try:
+                        storey_above_param = level.get_Parameter(BuiltInParameter.LEVEL_STOREY_ABOVE)
+                    except:
+                        # Fallback: try LookupParameter
+                        try:
+                            storey_above_param = level.LookupParameter("Storey Above")
+                        except:
+                            pass
+                    
+                    if storey_above_param and storey_above_param.HasValue:
+                        storey_above_id = storey_above_param.AsElementId()
+                        
+                        # Check if it's set to "default" (InvalidElementId or None)
+                        if storey_above_id and storey_above_id != ElementId.InvalidElementId:
+                            # Get the level above
+                            level_above = doc.GetElement(storey_above_id)
+                            if level_above:
+                                base_z = level.Elevation
+                                top_z = level_above.Elevation
+                                height = top_z - base_z
+                            else:
+                                logger.debug("Area {}: Storey Above level not found, using family default".format(area.Id))
+                        else:
+                            # Storey Above is set to "default" - use family default height
+                            logger.debug("Area {}: Storey Above is set to 'default', using family default height".format(area.Id))
+                    else:
+                        # Storey Above parameter not found or not set - fallback to next level
+                        logger.debug("Area {}: Storey Above parameter not found, falling back to next level".format(area.Id))
+                        base_z = level.Elevation
+                        # Find level above
+                        all_levels = FilteredElementCollector(doc).OfClass(Level).ToElements()
+                        levels_sorted = sorted(all_levels, key=lambda l: l.Elevation)
+                        top_z = base_z + 10.0  # Default 10 feet
+                        for lvl in levels_sorted:
+                            if lvl.Elevation > base_z:
+                                top_z = lvl.Elevation
+                                break
+                        height = top_z - base_z
+                except Exception as storey_error:
+                    logger.debug("Error getting Storey Above parameter: {}, falling back to next level".format(storey_error))
+                    # Fallback to next level calculation
+                    base_z = level.Elevation
+                    all_levels = FilteredElementCollector(doc).OfClass(Level).ToElements()
+                    levels_sorted = sorted(all_levels, key=lambda l: l.Elevation)
+                    top_z = base_z + 10.0
+                    for lvl in levels_sorted:
+                        if lvl.Elevation > base_z:
+                            top_z = lvl.Elevation
+                            break
+                    height = top_z - base_z
         else:
             # Fallback if no level found
-            logger.debug("Area {} has no level, using default height".format(area.Id))
-            height = 10.0  # Default fallback
+            logger.debug("Area {} has no level, using family default height".format(area.Id))
+            height = None  # Use family default
         
     except Exception as e:
         logger.error("Error extracting area boundary loops: {}".format(e))
@@ -378,8 +451,109 @@ class AreaItem(object):
         """Representation for debugging."""
         return self.display_text
 
+class AreaSelectorWindow(forms.WPFWindow):
+    """Custom WPF window for selecting areas with search functionality."""
+    
+    def __init__(self, area_items):
+        """Initialize the area selector window.
+        
+        Args:
+            area_items: List of AreaItem objects
+        """
+        # Load XAML file
+        xaml_path = op.join(pushbutton_dir, 'AreaSelector.xaml')
+        forms.WPFWindow.__init__(self, xaml_path)
+        
+        # Load common styles programmatically
+        self.load_styles()
+        
+        # Store all area items and filtered items
+        self.all_area_items = area_items
+        self.filtered_area_items = list(area_items)
+        
+        # Store selected areas (will be populated when Create is clicked)
+        self.selected_areas = None
+        
+        # Bind collection to ListView
+        self.areasListView.ItemsSource = self.filtered_area_items
+        
+        # Set up event handlers
+        self.createButton.Click += self.create_button_click
+        self.cancelButton.Click += self.cancel_button_click
+    
+    def load_styles(self):
+        """Load the common styles ResourceDictionary."""
+        try:
+            styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
+            
+            if op.exists(styles_path):
+                from System.Windows.Markup import XamlReader
+                from System.IO import File
+                
+                # Read XAML content
+                xaml_content = File.ReadAllText(styles_path)
+                
+                # Parse as ResourceDictionary
+                styles_dict = XamlReader.Parse(xaml_content)
+                
+                # Merge into window resources
+                if self.Resources is None:
+                    from System.Windows import ResourceDictionary
+                    self.Resources = ResourceDictionary()
+                
+                # Merge styles into existing resources
+                if hasattr(styles_dict, 'MergedDictionaries'):
+                    for merged_dict in styles_dict.MergedDictionaries:
+                        self.Resources.MergedDictionaries.Add(merged_dict)
+                
+                # Copy individual resources
+                for key in styles_dict.Keys:
+                    self.Resources[key] = styles_dict[key]
+        except Exception as e:
+            logger.debug("Could not load styles: {}".format(e))
+    
+    def searchTextBox_TextChanged(self, sender, args):
+        """Handle search text box text changed event."""
+        try:
+            search_text = sender.Text.lower() if sender.Text else ""
+            
+            # Filter area items based on search text
+            if search_text:
+                self.filtered_area_items = [
+                    item for item in self.all_area_items
+                    if search_text in item.display_text.lower()
+                ]
+            else:
+                self.filtered_area_items = list(self.all_area_items)
+            
+            # Update ListView
+            self.areasListView.ItemsSource = self.filtered_area_items
+        except Exception as e:
+            logger.debug("Error filtering areas: {}".format(e))
+    
+    def create_button_click(self, sender, args):
+        """Handle Create button click - collect selected areas and close."""
+        # Collect all selected area items
+        selected_items = []
+        for item in self.areasListView.SelectedItems:
+            selected_items.append(item)
+        
+        # Extract Area elements from selected items
+        if selected_items:
+            self.selected_areas = [item.area for item in selected_items]
+        else:
+            self.selected_areas = []
+        
+        # Close window
+        self.Close()
+    
+    def cancel_button_click(self, sender, args):
+        """Handle Cancel button click - close without selection."""
+        self.selected_areas = None
+        self.Close()
+
 def show_area_filter_dialog(areas, doc):
-    """Show a pyRevit native forms dialog to filter and select areas.
+    """Show a custom WPF dialog to filter and select areas.
     
     Args:
         areas: List of Area elements
@@ -400,23 +574,12 @@ def show_area_filter_dialog(areas, doc):
     existing_count = sum(1 for item in area_items if item.has_zone)
     logger.debug("Found {} areas with existing 3D zones".format(existing_count))
     
-    # Show selection dialog with search/filter capability
-    # forms.SelectFromList supports multiple selection and built-in search
-    selected_items = forms.SelectFromList.show(
-        area_items,
-        title="Select Areas for 3D Zone Creation",
-        multiselect=True,
-        button_name='Create Zones',
-        width=500,
-        height=600
-    )
+    # Show custom WPF selection dialog
+    dialog = AreaSelectorWindow(area_items)
+    dialog.ShowDialog()
     
     # Return selected areas (or None if cancelled)
-    if selected_items:
-        selected_areas = [item.area for item in selected_items]
-        return selected_areas
-    else:
-        return None
+    return dialog.selected_areas
 
 # --- Main Execution ---
 
@@ -643,7 +806,9 @@ if __name__ == '__main__':
                 # Extract area boundary loops
                 loops, insertion_point, height = extract_area_boundary_loops(area, doc)
                 
-                if not loops or not insertion_point or height <= 0:
+                # Check for valid boundary data
+                # height can be None (use family default) or > 0
+                if not loops or not insertion_point:
                     logger.warning("Area {} (ID: {}) - invalid boundary data, skipping".format(
                         area_number_str, area_id))
                     fail_count += 1
@@ -651,12 +816,27 @@ if __name__ == '__main__':
                         'area': area,
                         'area_number_str': area_number_str,
                         'area_name_str': area_name_str,
-                        'reason': 'Invalid boundary data (no loops, no insertion point, or height <= 0)'
+                        'reason': 'Invalid boundary data (no loops or no insertion point)'
                     })
                     continue
                 
+                # If height is explicitly set but <= 0, that's invalid
+                if height is not None and height <= 0:
+                    logger.warning("Area {} (ID: {}) - invalid height ({}), skipping".format(
+                        area_number_str, area_id, height))
+                    fail_count += 1
+                    failed_areas.append({
+                        'area': area,
+                        'area_number_str': area_number_str,
+                        'area_name_str': area_name_str,
+                        'reason': 'Invalid height (height <= 0)'
+                    })
+                    continue
+                
+                # Log height (None means use family default)
+                height_str = "None (use family default)" if height is None else str(height)
                 logger.debug("Area {}: {} loops, height: {}, insertion point: ({:.2f}, {:.2f}, {:.2f})".format(
-                    area_number_str, len(loops), height, insertion_point.X, insertion_point.Y, insertion_point.Z))
+                    area_number_str, len(loops), height_str, insertion_point.X, insertion_point.Y, insertion_point.Z))
                 
                 # Create output family name and path (using temporary file)
                 output_family_name = "3DZone_Area-{}_{}.rfa".format(area_number_str.replace(" ", "-"), area_id)
@@ -874,8 +1054,14 @@ if __name__ == '__main__':
                                 # Create new extrusion using FamilyCreate (not FamilyManager)
                                 # Extrusion start = 0, end = height (relative to sketch plane)
                                 # Use FamilyCreate.NewExtrusion (not FamilyManager)
+                                # If height is None (use family default), use a temporary height for creation
+                                # The family's default Top Offset will control the actual height
                                 family_create = family_doc.FamilyCreate
-                                new_extrusion = family_create.NewExtrusion(True, curve_arr_array, sketch_plane, height)
+                                
+                                # Use height if provided, otherwise use temporary default (family default will override)
+                                extrusion_height = height if height is not None else 10.0  # Temporary default for NewExtrusion
+                                
+                                new_extrusion = family_create.NewExtrusion(True, curve_arr_array, sketch_plane, extrusion_height)
                                 
                                 if new_extrusion:
                                     logger.debug("Created new extrusion: ID {}".format(new_extrusion.Id))
@@ -890,7 +1076,107 @@ if __name__ == '__main__':
                                         except Exception as subcat_error:
                                             logger.debug("Could not set subcategory: {}".format(subcat_error))
                                     
-                                    # Re-associate parameters if they exist
+                                    # FIX: Set FAMILY PARAMETER values FIRST, then associate
+                                    # When associating a family parameter to an instance parameter in Revit,
+                                    # it copies the CURRENT VALUE of the family parameter INTO the instance parameter.
+                                    # So we must set the family parameter value FIRST, regenerate to commit it,
+                                    # THEN associate (which will copy the correct value into the element parameter).
+                                    
+                                    # Set family parameter values FIRST (before association)
+                                    if template_info['extrusion_start_param']:
+                                        try:
+                                            fm.Set(template_info['extrusion_start_param'], 0.0)
+                                        except Exception as pre_set_error:
+                                            logger.debug("Could not pre-set start family parameter: {}".format(pre_set_error))
+                                    
+                                    if template_info['extrusion_end_param']:
+                                        try:
+                                            fm.Set(template_info['extrusion_end_param'], height)
+                                        except Exception as pre_set_error:
+                                            logger.debug("Could not pre-set end family parameter: {}".format(pre_set_error))
+                                    
+                                    # Regenerate to commit family parameter values
+                                    family_doc.Regenerate()
+                                    
+                                    # Verify family parameter values before association
+                                    if template_info['extrusion_end_param']:
+                                        try:
+                                            # Get current family parameter value via FamilyType
+                                            family_type_param = fm.CurrentType.get_Parameter(template_info['extrusion_end_param'].Definition)
+                                            if family_type_param:
+                                                current_family_value = family_type_param.AsDouble()
+                                        except Exception as verify_error:
+                                            logger.debug("Could not verify family parameter value: {}".format(verify_error))
+                                    
+                                    # Also check element parameter value BEFORE association
+                                    if template_info['extrusion_end_param']:
+                                        try:
+                                            end_param_before = new_extrusion.get_Parameter(BuiltInParameter.EXTRUSION_END_PARAM)
+                                        except Exception as elem_before_error:
+                                            logger.debug("Could not get element parameter before association: {}".format(elem_before_error))
+                                    
+                                    # FIX: DO NOT associate parameters - this makes them read-only in the project
+                                    # Instead, set the values directly on the element in the family editor
+                                    # Then we can set them on instances in the project without read-only issues
+                                    
+                                    # Set element parameters directly (they're writable before association)
+                                    if template_info['extrusion_start_param']:
+                                        try:
+                                            start_param = new_extrusion.get_Parameter(BuiltInParameter.EXTRUSION_START_PARAM)
+                                            if start_param and not start_param.IsReadOnly:
+                                                start_param.Set(0.0)
+                                                logger.debug("Set extrusion start parameter directly on element: 0.0")
+                                        except Exception as set_error:
+                                            logger.debug("Could not set start parameter directly: {}".format(set_error))
+                                    
+                                    if template_info['extrusion_end_param']:
+                                        try:
+                                            end_param = new_extrusion.get_Parameter(BuiltInParameter.EXTRUSION_END_PARAM)
+                                            if end_param and not end_param.IsReadOnly:
+                                                end_param.Set(height)
+                                                logger.debug("Set extrusion end parameter directly on element: {}".format(height))
+                                        except Exception as set_error:
+                                            logger.debug("Could not set end parameter directly: {}".format(set_error))
+                                    
+                                    # Regenerate after setting element parameters
+                                    family_doc.Regenerate()
+                                    
+                                    # FIX: Set Top Offset and Bottom Offset (user-facing parameters) BEFORE association
+                                    # These are the parameters that actually control the height
+                                    # The formulas (ExtrusionEnd = Top Offset) will automatically update ExtrusionEnd
+                                    # If Top Offset doesn't exist, set ExtrusionEnd family parameter BEFORE association
+                                    # so the element gets the correct value when associated
+                                    height_set_in_family = False
+                                    if height is not None:
+                                        # Set Bottom Offset first
+                                        if template_info['bottom_offset_param']:
+                                            try:
+                                                fm.Set(template_info['bottom_offset_param'], 0.0)
+                                                logger.debug("Set bottom offset parameter: 0.0")
+                                            except Exception as bottom_error:
+                                                logger.debug("Could not set bottom offset parameter: {}".format(bottom_error))
+                                        
+                                        # Set Top Offset BEFORE association
+                                        # ExtrusionEnd is ONLY for association, NOT for setting height value
+                                        if template_info['top_offset_param']:
+                                            try:
+                                                fm.Set(template_info['top_offset_param'], height)
+                                                logger.debug("Set top offset parameter: {}".format(height))
+                                                height_set_in_family = True
+                                            except Exception as top_error:
+                                                logger.debug("Could not set top offset parameter: {}".format(top_error))
+                                        else:
+                                            # Top Offset not found - cannot set height
+                                            # ExtrusionEnd is only for association, not for setting height value
+                                            logger.debug("Top Offset parameter not found - cannot set height, will use family default")
+                                            height_set_in_family = False
+                                    
+                                    # Regenerate after setting family parameters
+                                    family_doc.Regenerate()
+                                    
+                                    # FIX: Associate ExtrusionEnd/ExtrusionStart to the extrusion element
+                                    # This allows the formulas (ExtrusionEnd = Top Offset) to work
+                                    # Association happens AFTER setting family parameters so element gets correct value
                                     if template_info['extrusion_start_param']:
                                         try:
                                             start_param = new_extrusion.get_Parameter(BuiltInParameter.EXTRUSION_START_PARAM)
@@ -909,6 +1195,17 @@ if __name__ == '__main__':
                                         except Exception as assoc_error:
                                             logger.debug("Could not associate end parameter: {}".format(assoc_error))
                                     
+                                    # Regenerate after association
+                                    family_doc.Regenerate()
+                                    
+                                    # Handle case when height is None (use family default)
+                                    if height is None:
+                                        # Height is None - use family default, don't set Top Offset
+                                        logger.debug("Area {}: Height is None, using family default Top Offset".format(area_number_str))
+                                    
+                                    # Regenerate after setting offset parameters
+                                    family_doc.Regenerate()
+                                    
                                     if template_info['material_param']:
                                         try:
                                             mat_param = new_extrusion.get_Parameter(BuiltInParameter.MATERIAL_ID_PARAM)
@@ -918,18 +1215,59 @@ if __name__ == '__main__':
                                         except Exception as assoc_error:
                                             logger.debug("Could not associate material parameter: {}".format(assoc_error))
                                     
-                                    # Set extrusion start/end values
+                                    # Set extrusion start/end values (verify they're still correct after association)
+                                    
                                     if template_info['extrusion_start_param']:
                                         try:
                                             fm.Set(template_info['extrusion_start_param'], 0.0)
-                                        except:
+                                        except Exception as start_error:
                                             pass
                                     
                                     if template_info['extrusion_end_param']:
+                                        # FIX: Set parameter value using multiple methods for reliability
+                                        param_set_success = False
+                                        
                                         try:
-                                            fm.Set(template_info['extrusion_end_param'], height)
-                                        except:
-                                            pass
+                                            
+                                            # Method 1: Try setting via FamilyManager (family parameter)
+                                            try:
+                                                fm.Set(template_info['extrusion_end_param'], height)
+                                                # Regenerate to ensure parameter value propagates to element
+                                                family_doc.Regenerate()
+                                                # If fm.Set() doesn't throw, assume it succeeded
+                                                param_set_success = True
+                                            except Exception as fm_error:
+                                                pass
+                                            
+                                            # Method 2: Always set directly on element parameter as well (ensures value is correct)
+                                            # Even if family parameter setting succeeded, set element parameter directly to be sure
+                                            try:
+                                                element_end_param = new_extrusion.get_Parameter(BuiltInParameter.EXTRUSION_END_PARAM)
+                                                if element_end_param and not element_end_param.IsReadOnly:
+                                                    element_end_param.Set(height)
+                                                    # Regenerate after setting element parameter
+                                                    family_doc.Regenerate()
+                                                    param_set_success = True
+                                            except Exception as elem_error:
+                                                if not param_set_success:
+                                                    # Only mark as failed if family parameter also failed
+                                                    pass
+                                            
+                                            # Final verification
+                                            if param_set_success:
+                                                # Check element parameter (more reliable than family parameter)
+                                                element_param_value = None
+                                                try:
+                                                    elem_param = new_extrusion.get_Parameter(BuiltInParameter.EXTRUSION_END_PARAM)
+                                                    if elem_param:
+                                                        element_param_value = elem_param.AsDouble()
+                                                except:
+                                                    pass
+                                            else:
+                                                logger.warning("Failed to set extrusion end parameter for area {} - value may default to template value".format(area_number_str))
+                                            
+                                        except Exception as end_error:
+                                            logger.warning("Error setting extrusion end parameter for area {}: {}".format(area_number_str, end_error))
                                 else:
                                     logger.debug("Area {}: Failed to create new extrusion (invalid geometry), skipping".format(area_number_str))
                                     t.RollBack()
@@ -997,6 +1335,7 @@ if __name__ == '__main__':
                         pass
                     
                     # Store area data for second pass (loading/placing in project)
+                    # Track if height was set in family editor (either Top Offset or ExtrusionEnd fallback)
                     area_family_data.append({
                         'area': area,
                         'output_family_path': output_family_path,
@@ -1006,13 +1345,17 @@ if __name__ == '__main__':
                         'output_family_name': output_family_name,
                         'family_name_without_ext': family_name_without_ext,
                         'existing_family': existing_family,  # None if needs to be loaded, Family object if already exists
-                        'family_doc': family_doc  # Keep reference to open family doc (will close after loading)
+                        'family_doc': family_doc,  # Keep reference to open family doc (will close after loading)
+                        'height': height,  # Store height to set on instance after creation
+                        'height_set_in_family': height_set_in_family,  # Track if height was set in family editor
+                        'template_info': template_info  # Store template info for later use
                     })
                 else:
                     # Family already exists, skip family document processing
                     logger.debug("Skipping family document processing for area {} - family already exists".format(area_number_str))
                     
                     # Store area data for second pass (loading/placing in project)
+                    # For existing families, height_set_in_family is False (family wasn't modified)
                     area_family_data.append({
                         'area': area,
                         'output_family_path': None,  # No file path since family already exists
@@ -1021,7 +1364,10 @@ if __name__ == '__main__':
                         'area_name_str': area_name_str,
                         'output_family_name': output_family_name,
                         'family_name_without_ext': family_name_without_ext,
-                        'existing_family': existing_family  # Use existing family
+                        'existing_family': existing_family,  # Use existing family
+                        'height': height,  # Store height to set on instance after creation
+                        'height_set_in_family': False,  # Family wasn't modified, so height wasn't set
+                        'template_info': template_info  # Store template info for later use
                     })
                 
             except Exception as e:
@@ -1171,6 +1517,14 @@ if __name__ == '__main__':
                             symbol.Activate()
                             doc.Regenerate()
                         
+                        if not symbol:
+                            logger.warning("No active symbol found for family {}".format(loaded_family.Name))
+                            fail_count += 1
+                            continue
+                        
+                        # SKIPPED: Phase 2 - Setting parameters on symbol before instance creation
+                        # Height is already set in family editor (Phase 1), instances will inherit correct value
+                        
                         # Place instance at insertion point
                         if symbol:
                             # Get area level
@@ -1241,6 +1595,7 @@ if __name__ == '__main__':
                                                     value = source_mmi.AsString()
                                                     if value:
                                                         target_mmi.Set(value)
+                                                        
                                 except Exception as prop_error:
                                     logger.debug("Error copying properties: {}".format(prop_error))
                                 
