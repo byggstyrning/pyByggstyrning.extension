@@ -134,6 +134,81 @@ class ViewItemData(forms.Reactive):
         self.OnPropertyChanged("IsSelected")
 
 
+def _is_revit_dark_theme():
+    """Best-effort check of Revit's current Light/Dark theme setting (reflection-based)."""
+    try:
+        if app is None:
+            return False
+
+        app_type = app.GetType()
+        for prop_name in ("IsDarkTheme", "IsInDarkTheme", "IsDarkMode", "IsInDarkMode"):
+            try:
+                prop = app_type.GetProperty(prop_name)
+                if prop:
+                    return bool(prop.GetValue(app, None))
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    return False
+
+
+def _apply_commonstyles_theme(resources, is_dark):
+    """Mutate CommonStyles brush resources in-place (so StaticResource users update too)."""
+    try:
+        from System.Windows.Media import ColorConverter, SolidColorBrush
+
+        if is_dark:
+            palette = {
+                "PlaceholderForegroundBrush": "#9A9A9A",
+                "BusyOverlayBrush": "#99000000",
+                "AccentBrush": "#FFBB00",
+                "AccentHoverBrush": "#E6A800",
+                "AccentPressedBrush": "#CC9900",
+                "ErrorBrush": "#D32F2F",
+                "SuccessBrush": "#4CAF50",
+                "WarningBrush": "#FF9800",
+                "BorderBrush": "#3A3A3A",
+                "BackgroundLightBrush": "#2B2B2B",
+                "BackgroundLighterBrush": "#333333",
+                "TextBrush": "#E8E8E8",
+                "TextSecondaryBrush": "#B0B0B0",
+                "TextLightBrush": "#8A8A8A",
+                "DisabledBrush": "#444444",
+                "DisabledTextBrush": "#777777",
+            }
+        else:
+            palette = {
+                "PlaceholderForegroundBrush": "#999999",
+                "BusyOverlayBrush": "#80000000",
+                "AccentBrush": "#FFBB00",
+                "AccentHoverBrush": "#E6A800",
+                "AccentPressedBrush": "#CC9900",
+                "ErrorBrush": "#D32F2F",
+                "SuccessBrush": "#4CAF50",
+                "WarningBrush": "#FF9800",
+                "BorderBrush": "#CCCCCC",
+                "BackgroundLightBrush": "#F5F5F5",
+                "BackgroundLighterBrush": "#F0F0F0",
+                "TextBrush": "#333333",
+                "TextSecondaryBrush": "#666666",
+                "TextLightBrush": "#999999",
+                "DisabledBrush": "#CCCCCC",
+                "DisabledTextBrush": "#666666",
+            }
+
+        for key, hex_color in palette.items():
+            try:
+                brush = resources[key]
+                if isinstance(brush, SolidColorBrush):
+                    brush.Color = ColorConverter.ConvertFromString(hex_color)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 class Generate3DViewReferencesWindow(forms.WPFWindow):
     """WPF window for selecting and generating 3D view references."""
     
@@ -172,6 +247,7 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
                 
                 # Parse as ResourceDictionary
                 styles_dict = XamlReader.Parse(xaml_content)
+                _apply_commonstyles_theme(styles_dict, _is_revit_dark_theme())
                 
                 # Merge into window resources
                 if self.Resources is None:

@@ -365,6 +365,7 @@ class ParameterSelectorDialog(forms.WPFWindow):
                 
                 # Parse as ResourceDictionary
                 styles_dict = XamlReader.Parse(xaml_content)
+                _apply_commonstyles_theme(styles_dict, _is_revit_dark_theme())
                 
                 # Merge into window resources
                 if self.Resources is None:
@@ -766,6 +767,87 @@ def get_source_element_instance_properties(doc, source_category, use_linked_docu
 # Module-level cache for styles ResourceDictionary
 _styles_dict_cache = None
 
+def _is_revit_dark_theme():
+    """Best-effort check of Revit's current Light/Dark theme setting (reflection-based)."""
+    try:
+        app = None
+        try:
+            app = __revit__.Application
+        except Exception:
+            app = None
+
+        if app is None:
+            return False
+
+        app_type = app.GetType()
+        for prop_name in ("IsDarkTheme", "IsInDarkTheme", "IsDarkMode", "IsInDarkMode"):
+            try:
+                prop = app_type.GetProperty(prop_name)
+                if prop:
+                    return bool(prop.GetValue(app, None))
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    return False
+
+
+def _apply_commonstyles_theme(resources, is_dark):
+    """Mutate CommonStyles brush resources in-place (so StaticResource users update too)."""
+    try:
+        from System.Windows.Media import ColorConverter, SolidColorBrush
+
+        if is_dark:
+            palette = {
+                "PlaceholderForegroundBrush": "#9A9A9A",
+                "BusyOverlayBrush": "#99000000",
+                "AccentBrush": "#FFBB00",
+                "AccentHoverBrush": "#E6A800",
+                "AccentPressedBrush": "#CC9900",
+                "ErrorBrush": "#D32F2F",
+                "SuccessBrush": "#4CAF50",
+                "WarningBrush": "#FF9800",
+                "BorderBrush": "#3A3A3A",
+                "BackgroundLightBrush": "#2B2B2B",
+                "BackgroundLighterBrush": "#333333",
+                "TextBrush": "#E8E8E8",
+                "TextSecondaryBrush": "#B0B0B0",
+                "TextLightBrush": "#8A8A8A",
+                "DisabledBrush": "#444444",
+                "DisabledTextBrush": "#777777",
+            }
+        else:
+            palette = {
+                "PlaceholderForegroundBrush": "#999999",
+                "BusyOverlayBrush": "#80000000",
+                "AccentBrush": "#FFBB00",
+                "AccentHoverBrush": "#E6A800",
+                "AccentPressedBrush": "#CC9900",
+                "ErrorBrush": "#D32F2F",
+                "SuccessBrush": "#4CAF50",
+                "WarningBrush": "#FF9800",
+                "BorderBrush": "#CCCCCC",
+                "BackgroundLightBrush": "#F5F5F5",
+                "BackgroundLighterBrush": "#F0F0F0",
+                "TextBrush": "#333333",
+                "TextSecondaryBrush": "#666666",
+                "TextLightBrush": "#999999",
+                "DisabledBrush": "#CCCCCC",
+                "DisabledTextBrush": "#666666",
+            }
+
+        for key, hex_color in palette.items():
+            try:
+                brush = resources[key]
+                if isinstance(brush, SolidColorBrush):
+                    brush.Color = ColorConverter.ConvertFromString(hex_color)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def ensure_styles_loaded():
     """Ensure CommonStyles are loaded into Application.Resources before XAML parsing."""
     global _styles_dict_cache
@@ -774,13 +856,15 @@ def ensure_styles_loaded():
         from System.Windows import Application
         from System.Windows.Markup import XamlReader
         from System.IO import File
+        is_dark = _is_revit_dark_theme()
         
         # Check if styles are already loaded in Application.Resources
         if Application.Current is not None and Application.Current.Resources is not None:
             try:
                 test_resource = Application.Current.Resources['EnhancedDataGridStyle']
                 if test_resource is not None:
-                    return  # Already loaded
+                    _apply_commonstyles_theme(Application.Current.Resources, is_dark)
+                    return  # Already loaded (and themed)
             except:
                 pass
         
@@ -794,6 +878,7 @@ def ensure_styles_loaded():
                 # Read and parse XAML
                 xaml_content = File.ReadAllText(styles_path)
                 _styles_dict_cache = XamlReader.Parse(xaml_content)
+                _apply_commonstyles_theme(_styles_dict_cache, is_dark)
                 logger.debug("Loaded styles from: {}".format(styles_path))
             else:
                 logger.warning("CommonStyles.xaml not found at: {}".format(styles_path))
@@ -812,6 +897,7 @@ def ensure_styles_loaded():
         # Merge styles using MergedDictionaries (proper WPF way)
         try:
             Application.Current.Resources.MergedDictionaries.Add(_styles_dict_cache)
+            _apply_commonstyles_theme(Application.Current.Resources, is_dark)
         except:
             # Fallback: try to copy resources manually if MergedDictionaries fails
             try:
@@ -821,6 +907,7 @@ def ensure_styles_loaded():
                             pass
                     except:
                         Application.Current.Resources[key] = _styles_dict_cache[key]
+                _apply_commonstyles_theme(Application.Current.Resources, is_dark)
             except Exception as e:
                 logger.warning("Could not merge styles dictionary: {}".format(str(e)))
     except Exception as e:
@@ -920,6 +1007,7 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
                 
                 # Parse as ResourceDictionary
                 styles_dict = XamlReader.Parse(xaml_content)
+                _apply_commonstyles_theme(styles_dict, _is_revit_dark_theme())
                 
                 # Merge into window resources
                 if self.Resources is None:

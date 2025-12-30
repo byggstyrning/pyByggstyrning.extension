@@ -210,11 +210,11 @@
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="border" Property="Background" Value="#E0E0E0"/>
-                            <Setter TargetName="border" Property="BorderBrush" Value="#999999"/>
+                            <Setter TargetName="border" Property="Background" Value="{StaticResource BackgroundLightBrush}"/>
+                            <Setter TargetName="border" Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True">
-                            <Setter TargetName="border" Property="Background" Value="#D0D0D0"/>
+                            <Setter TargetName="border" Property="Background" Value="{StaticResource BackgroundLighterBrush}"/>
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
                             <Setter TargetName="border" Property="Background" Value="{StaticResource BackgroundLightBrush}"/>
@@ -449,7 +449,7 @@
                                                                         SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
                                                         <Path x:Name="Arrow"
                                                              Grid.Column="1"
-                                                             Fill="Black"
+                                                             Fill="{StaticResource TextBrush}"
                                                              HorizontalAlignment="Center"
                                                              VerticalAlignment="Center"
                                                              Data="M 0 0 L 4 4 L 8 0 Z"/>
@@ -497,7 +497,7 @@
                                  MinWidth="{TemplateBinding ActualWidth}"
                                  MaxHeight="{TemplateBinding MaxDropDownHeight}">
                                 <Border x:Name="DropDownBorder"
-                                       Background="White"
+                                       Background="{StaticResource BackgroundLighterBrush}"
                                        BorderThickness="1"
                                        BorderBrush="{DynamicResource BorderBrush}"
                                        CornerRadius="2">
@@ -764,7 +764,7 @@
         <Setter Property="Margin" Value="{StaticResource DefaultMargin}"/>
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
-        <Setter Property="Background" Value="White"/>
+        <Setter Property="Background" Value="{StaticResource BackgroundLighterBrush}"/>
     </Style>
     
     <!-- Default ListBox Style -->
@@ -788,7 +788,7 @@
     
     <!-- Enhanced DataGrid Row Style -->
     <Style x:Key="EnhancedDataGridRowStyle" TargetType="DataGridRow">
-        <Setter Property="Background" Value="White"/>
+        <Setter Property="Background" Value="{StaticResource BackgroundLighterBrush}"/>
         <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="Padding" Value="0"/>
@@ -892,8 +892,8 @@
         <Setter Property="HeadersVisibility" Value="Column"/>
         <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
         <Setter Property="BorderThickness" Value="2"/>
-        <Setter Property="Background" Value="White"/>
-        <Setter Property="RowBackground" Value="White"/>
+        <Setter Property="Background" Value="{StaticResource BackgroundLighterBrush}"/>
+        <Setter Property="RowBackground" Value="{StaticResource BackgroundLighterBrush}"/>
         <Setter Property="HorizontalGridLinesBrush" Value="{DynamicResource BorderBrush}"/>
         <Setter Property="VerticalGridLinesBrush" Value="Transparent"/>
         <Setter Property="RowHeight" Value="32"/>
@@ -904,7 +904,7 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="DataGrid">
-                    <Border BorderBrush="#999999" 
+                    <Border BorderBrush="{StaticResource BorderBrush}" 
                             BorderThickness="2" 
                             CornerRadius="3"
                             Background="{TemplateBinding Background}"
@@ -932,7 +932,7 @@
         <Style.Resources>
             <!-- DataGridRow Style -->
             <Style TargetType="DataGridRow">
-                <Setter Property="Background" Value="White"/>
+                <Setter Property="Background" Value="{StaticResource BackgroundLighterBrush}"/>
                 <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
                 <Setter Property="BorderThickness" Value="0"/>
                 <Setter Property="Padding" Value="0"/>
@@ -1072,7 +1072,7 @@
     <Style x:Key="PanelBorderStyle" TargetType="Border">
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
-        <Setter Property="Background" Value="White"/>
+        <Setter Property="Background" Value="{StaticResource BackgroundLighterBrush}"/>
         <Setter Property="Margin" Value="{StaticResource DefaultMargin}"/>
     </Style>
     
