@@ -20,35 +20,16 @@ All custom UI windows now use a centralized style system (`CommonStyles.xaml`) t
 
 ### In Python Scripts
 
-Add these methods to your WPFWindow class:
+Add this method to your WPFWindow class:
 
 ```python
 def load_styles(self):
     """Load the common styles ResourceDictionary."""
     try:
-        import os.path as op
-        script_dir = op.dirname(__file__)
-        # ... navigate to extension root ...
-        styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
-        
-        if op.exists(styles_path):
-            from System.Windows.Markup import XamlReader
-            from System.IO import File
-            
-            xaml_content = File.ReadAllText(styles_path)
-            styles_dict = XamlReader.Parse(xaml_content)
-            
-            if self.Resources is None:
-                from System.Windows import ResourceDictionary
-                self.Resources = ResourceDictionary()
-            
-            if hasattr(styles_dict, 'Keys'):
-                for key in styles_dict.Keys:
-                    self.Resources[key] = styles_dict[key]
-            else:
-                self.Resources.MergedDictionaries.Add(styles_dict)
+        import styles
+        styles.load_common_styles(self)
     except Exception as e:
-        logger.warning("Could not load styles: {}".format(str(e)))
+        logger.warning("Could not load styles: {}".format(e))
 
 def set_busy(self, is_busy, message="Loading..."):
     """Show or hide the busy overlay indicator."""
@@ -63,6 +44,8 @@ def set_busy(self, is_busy, message="Loading..."):
 ```
 
 Call `self.load_styles()` in your `__init__` method after `WPFWindow.__init__()`.
+This will automatically load the correct styles (Light/Dark) based on the Revit setting.
+
 
 ## Available Styles
 

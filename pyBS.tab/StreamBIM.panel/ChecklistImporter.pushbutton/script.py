@@ -268,44 +268,16 @@ class StreamBIMImporterUI(forms.WPFWindow):
     def load_styles(self):
         """Load the common styles ResourceDictionary."""
         try:
-            import os.path as op
-            # Use the same path calculation as at the top of the file
-            # Note: variable names are misleading - panel_dir is actually pushbutton dir, tab_dir is actually panel dir
-            # script_path -> panel_dir (pushbutton) -> tab_dir (panel) -> extension_dir (two levels up from tab_dir)
-            script_path = __file__
-            panel_dir = op.dirname(script_path)
-            tab_dir = op.dirname(panel_dir)
-            extension_dir = op.dirname(op.dirname(tab_dir))
-            styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
-            
-            if op.exists(styles_path):
-                from System.Windows.Markup import XamlReader
-                from System.IO import File
-                
-                # Read XAML content
-                xaml_content = File.ReadAllText(styles_path)
-                
-                # Parse as ResourceDictionary
-                styles_dict = XamlReader.Parse(xaml_content)
-                
-                # Merge into window resources
-                if self.Resources is None:
-                    from System.Windows import ResourceDictionary
-                    self.Resources = ResourceDictionary()
-                
-                # If it's a ResourceDictionary, merge its contents
-                if hasattr(styles_dict, 'Keys'):
-                    for key in styles_dict.Keys:
-                        self.Resources[key] = styles_dict[key]
-                else:
-                    # Try to merge the entire dictionary
-                    self.Resources.MergedDictionaries.Add(styles_dict)
-                    
-                logger.debug("Loaded styles from: {}".format(styles_path))
+            import styles
+            styles.load_common_styles(self)
+        except ImportError:
+            try:
+                from lib import styles
+                styles.load_common_styles(self)
+            except Exception as e:
+                logger.warning("Could not load styles: {}".format(e))
         except Exception as e:
-            logger.warning("Could not load styles: {}. Using default styles.".format(str(e)))
-            import traceback
-            logger.debug("Style loading error details: {}".format(traceback.format_exc()))
+            logger.warning("Could not load styles: {}".format(e))
 
     def set_busy(self, is_busy, message="Loading..."):
         """Show or hide the busy overlay indicator."""
