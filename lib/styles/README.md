@@ -6,9 +6,58 @@ This directory contains reusable WPF styles for all custom XAML-based UI in the 
 
 All custom UI windows now use a centralized style system (`CommonStyles.xaml`) that provides:
 - Consistent look and feel across all tools
+- **Automatic dark mode support** - Follows Revit's UI theme setting
 - Easy maintenance and updates
 - No external dependencies (no Xceed toolkit required)
 - Custom placeholder textboxes, busy indicators, and styled controls
+
+## Dark Mode Support
+
+The styles automatically detect and adapt to Revit's dark/light theme setting (Revit 2024+). This is handled by the `lib/styles/__init__.py` module.
+
+### How It Works
+
+1. When styles are loaded, the module detects Revit's current UI theme
+2. Color resources are automatically updated to match the theme
+3. Dark mode uses dark grey backgrounds (#2D2D2D) with light text (#E0E0E0)
+4. Accent colors (yellow #ffbb00) remain consistent across themes
+
+### Quick Start
+
+```python
+from lib.styles import ensure_styles_loaded
+
+class MyWindow(WPFWindow):
+    def __init__(self):
+        # Load styles with automatic theme detection BEFORE WPFWindow.__init__
+        ensure_styles_loaded()
+        
+        WPFWindow.__init__(self, xaml_file)
+```
+
+### Force a Specific Theme
+
+```python
+# Force dark mode regardless of Revit setting
+ensure_styles_loaded(force_theme='dark')
+
+# Force light mode
+ensure_styles_loaded(force_theme='light')
+```
+
+### Theme Detection API
+
+```python
+from lib.styles import get_revit_theme, is_dark_theme
+
+# Get current theme as string ('dark' or 'light')
+theme = get_revit_theme()
+
+# Check if dark theme is active
+if is_dark_theme():
+    # Dark mode specific logic
+    pass
+```
 
 ## Usage
 
@@ -149,14 +198,35 @@ Then use `self.set_busy(True, "Loading...")` and `self.set_busy(False)` in Pytho
 
 ## Color Palette
 
-The styles use a consistent color palette:
-- **Accent**: #0078D4 (blue)
-- **Success**: #4CAF50 (green)
-- **Error**: #D32F2F (red)
-- **Warning**: #FF9800 (orange)
-- **Border**: #CCCCCC (light gray)
-- **Background Light**: #F5F5F5
-- **Text**: #333333 (dark gray)
+### Light Theme (Default)
+
+| Color | Hex | Usage |
+|-------|-----|-------|
+| Accent | #ffbb00 | Primary buttons, highlights |
+| Success | #4CAF50 | Success actions, toggles |
+| Error | #D32F2F | Danger buttons, errors |
+| Warning | #FF9800 | Warning indicators |
+| Border | #CCCCCC | Control borders |
+| Background Light | #F5F5F5 | Panels, headers |
+| Background Lighter | #F0F0F0 | Secondary backgrounds |
+| Text | #333333 | Primary text |
+| Text Secondary | #666666 | Secondary text |
+| Window Background | #FFFFFF | Window/control backgrounds |
+
+### Dark Theme
+
+| Color | Hex | Usage |
+|-------|-----|-------|
+| Accent | #ffbb00 | Primary buttons, highlights (same) |
+| Success | #66BB6A | Success actions (lighter) |
+| Error | #EF5350 | Danger buttons (lighter) |
+| Warning | #FFA726 | Warning indicators (lighter) |
+| Border | #555555 | Control borders |
+| Background Light | #3C3C3C | Panels, headers |
+| Background Lighter | #454545 | Secondary backgrounds |
+| Text | #E0E0E0 | Primary text (light) |
+| Text Secondary | #B0B0B0 | Secondary text |
+| Window Background | #2D2D2D | Window/control backgrounds |
 
 ## Migration Checklist
 
