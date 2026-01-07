@@ -217,10 +217,10 @@ def get_element_test_points(element):
                     direction = (end_pt - start_pt).Normalize()
                     # Get perpendicular direction (rotate 90 degrees in XY plane)
                     perp_direction = XYZ(-direction.Y, direction.X, 0).Normalize()
-                    # Try both directions with small offset (0.1 feet in Revit internal units)
-                    # This offset helps detect containment for walls/linear elements
-                    points.append(midpoint + perp_direction * 0.1)
-                    points.append(midpoint - perp_direction * 0.1)
+                    # Try both directions with offset (2.0 feet in Revit internal units)
+                    # This offset helps detect containment for walls/linear elements, especially wide walls
+                    points.append(midpoint + perp_direction * 2.0)
+                    points.append(midpoint - perp_direction * 2.0)
                 except:
                     pass
         

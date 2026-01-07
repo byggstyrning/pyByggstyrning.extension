@@ -442,11 +442,21 @@
                                                             <ColumnDefinition Width="*"/>
                                                             <ColumnDefinition Width="20"/>
                                                         </Grid.ColumnDefinitions>
-                                                        <ContentPresenter Grid.Column="0"
-                                                                        HorizontalAlignment="Left"
-                                                                        VerticalAlignment="Center"
-                                                                        Margin="5,0,0,0"
-                                                                        SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
+                                                        <Grid Grid.Column="0">
+                                                            <TextBlock x:Name="ToggleContentText"
+                                                                      Text="{Binding SelectedItem.display_name, RelativeSource={RelativeSource AncestorType=ComboBox}, TargetNullValue='', FallbackValue=''}"
+                                                                      HorizontalAlignment="Left"
+                                                                      VerticalAlignment="Center"
+                                                                      Margin="5,0,0,0"
+                                                                      Visibility="Visible"/>
+                                                            <TextBlock x:Name="TogglePlaceholderText"
+                                                                      Text="{Binding Tag, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                                      Foreground="{DynamicResource PlaceholderForegroundBrush}"
+                                                                      Margin="5,0,0,0"
+                                                                      VerticalAlignment="Center"
+                                                                      IsHitTestVisible="False"
+                                                                      Visibility="Collapsed"/>
+                                                        </Grid>
                                                         <Path x:Name="Arrow"
                                                              Grid.Column="1"
                                                              Fill="Black"
@@ -463,6 +473,20 @@
                                                         <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
                                                         <Setter TargetName="Border" Property="BorderThickness" Value="2"/>
                                                     </Trigger>
+                                                    <!-- Show placeholder when no item is selected -->
+                                                    <DataTrigger Binding="{Binding SelectedItem, RelativeSource={RelativeSource AncestorType=ComboBox}}" Value="{x:Null}">
+                                                        <Setter TargetName="TogglePlaceholderText" Property="Visibility" Value="Visible"/>
+                                                        <Setter TargetName="ToggleContentText" Property="Visibility" Value="Collapsed"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding SelectedIndex, RelativeSource={RelativeSource AncestorType=ComboBox}}" Value="-1">
+                                                        <Setter TargetName="TogglePlaceholderText" Property="Visibility" Value="Visible"/>
+                                                        <Setter TargetName="ToggleContentText" Property="Visibility" Value="Collapsed"/>
+                                                    </DataTrigger>
+                                                    <!-- Show placeholder when selected value is empty -->
+                                                    <DataTrigger Binding="{Binding Text, ElementName=ToggleContentText}" Value="">
+                                                        <Setter TargetName="TogglePlaceholderText" Property="Visibility" Value="Visible"/>
+                                                        <Setter TargetName="ToggleContentText" Property="Visibility" Value="Collapsed"/>
+                                                    </DataTrigger>
                                                 </ControlTemplate.Triggers>
                                             </ControlTemplate>
                                         </Setter.Value>
@@ -470,22 +494,6 @@
                                 </Style>
                             </ToggleButton.Style>
                         </ToggleButton>
-                        <ContentPresenter x:Name="ContentSite"
-                                         Grid.Column="0"
-                                         IsHitTestVisible="False"
-                                         Content="{Binding SelectedItem.display_name, RelativeSource={RelativeSource TemplatedParent}, TargetNullValue='', FallbackValue=''}"
-                                         Margin="5,3,23,3"
-                                         VerticalAlignment="Center"
-                                         HorizontalAlignment="Left"
-                                         Visibility="Collapsed"/>
-                        <TextBlock x:Name="PlaceholderText"
-                                  Grid.Column="0"
-                                  Text="{TemplateBinding Tag}"
-                                  Foreground="{DynamicResource PlaceholderForegroundBrush}"
-                                  Margin="7,0,23,0"
-                                  VerticalAlignment="Center"
-                                  IsHitTestVisible="False"
-                                  Visibility="Visible"/>
                         <Popup x:Name="Popup"
                               Placement="Bottom"
                               IsOpen="{TemplateBinding IsDropDownOpen}"
@@ -540,18 +548,6 @@
                         <Trigger Property="IsGrouping" Value="True">
                             <Setter TargetName="ScrollViewer" Property="CanContentScroll" Value="False"/>
                         </Trigger>
-                        <!-- Show placeholder when no item is selected - use MultiDataTrigger for reliability -->
-                        <MultiDataTrigger>
-                            <MultiDataTrigger.Conditions>
-                                <Condition Binding="{Binding SelectedItem, RelativeSource={RelativeSource TemplatedParent}}" Value="{x:Null}"/>
-                            </MultiDataTrigger.Conditions>
-                            <Setter TargetName="PlaceholderText" Property="Visibility" Value="Visible"/>
-                            <Setter TargetName="ContentSite" Property="Visibility" Value="Collapsed"/>
-                        </MultiDataTrigger>
-                        <DataTrigger Binding="{Binding SelectedIndex, RelativeSource={RelativeSource TemplatedParent}}" Value="-1">
-                            <Setter TargetName="PlaceholderText" Property="Visibility" Value="Visible"/>
-                            <Setter TargetName="ContentSite" Property="Visibility" Value="Collapsed"/>
-                        </DataTrigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>

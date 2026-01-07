@@ -44,6 +44,26 @@ class SpatialElementItem(object):
             if level_elem:
                 level_name = level_elem.Name
         
+        # Store level_name as separate attribute
+        self.level_name = level_name
+        
+        # Get phase name
+        phase_name = "?"
+        if adapter and hasattr(adapter, 'get_phase_id'):
+            phase_id = adapter.get_phase_id(element)
+            if phase_id:
+                phase_elem = doc.GetElement(phase_id)
+                if phase_elem:
+                    phase_name = phase_elem.Name
+        else:
+            phase_name = "?"
+        
+        # Store phase_name as separate attribute
+        self.phase_name = phase_name
+        
+        # Store exists_display for DataGrid (checkmark or empty)
+        self.exists_display = "✓" if has_zone else ""
+        
         # Create display text with icon: (*) if zone exists, empty if not
         icon = "(*)" if has_zone else "   "
         self.display_text = "{} {} - {} ({})".format(icon, self.element_number, self.element_name, level_name)
@@ -82,11 +102,12 @@ class SpatialSelectorWindow(forms.WPFWindow):
         # Store selected elements (will be populated when Create is clicked)
         self.selected_elements = None
         
-        # Bind collection to ListView
+        # Bind collection to ListView (if it exists - subclasses may use DataGrid instead)
         listview_name = self.get_listview_name()
-        listview = getattr(self, listview_name)
-        if listview:
-            listview.ItemsSource = self.filtered_items
+        if hasattr(self, listview_name):
+            listview = getattr(self, listview_name)
+            if listview:
+                listview.ItemsSource = self.filtered_items
         
         # Set up event handlers
         if hasattr(self, 'createButton'):

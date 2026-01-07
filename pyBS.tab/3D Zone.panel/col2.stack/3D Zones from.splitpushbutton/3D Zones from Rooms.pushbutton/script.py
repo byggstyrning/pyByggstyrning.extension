@@ -26,6 +26,9 @@ from pyrevit import script
 from pyrevit import forms
 from pyrevit import revit
 
+# Import WPF for UI
+import System.Windows
+
 # Add the extension directory to the path
 logger_temp = script.get_logger()
 script_dir = script.get_script_path()
@@ -62,17 +65,88 @@ class RoomItem(SpatialElementItem):
 class RoomSelectorWindow(SpatialSelectorWindow):
     """Custom WPF window for selecting rooms with search functionality."""
     
+    def __init__(self, element_items, pushbutton_dir, extension_dir, doc=None):
+        """Initialize the room selector window.
+        
+        Args:
+            element_items: List of RoomItem objects
+            pushbutton_dir: Pushbutton directory (for XAML files)
+            extension_dir: Extension root directory (for styles)
+            doc: Revit document (optional, kept for backward compatibility)
+        """
+        # Call parent init
+        super(RoomSelectorWindow, self).__init__(element_items, pushbutton_dir, extension_dir)
+        
+        # Bind DataGrid instead of ListView
+        if hasattr(self, 'roomsDataGrid'):
+            self.roomsDataGrid.ItemsSource = self.filtered_items
+    
     def get_xaml_filename(self):
         """Return XAML filename."""
         return "RoomSelector.xaml"
     
     def get_listview_name(self):
-        """Return ListView control name."""
+        """Return ListView control name (for backward compatibility)."""
         return "roomsListView"
     
     def get_element_attribute(self):
         """Return element attribute name."""
         return "room"
+    
+    def apply_filters(self):
+        """Apply search text filter to items."""
+        try:
+            # Start with all items
+            filtered = list(self.all_items)
+            
+            # Apply search text filter
+            if hasattr(self, 'searchTextBox') and self.searchTextBox.Text:
+                search_text = self.searchTextBox.Text.lower()
+                filtered = [
+                    item for item in filtered
+                    if (search_text in (item.element_number or "").lower() or
+                        search_text in (item.element_name or "").lower() or
+                        search_text in (item.level_name or "").lower() or
+                        search_text in (item.phase_name or "").lower())
+                ]
+            
+            # Update filtered items
+            self.filtered_items = filtered
+            
+            # Update DataGrid
+            if hasattr(self, 'roomsDataGrid'):
+                self.roomsDataGrid.ItemsSource = self.filtered_items
+        except Exception as e:
+            logger.debug("Error applying filters: {}".format(e))
+    
+    def searchTextBox_TextChanged(self, sender, args):
+        """Handle search text box text changed event."""
+        self.apply_filters()
+    
+    
+    def create_button_click(self, sender, args):
+        """Handle Create button click - collect selected elements and close."""
+        # Collect all selected items from DataGrid
+        selected_items = []
+        if hasattr(self, 'roomsDataGrid'):
+            for item in self.roomsDataGrid.SelectedItems:
+                selected_items.append(item)
+        
+        # Extract elements from selected items
+        element_attr = self.get_element_attribute()
+        if selected_items:
+            # Try to get element via attribute, fallback to .element
+            self.selected_elements = []
+            for item in selected_items:
+                if hasattr(item, element_attr):
+                    self.selected_elements.append(getattr(item, element_attr))
+                elif hasattr(item, 'element'):
+                    self.selected_elements.append(item.element)
+        else:
+            self.selected_elements = []
+        
+        # Close window
+        self.Close()
 
 
 def show_room_filter_dialog(rooms, doc):
@@ -118,7 +192,7 @@ def show_room_filter_dialog(rooms, doc):
     logger.debug("Found {} rooms with existing 3D zones".format(existing_count))
     
     # Show custom WPF selection dialog
-    dialog = RoomSelectorWindow(room_items, pushbutton_dir, extension_dir)
+    dialog = RoomSelectorWindow(room_items, pushbutton_dir, extension_dir, doc)
     dialog.ShowDialog()
     
     # Return selected rooms (or None if cancelled)
@@ -130,29 +204,56 @@ def show_room_filter_dialog(rooms, doc):
 if __name__ == '__main__':
     doc = revit.doc
     
-    # Get all Rooms
-    spatial_elements = FilteredElementCollector(doc)\
-        .OfClass(SpatialElement)\
-        .WhereElementIsNotElementType()\
-        .ToElements()
+    # Check user selection
+    selection = revit.get_selection()
+    selected_ids = selection.element_ids if selection else []
     
-    # Filter for Room instances only, and only include placed rooms
-    all_rooms = [elem for elem in spatial_elements if isinstance(elem, Room)]
-    placed_rooms = [room for room in all_rooms if room.Area > 0]
+    # Filter selected elements to only Room instances
+    selected_rooms = []
+    if selected_ids:
+        selected_elements = [doc.GetElement(eid) for eid in selected_ids]
+        selected_rooms = [elem for elem in selected_elements if isinstance(elem, Room)]
     
-    unplaced_count = len(all_rooms) - len(placed_rooms)
-    if unplaced_count > 0:
-        logger.debug("Filtered out {} unplaced rooms (Area = 0)".format(unplaced_count))
+    # If Rooms are selected, use only those; otherwise get all Rooms
+    if selected_rooms:
+        logger.debug("Found {} Rooms in selection".format(len(selected_rooms)))
+        # Filter to only placed rooms
+        placed_rooms = [room for room in selected_rooms if room.Area > 0]
+        unplaced_count = len(selected_rooms) - len(placed_rooms)
+        if unplaced_count > 0:
+            logger.debug("Filtered out {} unplaced rooms from selection (Area = 0)".format(unplaced_count))
+    else:
+        # Get all Rooms
+        spatial_elements = FilteredElementCollector(doc)\
+            .OfClass(SpatialElement)\
+            .WhereElementIsNotElementType()\
+            .ToElements()
+        
+        # Filter for Room instances only, and only include placed rooms
+        all_rooms = [elem for elem in spatial_elements if isinstance(elem, Room)]
+        placed_rooms = [room for room in all_rooms if room.Area > 0]
     
     if not placed_rooms:
-        if all_rooms:
-            forms.alert("Found {} Rooms, but none are placed (all have Area = 0).\n\nPlease place rooms in the model before running this tool.".format(len(all_rooms)),
+        if selected_rooms:
+            forms.alert("Found {} Rooms in selection, but none are placed (all have Area = 0).\n\nPlease place rooms in the model before running this tool.".format(len(selected_rooms)),
                        title="No Placed Rooms", exitscript=True)
         else:
-            forms.alert("No Rooms found in the model.", title="No Rooms", exitscript=True)
+            # Check if there are any rooms at all
+            spatial_elements = FilteredElementCollector(doc)\
+                .OfClass(SpatialElement)\
+                .WhereElementIsNotElementType()\
+                .ToElements()
+            all_rooms = [elem for elem in spatial_elements if isinstance(elem, Room)]
+            if all_rooms:
+                forms.alert("Found {} Rooms, but none are placed (all have Area = 0).\n\nPlease place rooms in the model before running this tool.".format(len(all_rooms)),
+                           title="No Placed Rooms", exitscript=True)
+            else:
+                forms.alert("No Rooms found in the model.", title="No Rooms", exitscript=True)
     
-    logger.debug("Found {} placed Rooms ({} total, {} unplaced)".format(
-        len(placed_rooms), len(all_rooms), unplaced_count))
+    if selected_rooms:
+        logger.debug("Using {} placed Rooms from selection".format(len(placed_rooms)))
+    else:
+        logger.debug("Found {} placed Rooms in model".format(len(placed_rooms)))
     
     # Create adapter
     adapter = RoomAdapter()

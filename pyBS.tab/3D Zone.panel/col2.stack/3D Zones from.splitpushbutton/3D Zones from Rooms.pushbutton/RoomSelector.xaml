@@ -1,6 +1,6 @@
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Select Rooms for 3D Zone Creation" Width="500" Height="600" WindowStartupLocation="CenterScreen">
+        Title="Select Rooms for 3D Zone Creation" Width="1000" Height="700" WindowStartupLocation="CenterScreen">
     <!-- Styles will be loaded programmatically -->
     <Grid Margin="10">
         <Grid.RowDefinitions>
@@ -10,19 +10,117 @@
         </Grid.RowDefinitions>
 
         <!-- Search Box -->
-        <TextBox x:Name="searchTextBox" Grid.Row="0" Margin="0,0,0,10" 
+        <TextBox x:Name="searchTextBox" Grid.Row="0" Margin="0,0,0,10"
                  Style="{DynamicResource PlaceholderTextBoxStyle}" 
                  Tag="Type to search rooms..."
                  TextChanged="searchTextBox_TextChanged"/>
 
-        <!-- List View -->
-        <ListView x:Name="roomsListView" Grid.Row="1" Margin="0,0,0,10" SelectionMode="Extended">
-            <ListView.ItemTemplate>
-                <DataTemplate>
-                    <TextBlock Text="{Binding display_text}" VerticalAlignment="Center" Margin="5"/>
-                </DataTemplate>
-            </ListView.ItemTemplate>
-        </ListView>
+        <!-- DataGrid -->
+        <DataGrid x:Name="roomsDataGrid" Grid.Row="1" Margin="0,0,0,10"
+                  SelectionMode="Extended"
+                  CanUserAddRows="False"
+                  CanUserDeleteRows="False"
+                  CanUserSortColumns="True"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  GridLinesVisibility="None"
+                  HeadersVisibility="Column"
+                  BorderBrush="{DynamicResource BorderBrush}"
+                  BorderThickness="2"
+                  Background="White"
+                  RowBackground="White"
+                  HorizontalGridLinesBrush="{DynamicResource BorderBrush}"
+                  VerticalGridLinesBrush="Transparent"
+                  RowHeight="24"
+                  FontSize="12"
+                  SelectionUnit="FullRow"
+                  CanUserResizeRows="False"
+                  CanUserReorderColumns="False"
+                  AlternatingRowBackground="{DynamicResource BackgroundLightBrush}"
+                  VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Auto">
+            <DataGrid.Resources>
+                <!-- DataGridRow Style -->
+                <Style TargetType="DataGridRow">
+                    <Setter Property="Background" Value="White"/>
+                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+                    <Setter Property="BorderThickness" Value="0"/>
+                    <Setter Property="Padding" Value="0"/>
+                    <Style.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter Property="Background" Value="{DynamicResource BackgroundLighterBrush}"/>
+                            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
+                            <Setter Property="Foreground" Value="White"/>
+                        </Trigger>
+                        <MultiTrigger>
+                            <MultiTrigger.Conditions>
+                                <Condition Property="IsSelected" Value="True"/>
+                                <Condition Property="IsMouseOver" Value="True"/>
+                            </MultiTrigger.Conditions>
+                            <Setter Property="Background" Value="{DynamicResource AccentHoverBrush}"/>
+                            <Setter Property="Foreground" Value="White"/>
+                        </MultiTrigger>
+                    </Style.Triggers>
+                </Style>
+                <!-- Override column header height for more condensed look -->
+                <Style TargetType="DataGridColumnHeader">
+                    <Setter Property="Background" Value="{DynamicResource BackgroundLightBrush}"/>
+                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                    <Setter Property="FontSize" Value="12"/>
+                    <Setter Property="Padding" Value="6,6"/>
+                    <Setter Property="BorderThickness" Value="0,0,0,2"/>
+                    <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+                    <Setter Property="HorizontalContentAlignment" Value="Left"/>
+                    <Setter Property="VerticalContentAlignment" Value="Center"/>
+                    <Setter Property="Height" Value="40"/>
+                </Style>
+                <!-- Override cell padding for more condensed look -->
+                <Style TargetType="DataGridCell">
+                    <Setter Property="BorderThickness" Value="0"/>
+                    <Setter Property="Padding" Value="6,3"/>
+                    <Setter Property="VerticalAlignment" Value="Center"/>
+                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+                    <Style.Triggers>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter Property="Foreground" Value="White"/>
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                            <Setter Property="BorderThickness" Value="1"/>
+                        </Trigger>
+                    </Style.Triggers>
+                </Style>
+            </DataGrid.Resources>
+            <DataGrid.Columns>
+                <!-- Exists Column (sortable) -->
+                <DataGridTemplateColumn Header="Exists" Width="60" SortMemberPath="has_zone" CanUserSort="True">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding exists_display}" 
+                                      HorizontalAlignment="Center" 
+                                      VerticalAlignment="Center"
+                                      FontWeight="Bold"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                
+                <!-- Room Number Column -->
+                <DataGridTextColumn Header="Room Number" Binding="{Binding element_number}" Width="120"/>
+                
+                <!-- Room Name Column -->
+                <DataGridTextColumn Header="Room Name" Binding="{Binding element_name}" Width="*"/>
+                
+                <!-- Level Column -->
+                <DataGridTextColumn Header="Level" Binding="{Binding level_name}" Width="150"/>
+                
+                <!-- Phase Column -->
+                <DataGridTextColumn Header="Phase" Binding="{Binding phase_name}" Width="150"/>
+            </DataGrid.Columns>
+        </DataGrid>
 
         <!-- Buttons -->
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
@@ -33,4 +131,3 @@
         </StackPanel>
     </Grid>
 </Window>
-

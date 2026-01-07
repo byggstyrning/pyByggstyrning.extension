@@ -237,10 +237,10 @@
                             <Border BorderBrush="#999999" BorderThickness="2" CornerRadius="3">
                                 <DataGrid x:Name="parameterMappingsDataGrid" Height="150"
                                           AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" IsReadOnly="True" SelectionMode="Single"
-                                          Style="{StaticResource EnhancedDataGridStyle}"
-                                          RowStyle="{StaticResource EnhancedDataGridRowStyle}"
-                                          ColumnHeaderStyle="{StaticResource EnhancedDataGridColumnHeaderStyle}"
-                                          CellStyle="{StaticResource EnhancedDataGridCellStyle}"
+                                          Style="{DynamicResource EnhancedDataGridStyle}"
+                                          RowStyle="{DynamicResource EnhancedDataGridRowStyle}"
+                                          ColumnHeaderStyle="{DynamicResource EnhancedDataGridColumnHeaderStyle}"
+                                          CellStyle="{DynamicResource EnhancedDataGridCellStyle}"
                                           BorderThickness="0">
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="Source Parameter" 
