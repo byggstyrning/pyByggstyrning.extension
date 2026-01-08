@@ -36,7 +36,8 @@ LIGHT_THEME_COLORS = {
     'ControlBackgroundColor': '#FFFFFF',
     'PopupBackgroundColor': '#FFFFFF',
     'DataGridRowBackgroundColor': '#FFFFFF',
-    'ArrowColor': '#000000',
+    'ArrowColor': '#2196F3',  # Blue for light mode
+    'ColoredButtonTextColor': '#000000',  # Black text for colored buttons (orange/green/red)
 }
 
 DARK_THEME_COLORS = {
@@ -61,7 +62,8 @@ DARK_THEME_COLORS = {
     'ControlBackgroundColor': '#3C3C3C',  # Control background
     'PopupBackgroundColor': '#383838',  # Popup/dropdown background
     'DataGridRowBackgroundColor': '#2D2D2D',
-    'ArrowColor': '#E0E0E0',
+    'ArrowColor': '#64B5F6',  # Light blue for dark mode
+    'ColoredButtonTextColor': '#000000',  # Pure black text for colored buttons in dark mode (ensures contrast against bright colors)
 }
 
 
@@ -97,13 +99,15 @@ def get_revit_theme():
         # Check if it's dark theme
         if hasattr(current_theme, 'value__'):
             # Enum value: 0 = Dark, 1 = Light
-            return 'dark' if current_theme.value__ == 0 else 'light'
+            result = 'dark' if current_theme.value__ == 0 else 'light'
+            return result
         else:
             # Try string comparison
             theme_str = str(current_theme).lower()
-            return 'dark' if 'dark' in theme_str else 'light'
+            result = 'dark' if 'dark' in theme_str else 'light'
+            return result
             
-    except Exception:
+    except Exception as e:
         pass
     
     try:
@@ -163,7 +167,8 @@ def get_theme_colors(theme=None):
     if theme is None:
         theme = get_revit_theme()
     
-    return DARK_THEME_COLORS if theme == 'dark' else LIGHT_THEME_COLORS
+    colors = DARK_THEME_COLORS if theme == 'dark' else LIGHT_THEME_COLORS
+    return colors
 
 
 def apply_theme_to_resources(resources, theme=None):
@@ -186,11 +191,13 @@ def apply_theme_to_resources(resources, theme=None):
         colors = get_theme_colors(theme)
         
         # Update Color resources
+        colors_applied = 0
         for color_key, color_value in colors.items():
             try:
                 # Convert hex string to Color
                 color = ColorConverter.ConvertFromString(color_value)
                 resources[color_key] = color
+                colors_applied += 1
             except Exception:
                 pass
         
@@ -212,14 +219,27 @@ def apply_theme_to_resources(resources, theme=None):
             'TextLightBrush': 'TextLightColor',
             'DisabledBrush': 'DisabledColor',
             'DisabledTextBrush': 'DisabledTextColor',
+            'WindowBackgroundBrush': 'WindowBackgroundColor',
+            'ControlBackgroundBrush': 'ControlBackgroundColor',
+            'PopupBackgroundBrush': 'PopupBackgroundColor',
+            'DataGridRowBackgroundBrush': 'DataGridRowBackgroundColor',
+            'ArrowBrush': 'ArrowColor',
+            'ColoredButtonTextBrush': 'ColoredButtonTextColor',
         }
         
+        brushes_applied = 0
         for brush_key, color_key in brush_mappings.items():
             try:
                 if color_key in colors:
                     color = ColorConverter.ConvertFromString(colors[color_key])
-                    resources[brush_key] = SolidColorBrush(color)
-            except Exception:
+                    brush = SolidColorBrush(color)
+                    # Use indexer syntax to ensure it works with both ResourceDictionary and MergedDictionary
+                    if brush_key in resources.Keys:
+                        resources[brush_key] = brush
+                    else:
+                        resources.Add(brush_key, brush)
+                    brushes_applied += 1
+            except Exception as ex:
                 pass
         
         return True
@@ -257,13 +277,31 @@ def ensure_styles_loaded(force_theme=None):
             return False
         
         # Check if styles are already loaded
+        # NOTE: We always reload styles to ensure Background setters and other changes are applied
+        # The early return was preventing new style definitions from being loaded
+        styles_already_loaded = False
         if Application.Current is not None and Application.Current.Resources is not None:
             try:
                 test_resource = Application.Current.Resources['BusyOverlayStyle']
                 if test_resource is not None:
-                    # Styles loaded, but we should still apply theme colors
-                    apply_theme_to_resources(Application.Current.Resources, force_theme)
-                    return True
+                    styles_already_loaded = True
+            except:
+                pass
+        
+        # Always reload styles to ensure latest changes (Background setters, etc.) are applied
+        # Remove old merged dictionaries first
+        if styles_already_loaded and Application.Current is not None and Application.Current.Resources is not None:
+            try:
+                # Remove existing CommonStyles dictionary if present
+                merged_dicts_to_remove = []
+                for i in range(Application.Current.Resources.MergedDictionaries.Count):
+                    merged_dict = Application.Current.Resources.MergedDictionaries[i]
+                    # Check if this dictionary contains our styles
+                    if 'BusyOverlayStyle' in merged_dict.Keys:
+                        merged_dicts_to_remove.append(i)
+                # Remove in reverse order to maintain indices
+                for i in reversed(merged_dicts_to_remove):
+                    Application.Current.Resources.MergedDictionaries.RemoveAt(i)
             except:
                 pass
         
@@ -285,13 +323,28 @@ def ensure_styles_loaded(force_theme=None):
         # Try to merge
         try:
             Application.Current.Resources.MergedDictionaries.Add(styles_dict)
-        except Exception:
+            
+            # CRITICAL: Apply theme to the merged dictionary AND Application.Resources
+            # This ensures brushes are available in both places for DynamicResource resolution
+            apply_theme_to_resources(styles_dict, force_theme)
+            apply_theme_to_resources(Application.Current.Resources, force_theme)
+            
+            # CRITICAL: Also ensure ColoredButtonTextBrush is directly in Application.Resources
+            # This ensures DynamicResource can find it even if MergedDictionaries lookup fails
+            try:
+                if 'ColoredButtonTextBrush' in styles_dict.Keys:
+                    brush = styles_dict['ColoredButtonTextBrush']
+                    Application.Current.Resources['ColoredButtonTextBrush'] = brush
+            except: pass
+        except Exception as e:
             # Fallback: copy resources manually
             for key in styles_dict.Keys:
                 try:
                     Application.Current.Resources[key] = styles_dict[key]
                 except:
                     pass
+            # Apply theme to fallback resources
+            apply_theme_to_resources(Application.Current.Resources, force_theme)
         
         return True
         
@@ -342,5 +395,5 @@ def load_styles_to_window(window, force_theme=None):
         
         return True
         
-    except Exception:
+    except Exception as e:
         return False

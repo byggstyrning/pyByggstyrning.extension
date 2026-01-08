@@ -1,6 +1,7 @@
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Select Rooms for 3D Zone Creation" Width="1000" Height="700" WindowStartupLocation="CenterScreen">
+        Title="Select Rooms for 3D Zone Creation" Width="1000" Height="700" WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource WindowBackgroundBrush}">
     <!-- Styles will be loaded programmatically -->
     <Grid Margin="10">
         <Grid.RowDefinitions>
@@ -27,8 +28,8 @@
                   HeadersVisibility="Column"
                   BorderBrush="{DynamicResource BorderBrush}"
                   BorderThickness="2"
-                  Background="White"
-                  RowBackground="White"
+                  Background="{DynamicResource ControlBackgroundBrush}"
+                  RowBackground="{DynamicResource DataGridRowBackgroundBrush}"
                   HorizontalGridLinesBrush="{DynamicResource BorderBrush}"
                   VerticalGridLinesBrush="Transparent"
                   RowHeight="24"
@@ -42,7 +43,7 @@
             <DataGrid.Resources>
                 <!-- DataGridRow Style -->
                 <Style TargetType="DataGridRow">
-                    <Setter Property="Background" Value="White"/>
+                    <Setter Property="Background" Value="{DynamicResource DataGridRowBackgroundBrush}"/>
                     <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
                     <Setter Property="BorderThickness" Value="0"/>
                     <Setter Property="Padding" Value="0"/>
@@ -103,7 +104,8 @@
                             <TextBlock Text="{Binding exists_display}" 
                                       HorizontalAlignment="Center" 
                                       VerticalAlignment="Center"
-                                      FontWeight="Bold"/>
+                                      FontWeight="Bold"
+                                      Foreground="{DynamicResource TextBrush}"/>
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>

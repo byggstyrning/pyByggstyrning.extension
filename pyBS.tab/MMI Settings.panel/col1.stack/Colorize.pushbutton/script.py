@@ -13,7 +13,7 @@ Shift+Click:
 __title__ = "Colorizer"
 __author__ = "Byggstyrning AB"
 __doc__ = "Toggle MMI-based coloring on/off. Shift+Click: Create view filters"
-__highlight__ = 'new'
+__highlight__ = 'updated'
 
 # Import standard libraries
 import sys

@@ -29,11 +29,24 @@ from Autodesk.Revit.UI import *
 # Import pyRevit libraries
 import os
 import sys
+import os.path as op
 from pyrevit import revit, DB, UI
 from pyrevit import forms, script
 
-# Get the current script directory
-script_dir = script.get_script_path()
+# Add the extension directory to the path
+script_path = __file__
+pushbutton_dir = op.dirname(script_path)
+stack_dir = op.dirname(pushbutton_dir)
+panel_dir = op.dirname(stack_dir)
+tab_dir = op.dirname(panel_dir)
+extension_dir = op.dirname(tab_dir)
+lib_path = op.join(extension_dir, 'lib')
+
+if lib_path not in sys.path:
+    sys.path.insert(0, lib_path)
+
+# Get the current script directory (for XAML file path)
+script_dir = pushbutton_dir
 logger = script.get_logger()
 
 # Get Revit document, app and UIDocument
@@ -140,11 +153,13 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
     def __init__(self):
         """Initialize the window."""
         logger.debug("Initializing Generate 3D View References window")
+        
+        # Load styles BEFORE window initialization
+        from styles import ensure_styles_loaded
+        ensure_styles_loaded()
+        
         xaml_file = os.path.join(script_dir, "Generate3DViewReferencesWindow.xaml")
         forms.WPFWindow.__init__(self, xaml_file)
-        
-        # Load styles ResourceDictionary
-        self.load_styles()
         
         # Store created elements for isolation
         self.created_elements = []

@@ -4,6 +4,7 @@ __author__ = "Byggstyrning AB"
 __doc__ = """Color Elements and selected elements by Parameter values.
 Allows you to colorize elements in Revit views based on parameter values.
 """
+__highlight__ = 'updated'
 # pylint: disable=import-error,unused-argument,missing-docstring,invalid-name,broad-except
 # pyright: reportMissingImports=false
 
@@ -26,6 +27,11 @@ schemas_dir = os.path.join(script_dir, "coloringschemas")
 if not os.path.exists(schemas_dir):
     os.makedirs(schemas_dir)
 
+# Add lib path to sys.path for importing lib modules
+lib_path = os.path.join(extension_dir, 'lib')
+if lib_path not in sys.path:
+    sys.path.insert(0, lib_path)
+
 # .NET imports
 clr.AddReference('PresentationCore')
 clr.AddReference('PresentationFramework')
@@ -36,6 +42,7 @@ clr.AddReference('System')
 
 import System
 from System import Object
+from System.Windows.Threading import DispatcherPriority
 from System.Collections.Generic import Dictionary
 from System.Windows import (
     FrameworkElement, Window, Visibility, Controls, 
@@ -419,97 +426,22 @@ class ResetColorsHandler(UI.IExternalEventHandler):
 
 
 
-# Module-level cache for styles ResourceDictionary
-_styles_dict_cache = None
-
-# Helper function to load styles into Application.Resources before window creation
+# Use the proper theme-aware styles loader from lib.styles
 def ensure_styles_loaded():
     """Ensure CommonStyles are loaded into Application.Resources before XAML parsing."""
-    global _styles_dict_cache
-    
     try:
-        from System.Windows import Application
-        from System.Windows.Markup import XamlReader
-        from System.IO import File
-        import os.path as op
+        # Use the proper theme-aware function from styles (lib is in sys.path)
+        from styles import ensure_styles_loaded as lib_ensure_styles_loaded
+        result = lib_ensure_styles_loaded()
         
-        
-        # Check if styles are already loaded in Application.Resources
-        if Application.Current is not None and Application.Current.Resources is not None:
-            try:
-                test_resource = Application.Current.Resources['BusyOverlayStyle']
-                if test_resource is not None:
-                    return  # Already loaded
-            except:
-                pass
-        
-        # Load styles if not cached
-        if _styles_dict_cache is None:
-            # Calculate styles path
-            script_dir = op.dirname(__file__)
-            panel_dir = op.dirname(script_dir)
-            tab_dir = op.dirname(panel_dir)
-            extension_dir = op.dirname(tab_dir)  # Fixed: was op.dirname(op.dirname(tab_dir))
-            styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
-            
-            if op.exists(styles_path):
-                # Read and parse XAML
-                xaml_content = File.ReadAllText(styles_path)
-                _styles_dict_cache = XamlReader.Parse(xaml_content)
-            else:
-                logger.warning("CommonStyles.xaml not found at: {}".format(styles_path))
-                return
-        
-        # Ensure Application.Current exists (don't create new one if it doesn't exist)
-        # In Revit context, Application.Current might be managed by Revit
-        if Application.Current is None:
-            # Try to get or create Application
-            try:
-                from System.Windows import Application as AppClass
-                # Don't create new Application - let WPFWindow handle it
-                logger.debug("Application.Current is None, styles will be loaded after window creation")
-                return
-            except:
-                pass
-        
-        # Merge into Application.Resources if Application.Current exists
-        if Application.Current is not None:
-            if Application.Current.Resources is None:
-                from System.Windows import ResourceDictionary
-                Application.Current.Resources = ResourceDictionary()
-            
-            # Merge styles using MergedDictionaries
-            try:
-                # Check if already merged
-                merged = False
-                for merged_dict in Application.Current.Resources.MergedDictionaries:
-                    if merged_dict == _styles_dict_cache:
-                        merged = True
-                        break
-                
-                if not merged:
-                    Application.Current.Resources.MergedDictionaries.Add(_styles_dict_cache)
-                    logger.debug("Merged CommonStyles into Application.Resources")
-            except Exception as merge_error:
-                logger.warning("Could not merge styles via MergedDictionaries: {}".format(str(merge_error)))
-                # Fallback: copy resources manually
-                try:
-                    for key in _styles_dict_cache.Keys:
-                        try:
-                            # Check if key already exists
-                            existing = Application.Current.Resources[key]
-                            if existing is None:
-                                Application.Current.Resources[key] = _styles_dict_cache[key]
-                        except:
-                            # Key doesn't exist, add it
-                            Application.Current.Resources[key] = _styles_dict_cache[key]
-                    logger.debug("Manually copied CommonStyles into Application.Resources")
-                except Exception as copy_error:
-                    logger.warning("Could not copy styles manually: {}".format(str(copy_error)))
+        return result
+    except ImportError as e:
+        logger.error("Failed to import styles: {}".format(str(e)))
+        logger.error("lib_path: {}, in sys.path: {}".format(lib_path, lib_path in sys.path))
+        raise
     except Exception as e:
-        logger.warning("Could not pre-load styles into Application.Resources: {}".format(str(e)))
-        import traceback
-        logger.debug("Style loading error: {}".format(traceback.format_exc()))
+        logger.error("Error in ensure_styles_loaded: {}".format(str(e)))
+        raise
 
 # Main UI Class
 class RevitColorizerWindow(WPFWindow):
@@ -519,10 +451,10 @@ class RevitColorizerWindow(WPFWindow):
         # Initialize active_view to None to prevent AttributeError in OnClosing
         self.active_view = None
         try:
-            # Load styles into Application.Resources BEFORE creating window
+# Load styles into Application.Resources BEFORE creating window
             ensure_styles_loaded()
             
-            # Create XAML file path
+# Create XAML file path
             xaml_file = os.path.join(
                 os.path.dirname(__file__), 
                 "ColorElementsWindow.xaml"
@@ -532,13 +464,29 @@ class RevitColorizerWindow(WPFWindow):
             # Load XAML
             try:
                 WPFWindow.__init__(self, xaml_file)
+# Create dummy statusText object since status bar was removed from XAML
+                # This prevents errors when code tries to set statusText.Text
+                class DummyStatusText(object):
+                    def __init__(self):
+                        self._text = ""
+                    @property
+                    def Text(self):
+                        return self._text
+                    @Text.setter
+                    def Text(self, value):
+                        # Do nothing - status bar is hidden
+                        self._text = value
+                
+                # Only create dummy if statusText doesn't exist (it was removed from XAML)
+                if not hasattr(self, 'statusText'):
+                    self.statusText = DummyStatusText()
             except Exception as ex:
                 raise
             
             # Load styles ResourceDictionary (for window-specific resources if needed)
             self.load_styles()
             
-            # Store references
+# Store references
             self.logger = logger
             self.DB = DB
             self.doc = doc
@@ -575,6 +523,9 @@ class RevitColorizerWindow(WPFWindow):
             
             # Flag to prevent clearing values during selection restoration
             self._restoring_selection = False
+            
+            # Flag to prevent recursive updates when handling multiple selections
+            self._is_updating_selection = False
             
             # Variable to store selected category names for persistence between views
             self.selected_category_names = []
@@ -635,54 +586,26 @@ class RevitColorizerWindow(WPFWindow):
             # Mark initialization as complete (allow color resets now)
             self._is_initializing = False
             
-            # Show startup message
-            self.statusText.Text = "Ready. Select a category to begin."
-            
         except Exception as ex:
             UI.TaskDialog.Show("Error", "Failed to initialize Revit Colorizer: " + str(ex))
             logger.error("Initialization error: %s", str(ex))
             self.Close()
     
     def load_styles(self):
-        """Load the common styles ResourceDictionary."""
+        """Load the common styles ResourceDictionary with theme support."""
         try:
+            # Use the proper theme-aware function from styles (lib is in sys.path)
+            from styles import load_styles_to_window
+            result = load_styles_to_window(self)
             
-            import os.path as op
-            script_dir = op.dirname(__file__)
-            panel_dir = op.dirname(script_dir)
-            tab_dir = op.dirname(panel_dir)
-            extension_dir = op.dirname(tab_dir)  # Fix: Only go up ONE level from tab_dir
-            styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
-            
-            
-            if op.exists(styles_path):
-                from System.Windows import Application
-                from System.Windows.Markup import XamlReader
-                from System.IO import File
-                
-                # Read XAML content
-                xaml_content = File.ReadAllText(styles_path)
-                
-                
-                # Parse as ResourceDictionary
-                styles_dict = XamlReader.Parse(xaml_content)
-                
-                
-                # Merge into window resources
-                if self.Resources is None:
-                    from System.Windows import ResourceDictionary
-                    self.Resources = ResourceDictionary()
-                
-                
-                # If it's a ResourceDictionary, merge its contents
-                if hasattr(styles_dict, 'Keys'):
-                    for key in styles_dict.Keys:
-                        self.Resources[key] = styles_dict[key]
-                else:
-                    # Try to merge the entire dictionary
-                    self.Resources.MergedDictionaries.Add(styles_dict)
-                    
-                logger.debug("Loaded styles from: {}".format(styles_path))
+            if result:
+                logger.debug("Loaded styles with theme support")
+            else:
+                logger.warning("Could not load styles with theme support")
+        except ImportError as e:
+            logger.error("Failed to import styles: {}".format(str(e)))
+            logger.error("lib_path: {}, in sys.path: {}".format(lib_path, lib_path in sys.path))
+            raise
         except Exception as e:
             logger.warning("Could not load styles: {}. Using default styles.".format(str(e)))
             import traceback
@@ -862,6 +785,7 @@ class RevitColorizerWindow(WPFWindow):
         # Values list
         self.valuesListBox.MouseDoubleClick += self.on_value_double_click
         self.valuesListBox.SelectionChanged += self.on_value_click
+        self.valuesListBox.PreviewMouseLeftButtonUp += self.on_values_list_mouse_up
         
         # Connect the checkbox events in the values list
         # These are defined in the XAML file
@@ -944,12 +868,9 @@ class RevitColorizerWindow(WPFWindow):
                 self.update_select_all_checkbox_state()
                 
                 # Removed final selections verification logging
-                            
-            self.statusText.Text = "Loaded {} categories.".format(len(categories))
                 
         except Exception as ex:
             self._processing_restored_selection = False  # Make sure to reset flag on error
-            self.statusText.Text = "Error loading categories: " + str(ex)
             self.logger.error("Error loading categories: %s", str(ex))
     
 
@@ -958,12 +879,12 @@ class RevitColorizerWindow(WPFWindow):
         try:
             if excluded_cats is None:
                 excluded_cats = self.CAT_EXCLUDED
-                
+            
             # Get all elements in view
             collector = self.DB.FilteredElementCollector(self.doc, active_view.Id) \
                         .WhereElementIsNotElementType() \
-                        .WhereElementIsViewIndependent() \
-                        .ToElements()
+                        .WhereElementIsViewIndependent()
+            elements = collector.ToElements()
                         
             categories = []
                     
@@ -1033,7 +954,7 @@ class RevitColorizerWindow(WPFWindow):
                     return self.name
             
             # Use our local classes instead of the original ones
-            for element in collector:
+            for element in elements:
                 if element.Category is None:
                     continue
                     
@@ -1089,7 +1010,6 @@ class RevitColorizerWindow(WPFWindow):
             
             
         except Exception as ex:
-            self.statusText.Text = "Error handling category click: " + str(ex)
             self.logger.error("Category click error: %s", str(ex))
     
     def get_parameter_count(self):
@@ -1099,21 +1019,6 @@ class RevitColorizerWindow(WPFWindow):
         else:
             return self.parameterSelector.Items.Count
     
-    def _ensure_placeholder_visible(self):
-        """Programmatically ensure placeholder is visible when no item is selected."""
-        try:
-            # Access template elements to control visibility directly
-            template = self.parameterSelector.Template
-            if template:
-                placeholder_text = template.FindName("PlaceholderText", self.parameterSelector)
-                content_site = template.FindName("ContentSite", self.parameterSelector)
-                if placeholder_text:
-                    placeholder_text.Visibility = System.Windows.Visibility.Visible
-                if content_site:
-                    content_site.Visibility = System.Windows.Visibility.Collapsed
-        except:
-            # If template access fails, just ensure SelectedItem and SelectedIndex are cleared
-            pass
     
     def get_selected_categories(self):
         """Get all selected categories."""
@@ -1155,7 +1060,6 @@ class RevitColorizerWindow(WPFWindow):
                 selected_count = sum(1 for item in self.categoryListBox.Items if item.IsSelected)
                 
                 if selected_count == 0:
-                    self.statusText.Text = "No categories selected."
                     # Clear parameter selector and show placeholder
                     # Explicitly clear selection first
                     self.parameterSelector.SelectedItem = None
@@ -1166,8 +1070,6 @@ class RevitColorizerWindow(WPFWindow):
                     self.parameterSelector.Items.Clear()
                     # Force UI update to ensure placeholder shows
                     self.parameterSelector.UpdateLayout()
-                    # Programmatically ensure placeholder is visible
-                    self._ensure_placeholder_visible()
                     # Clear values listbox
                     if self.valuesListBox.ItemsSource is not None:
                         self.valuesListBox.ItemsSource = None
@@ -1191,7 +1093,6 @@ class RevitColorizerWindow(WPFWindow):
             
         except Exception as ex:
             self._processing_category_selection = False  # Make sure to clear flag on error
-            self.statusText.Text = "Error processing category selection: " + str(ex)
             self.logger.error("Process category selection error: %s", str(ex))
     
     def load_parameters_for_categories(self, preserve_param_name=None, preserve_param_type_is_instance=None):
@@ -1229,8 +1130,6 @@ class RevitColorizerWindow(WPFWindow):
                 self.parameterSelector.Items.Clear()
                 # Force UI update to ensure placeholder shows
                 self.parameterSelector.UpdateLayout()
-                # Programmatically ensure placeholder is visible
-                self._ensure_placeholder_visible()
                 # Clear values listbox
                 if self.valuesListBox.ItemsSource is not None:
                     self.valuesListBox.ItemsSource = None
@@ -1319,41 +1218,17 @@ class RevitColorizerWindow(WPFWindow):
             # Restore selection if possible, otherwise leave unselected (show placeholder)
             if selected_index >= 0:
                 self.parameterSelector.SelectedIndex = selected_index
-                param_description = "unique" if all_categories_selected else "common"
-                self.statusText.Text = "Loaded {} {} parameters, maintained selection of '{}'.".format(
-                    len(common_params), param_description, preserve_param_name)
             elif self.get_parameter_count() > 0:
                 # Don't auto-select - explicitly set to -1 to show placeholder
                 self.parameterSelector.SelectedIndex = -1
-                # Ensure placeholder is visible
                 self.parameterSelector.UpdateLayout()
-                self._ensure_placeholder_visible()
                 param_type_name = "instance" if is_instance else "type"
                 
-                if all_categories_selected:
-                    # Special message for when all categories are selected
-                    if preserve_param_name:
-                        self.statusText.Text = "Loaded {} unique {} parameters from all categories. Parameter '{}' may not exist in all categories.".format(
-                            len(common_params), param_type_name, preserve_param_name)
-                    else:
-                        self.statusText.Text = "Loaded {} unique {} parameters from all {} categories.".format(
-                            len(common_params), param_type_name, len(selected_categories))
-                else:
-                    # Standard message for partial selection
-                    if preserve_param_name:
-                        self.statusText.Text = "Loaded {} common {} parameters. Parameter '{}' is not common to selected categories.".format(
-                            len(common_params), param_type_name, preserve_param_name)
-                    else:
-                        self.statusText.Text = "Loaded {} common {} parameters for {} selected categories.".format(
-                            len(common_params), param_type_name, len(selected_categories))
+                pass
             else:
                 # No parameters found - ensure placeholder is visible
                 self.parameterSelector.SelectedIndex = -1
                 self.parameterSelector.UpdateLayout()
-                self._ensure_placeholder_visible()
-                param_description = "unique" if all_categories_selected else "common"
-                self.statusText.Text = "No {} {} parameters found for the selected categories.".format(
-                    param_description, "instance" if is_instance else "type")
                 if self.valuesListBox.ItemsSource is not None:
                     self.valuesListBox.ItemsSource = None
                 self.valuesListBox.Items.Clear()
@@ -1361,7 +1236,6 @@ class RevitColorizerWindow(WPFWindow):
         except Exception as ex:
             # Make sure to clear the loading flag on error
             self._loading_parameters = False
-            self.statusText.Text = "Error loading parameters: " + str(ex)
             self.logger.error("Parameter loading error: %s", str(ex))
     
     def on_parameter_type_changed(self, sender, args):
@@ -1370,7 +1244,6 @@ class RevitColorizerWindow(WPFWindow):
             # Reload parameters for all selected categories with the new parameter type
             self.load_parameters_for_categories()
         except Exception as ex:
-            self.statusText.Text = "Error changing parameter type: " + str(ex)
             self.logger.error("Parameter type change error: %s", str(ex))
     
     def on_parameter_selected(self, sender, args):
@@ -1390,29 +1263,6 @@ class RevitColorizerWindow(WPFWindow):
                     self._selected_param_name_before_search = self.parameterSelector.SelectedItem.parameter_info.name
                 except:
                     pass
-                # Update visibility: show ContentSite, hide PlaceholderText when item is selected
-                try:
-                    if self.parameterSelector.Template:
-                        content_site = self.parameterSelector.Template.FindName("ContentSite", self.parameterSelector)
-                        placeholder_text = self.parameterSelector.Template.FindName("PlaceholderText", self.parameterSelector)
-                        if content_site and placeholder_text:
-                            from System.Windows import Visibility
-                            content_site.Visibility = Visibility.Visible
-                            placeholder_text.Visibility = Visibility.Collapsed
-                except Exception as ex:
-                    self.logger.debug("Error updating ComboBox visibility: {}".format(str(ex)))
-            else:
-                # Update visibility: hide ContentSite, show PlaceholderText when no item is selected
-                try:
-                    if self.parameterSelector.Template:
-                        content_site = self.parameterSelector.Template.FindName("ContentSite", self.parameterSelector)
-                        placeholder_text = self.parameterSelector.Template.FindName("PlaceholderText", self.parameterSelector)
-                        if content_site and placeholder_text:
-                            from System.Windows import Visibility
-                            content_site.Visibility = Visibility.Collapsed
-                            placeholder_text.Visibility = Visibility.Visible
-                except Exception as ex:
-                    self.logger.debug("Error updating ComboBox visibility: {}".format(str(ex)))
             
             # Only clear values if we're not restoring (to prevent clearing during ItemsSource restoration)
             if not restoring_selection:
@@ -1453,7 +1303,6 @@ class RevitColorizerWindow(WPFWindow):
                 schema_path = self.check_for_matching_schema(selected_param.name)
                 if schema_path:
                     self.load_color_schema_from_file(schema_path)
-                    self.statusText.Text = "Automatically loaded schema for {}".format(selected_param.name)
             
             # Update UI status
             param_source_txt = "Instance" if self.instanceRadioButton.IsChecked else "Type"
@@ -1463,17 +1312,9 @@ class RevitColorizerWindow(WPFWindow):
             total_categories = self.categoryListBox.Items.Count
             all_categories_selected = len(selected_categories) == total_categories
             
-            if all_categories_selected and total_categories > 1:
-                self.statusText.Text = "Loaded {} values for {} parameter {} (unique parameter mode - may not exist in all categories)".format(
-                    len(values) if values else 0, param_source_txt, selected_param.name)
-            else:
-                self.statusText.Text = "Loaded {} values for {} parameter {}".format(
-                    len(values) if values else 0, param_source_txt, selected_param.name)
-
             self.apply_colors_event.Raise()
             
         except Exception as ex:
-            self.statusText.Text = "Error selecting parameter: " + str(ex)
             self.logger.error("Parameter selection error: %s", str(ex))
     
     def on_parameter_dropdown_closed(self, sender, args):
@@ -1598,7 +1439,6 @@ class RevitColorizerWindow(WPFWindow):
                     if hasattr(self, '_selected_param_name_before_search'):
                         self._selected_param_name_before_search = None
         except Exception as ex:
-            self.statusText.Text = "Error processing parameter selection: " + str(ex)
             self.logger.error("Parameter dropdown closed error: %s", str(ex))
     
     def on_parameter_dropdown_opened(self, sender, args):
@@ -1863,23 +1703,65 @@ class RevitColorizerWindow(WPFWindow):
             self.logger.debug("Error finding last ComboBoxItem: {}".format(str(ex)))
             return None
     
+    def on_values_list_mouse_up(self, sender, args):
+        """Handle row click for toggling, while allowing selection to proceed."""
+        if getattr(self, '_is_updating_selection', False):
+            return
+            
+        try:
+            # Check if we clicked on a checkbox or its child - if so, let the checkbox handle it
+            from System.Windows.Media import VisualTreeHelper
+            point = args.GetPosition(self.valuesListBox)
+            hit = VisualTreeHelper.HitTest(self.valuesListBox, point)
+            if hit and hit.VisualHit:
+                parent = hit.VisualHit
+                while parent and parent != self.valuesListBox:
+                    if "CheckBox" in parent.GetType().Name:
+                        return # Let the checkbox handle its own toggle
+                    parent = VisualTreeHelper.GetParent(parent)
+            
+            # Find the ListBoxItem that was clicked
+            item_container = None
+            hit_result = VisualTreeHelper.HitTest(self.valuesListBox, point)
+            if hit_result and hit_result.VisualHit:
+                parent = hit_result.VisualHit
+                while parent and parent != self.valuesListBox:
+                    if "ListBoxItem" in parent.GetType().Name:
+                        item_container = parent
+                        break
+                    parent = VisualTreeHelper.GetParent(parent)
+                
+            if item_container and item_container.DataContext:
+                item = item_container.DataContext
+                target_state = not item.IsChecked
+                
+                self._is_updating_selection = True
+                try:
+                    # Sync multi-selection if the clicked item is part of it
+                    if self.valuesListBox.SelectedItems.Count > 1 and self.valuesListBox.SelectedItems.Contains(item):
+                        for selected_item in self.valuesListBox.SelectedItems:
+                            selected_item.IsChecked = target_state
+                    else:
+                        item.IsChecked = target_state
+                    
+                    self.valuesListBox.Items.Refresh()
+                    self.select_checked_elements()
+                finally:
+                    self._is_updating_selection = False
+                
+        except Exception as ex:
+            self.logger.debug("Mouse up error: %s" % str(ex))
+
     def on_value_click(self, sender, args):
         """Handle value item click to select Revit elements based on value."""
+        if getattr(self, '_is_updating_selection', False):
+            return
+            
         try:
-            # Check if we have a selected value
-            if sender.SelectedItem is None or not self.showElementsCheckbox.IsChecked:
-                return
-                
-            value_item = sender.SelectedItem
-            
-            # Toggle the checkbox state when item is clicked
-            value_item.IsChecked = not value_item.IsChecked
-            
-            # Update the UI to reflect the change
-            self.valuesListBox.Items.Refresh()
-            
-            # Select all checked elements
-            self.select_checked_elements()
+# Only select elements in Revit, don't toggle here anymore
+            # Toggling is now handled in on_values_list_mouse_up
+            if self.showElementsCheckbox.IsChecked:
+                self.select_checked_elements()
             
         except Exception as ex:
             self.logger.error("Element selection error: %s", str(ex))
@@ -1909,50 +1791,41 @@ class RevitColorizerWindow(WPFWindow):
                 
                 # Refresh the list view
                 self.valuesListBox.Items.Refresh()
-                self.statusText.Text = "Color updated for value '{}'.".format(value_item.value)
                 self.apply_colors_event.Raise()
         except Exception as ex:
-            self.statusText.Text = "Error changing color: " + str(ex)
             self.logger.error("Value double click error: %s", str(ex))
     
     def on_apply_colors(self, sender, args):
         """Handle apply colors button click."""
         try:
             if not self.valuesListBox.Items.Count:
-                self.statusText.Text = "No values to apply colors to."
                 return
                 
-            self.statusText.Text = "Applying colors..."
             self.apply_colors_event.Raise()
         except Exception as ex:
-            self.statusText.Text = "Error applying colors: " + str(ex)
             self.logger.error("Apply colors error: %s", str(ex))
     
     def on_reset_colors(self, sender, args):
         """Handle reset colors button click."""
         try:
-            self.statusText.Text = "Resetting colors..."
             self.reset_colors_event.Raise()
         except Exception as ex:
-            self.statusText.Text = "Error resetting colors: " + str(ex)
             self.logger.error("Reset colors error: %s", str(ex))
     
     def on_add_filters(self, sender, args):
         """Handle add filters button click."""
         try:
-            self.statusText.Text = "Creating view filters is not implemented yet."
             # This would be implemented similar to the CreateFilters class in ColorSplasher
+            pass
         except Exception as ex:
-            self.statusText.Text = "Error adding filters: " + str(ex)
             self.logger.error("Add filters error: %s", str(ex))
     
     def on_remove_filters(self, sender, args):
         """Handle remove filters button click."""
         try:
-            self.statusText.Text = "Removing filters is not implemented yet."
             # This would be implemented similar to the reset colors but focused on filters
+            pass
         except Exception as ex:
-            self.statusText.Text = "Error removing filters: " + str(ex)
             self.logger.error("Remove filters error: %s", str(ex))
 
 
@@ -1960,7 +1833,6 @@ class RevitColorizerWindow(WPFWindow):
         """Load a color scheme from a file."""
         try:
             if not os.path.exists(file_path):
-                self.statusText.Text = "Error: Schema file does not exist."
                 return
             
             # Load the schema
@@ -2007,11 +1879,7 @@ class RevitColorizerWindow(WPFWindow):
                                 
                 # Refresh the list
                 self.valuesListBox.Items.Refresh()
-                self.statusText.Text = "Color scheme loaded successfully."
-            else:
-                self.statusText.Text = "No values to apply colors to or empty schema file."
         except Exception as ex:
-            self.statusText.Text = "Error loading schema: {}".format(str(ex))
             self.logger.error("Error loading color schema: %s", str(ex))
 
     def get_available_schemas(self):
@@ -2051,12 +1919,10 @@ class RevitColorizerWindow(WPFWindow):
             if not self.showElementsCheckbox.IsChecked:
                 # Clear current selection
                 self.uidoc.Selection.SetElementIds(self.System.Collections.Generic.List[self.DB.ElementId]())
-                self.statusText.Text = "Element selection disabled."
             else:
                 # Select based on checked checkboxes
                 self.select_checked_elements()
         except Exception as ex:
-            self.statusText.Text = "Error changing selection mode: " + str(ex)
             self.logger.error("Show elements checkbox error: %s", str(ex))
 
     def on_override_projection_changed(self, sender, args):
@@ -2064,7 +1930,6 @@ class RevitColorizerWindow(WPFWindow):
         try:
             self.apply_colors_event.Raise()
         except Exception as ex:
-            self.statusText.Text = "Error changing selection mode: " + str(ex)
             self.logger.error("Show elements checkbox error: %s", str(ex))
 
     def SelectAllCategories_Changed(self, sender, args):
@@ -2123,16 +1988,11 @@ class RevitColorizerWindow(WPFWindow):
                 self.process_category_selection()
                 
                 # Update status
-                action = "selected" if is_checked else "deselected"
-                count = self.categoryListBox.Items.Count
-                self.statusText.Text = "All {} categories {}.".format(count, action)
-            
-            # Clear the flag
+                # Clear the flag
             self._updating_select_all = False
                 
         except Exception as ex:
             self._updating_select_all = False  # Make sure to clear flag on error
-            self.statusText.Text = "Error updating category selection: " + str(ex)
             self.logger.error("Select all categories error: %s", str(ex))
 
     def update_select_all_checkbox_state(self):
@@ -2182,7 +2042,6 @@ class RevitColorizerWindow(WPFWindow):
             
                 
         except Exception as ex:
-            self.statusText.Text = "Error handling category checkbox: " + str(ex)
             self.logger.error("Category checkbox error: %s", str(ex))
 
     def on_refresh_parameters(self, sender, args):
@@ -2212,8 +2071,6 @@ class RevitColorizerWindow(WPFWindow):
                 self.parameterSelector.SelectedIndex = -1
                 # Force UI update to ensure placeholder shows
                 self.parameterSelector.UpdateLayout()
-                # Programmatically ensure placeholder is visible
-                self._ensure_placeholder_visible()
                 # Clear values listbox
                 if self.valuesListBox.ItemsSource is not None:
                     self.valuesListBox.ItemsSource = None
@@ -2270,24 +2127,14 @@ class RevitColorizerWindow(WPFWindow):
             # Restore selection if possible, otherwise leave unselected (show placeholder)
             if selected_index >= 0:
                 self.parameterSelector.SelectedIndex = selected_index
-                param_description = "unique" if all_categories_selected else "common"
-                self.statusText.Text = "Refreshed {} parameters, maintained selection of '{}'.".format(param_description, current_param_name)
             elif self.get_parameter_count() > 0:
                 # Don't auto-select - explicitly set to -1 to show placeholder
                 self.parameterSelector.SelectedIndex = -1
-                # Ensure placeholder is visible
                 self.parameterSelector.UpdateLayout()
-                self._ensure_placeholder_visible()
-                param_description = "unique" if all_categories_selected else "common"
-                self.statusText.Text = "Refreshed {} {} parameters.".format(len(common_params), param_description)
             else:
                 # No parameters found - ensure placeholder is visible
                 self.parameterSelector.SelectedIndex = -1
                 self.parameterSelector.UpdateLayout()
-                self._ensure_placeholder_visible()
-                param_type = "instance" if current_param_type_is_instance else "type"
-                param_description = "unique" if all_categories_selected else "common"
-                self.statusText.Text = "No {} {} parameters found.".format(param_description, param_type)
                 if self.valuesListBox.ItemsSource is not None:
                     self.valuesListBox.ItemsSource = None
                 self.valuesListBox.Items.Clear()
@@ -2300,7 +2147,6 @@ class RevitColorizerWindow(WPFWindow):
             self.apply_colors_event.Raise()
                 
         except Exception as ex:
-            self.statusText.Text = "Error refreshing parameters: {0}".format(str(ex))
             self.logger.error("Parameter refresh error: %s", str(ex))
 
     def store_selected_categories(self):
@@ -2428,8 +2274,6 @@ class RevitColorizerWindow(WPFWindow):
                 
         except Exception as ex:
             self.logger.error("Error handling view activation: %s", ex)
-            # Update UI on error
-            self.statusText.Text = "Error handling view change: " + str(ex)
 
     def on_view_activated(self, sender, args):
         """Handle Revit view activated events (fires AFTER the view changes)."""
@@ -2444,8 +2288,6 @@ class RevitColorizerWindow(WPFWindow):
             self.apply_colors_event.Raise()
         except Exception as ex:
             self.logger.error("Error handling view activation: %s", ex)
-            # Update UI on error
-            self.statusText.Text = "Error handling view change: " + str(ex)
     
 
     # Helper methods to get selected items
@@ -2701,16 +2543,41 @@ class RevitColorizerWindow(WPFWindow):
 
     def ValueCheckbox_Changed(self, sender, args):
         """Handle checkbox state changes in the values list"""
+        if getattr(self, '_is_updating_selection', False):
+            return
+            
         try:
-            # Skip if checkbox interaction is disabled
+            self._is_updating_selection = True
+# Skip if checkbox interaction is disabled
             if not self.showElementsCheckbox.IsChecked:
                 return
+            
+            # If the clicked item is part of a multi-selection, sync other selected items
+            clicked_item = sender.DataContext
+            if clicked_item and hasattr(self, 'valuesListBox') and self.valuesListBox.SelectedItems.Count > 1:
+                if self.valuesListBox.SelectedItems.Contains(clicked_item):
+                    target_state = sender.IsChecked
+                    
+                    # Temporarily disable this handler to avoid recursion
+                    original_handler = self.ValueCheckbox_Changed
+                    self.ValueCheckbox_Changed = None
+                    
+                    try:
+                        for item in self.valuesListBox.SelectedItems:
+                            if item != clicked_item:
+                                item.IsChecked = target_state
+                        
+                        # Refresh UI
+                        self.valuesListBox.Items.Refresh()
+                    finally:
+                        self.ValueCheckbox_Changed = original_handler
                 
             # Select elements based on all checked checkboxes
             self.select_checked_elements()
         except Exception as ex:
-            self.statusText.Text = "Error handling checkbox change: " + str(ex)
             self.logger.error("Checkbox change error: %s", str(ex))
+        finally:
+            self._is_updating_selection = False
     
     def select_checked_elements(self):
         """Select all elements that have their checkboxes checked"""
@@ -2786,13 +2653,8 @@ if __name__ == "__main__":
     if active_view:
         # Start the UI
         try:
-            
             colorizer_ui = RevitColorizerWindow()
-            
-            
-            
             colorizer_ui.Show()
-            
         except Exception as ex:
             logger.error("Error showing window: {}".format(str(ex)))
             raise

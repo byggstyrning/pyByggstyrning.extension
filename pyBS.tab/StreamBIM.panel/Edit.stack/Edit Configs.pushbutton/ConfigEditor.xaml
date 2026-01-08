@@ -1,12 +1,12 @@
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="StreamBIM Configuration Editor" Width="900" Height="600" WindowStartupLocation="CenterScreen">
+        Title="StreamBIM Configuration Editor" Width="900" Height="600" WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource WindowBackgroundBrush}">
     <!-- Styles will be loaded programmatically -->
     <Grid Margin="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         
         <!-- Busy Indicator Overlay -->
@@ -18,8 +18,10 @@
         </Border>
 
         <StackPanel Grid.Row="0">
-            <TextBlock Text="StreamBIM Configuration Editor" FontSize="16" FontWeight="Bold" Margin="0,0,0,10"/>
-            <TextBlock Text="Edit and run checklist configurations" Margin="0,0,0,15"/>
+            <TextBlock Text="StreamBIM Configuration Editor" FontSize="16" FontWeight="Bold" Margin="0,0,0,10"
+                      Style="{DynamicResource HeaderTextBlockStyle}"/>
+            <TextBlock Text="Edit and run checklist configurations" Margin="0,0,0,15"
+                      Style="{DynamicResource BodyTextBlockStyle}"/>
         </StackPanel>
 
         <!-- Main Content with TabControl -->
@@ -33,7 +35,8 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <ListView x:Name="configsListView" Grid.Row="0" Margin="0,0,0,10" SelectionMode="Single">
+                    <ListView x:Name="configsListView" Grid.Row="0" Margin="0,0,0,10" SelectionMode="Single"
+                             Style="{DynamicResource StandardListBoxStyle}">
                         <ListView.View>
                             <GridView>
                                 <GridViewColumn Header="Checklist" DisplayMemberBinding="{Binding ChecklistName}" Width="150"/>
@@ -74,14 +77,17 @@
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
 
-                    <TextBlock Text="Checklist:" Grid.Row="0" Grid.Column="0" Margin="0,10,0,5"/>
-                    <TextBlock x:Name="checklistNameTextBlock" Grid.Row="0" Grid.Column="1" Margin="0,10,0,5" TextWrapping="Wrap"/>
+                    <TextBlock Text="Checklist:" Grid.Row="0" Grid.Column="0" Margin="0,10,0,5" Style="{DynamicResource LabelTextBlockStyle}"/>
+                    <TextBlock x:Name="checklistNameTextBlock" Grid.Row="0" Grid.Column="1" Margin="0,10,0,5" TextWrapping="Wrap"
+                              Style="{DynamicResource SecondaryTextBlockStyle}"/>
                     
-                    <TextBlock Text="StreamBIM Property:" Grid.Row="1" Grid.Column="0" Margin="0,10,0,5"/>
-                    <TextBlock x:Name="streambimPropertyTextBlock" Grid.Row="1" Grid.Column="1" Margin="0,10,0,5" TextWrapping="Wrap"/>
+                    <TextBlock Text="StreamBIM Property:" Grid.Row="1" Grid.Column="0" Margin="0,10,0,5" Style="{DynamicResource LabelTextBlockStyle}"/>
+                    <TextBlock x:Name="streambimPropertyTextBlock" Grid.Row="1" Grid.Column="1" Margin="0,10,0,5" TextWrapping="Wrap"
+                              Style="{DynamicResource SecondaryTextBlockStyle}"/>
                     
-                    <TextBlock Text="Revit Parameter:" Grid.Row="2" Grid.Column="0" Margin="0,10,0,5"/>
-                    <TextBlock x:Name="revitParameterTextBlock" Grid.Row="2" Grid.Column="1" Margin="0,10,0,5" TextWrapping="Wrap"/>
+                    <TextBlock Text="Revit Parameter:" Grid.Row="2" Grid.Column="0" Margin="0,10,0,5" Style="{DynamicResource LabelTextBlockStyle}"/>
+                    <TextBlock x:Name="revitParameterTextBlock" Grid.Row="2" Grid.Column="1" Margin="0,10,0,5" TextWrapping="Wrap"
+                              Style="{DynamicResource SecondaryTextBlockStyle}"/>
                     
                     <CheckBox x:Name="enableMappingCheckBox" Content="Enable Parameter Mapping" Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,15,0,5" IsChecked="False" />
                     
@@ -92,7 +98,8 @@
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
                         
-                        <TextBlock Text="Parameter Mapping" Grid.Row="0" FontWeight="Bold" Margin="0,10,0,5"/>
+                        <TextBlock Text="Parameter Mapping" Grid.Row="0" FontWeight="Bold" Margin="0,10,0,5"
+                                  Style="{DynamicResource SubheaderTextBlockStyle}"/>
                         
                         <DataGrid x:Name="mappingDataGrid" Grid.Row="1" AutoGenerateColumns="False" Margin="0,5,0,5" 
                                   CanUserAddRows="True" CanUserDeleteRows="True">
@@ -120,12 +127,5 @@
                 </Grid>
             </TabItem>
         </TabControl>
-        
-        <!-- Status Bar -->
-        <StatusBar Grid.Row="2">
-            <StatusBarItem>
-                <TextBlock x:Name="statusTextBlock" Text="Ready" />
-            </StatusBarItem>
-        </StatusBar>
     </Grid>
 </Window>

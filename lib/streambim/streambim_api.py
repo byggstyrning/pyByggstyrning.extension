@@ -58,7 +58,6 @@ def get_or_create_settings_storage(doc):
         return None
         
     try:
-        logger.debug("Searching for StreamBIM settings storage...")
         data_storages = FilteredElementCollector(doc)\
             .OfClass(ExtensibleStorage.DataStorage)\
             .ToElements()
@@ -69,17 +68,13 @@ def get_or_create_settings_storage(doc):
                 # Check if this storage has our schema
                 entity = ds.GetEntity(StreamBIMSettingsSchema.schema)
                 if entity.IsValid():
-                    logger.debug("Found existing StreamBIM settings storage")
                     return ds
             except Exception as e:
-                logger.debug("Error checking storage entity: {}".format(str(e)))
                 continue
         
-        logger.debug("No existing StreamBIM settings storage found, creating new one...")
         # If not found, create a new one
         with revit.Transaction("Create StreamBIM Settings Storage", doc):
             new_storage = ExtensibleStorage.DataStorage.Create(doc)
-            logger.debug("Created new StreamBIM settings storage")
             return new_storage
             
     except Exception as e:
@@ -102,19 +97,16 @@ def load_configs_with_pickle(doc):
         # Load configurations
         schema = StreamBIMSettingsSchema(storage)
         if not schema.is_valid:
-            logger.debug("Invalid StreamBIM schema")
             return []
             
         pickled_configs = schema.get("pickled_configs")
         if not pickled_configs:
-            logger.debug("No configurations found in storage")
             return []
             
         # Decode and unpickle
         try:
             decoded_data = base64.b64decode(pickled_configs)
             configs = pickle.loads(decoded_data)
-            logger.debug("Successfully loaded {} configurations".format(len(configs)))
             return configs
         except Exception as e:
             logger.error("Error unpickling configurations: {}".format(str(e)))
@@ -154,7 +146,6 @@ def save_configs_with_pickle(doc, config_dicts):
                     # Save configurations
                     entity.set("pickled_configs", encoded_data)
                     
-            logger.debug("Saved {} configurations to StreamBIM storage".format(len(config_dicts)))
             return True
         except Exception as e:
             logger.error("Error pickling configurations: {}".format(str(e)))
@@ -170,7 +161,6 @@ def get_saved_project_id(doc):
         return None
         
     try:
-        logger.debug("Searching for StreamBIM settings storage...")
         data_storages = FilteredElementCollector(doc)\
             .OfClass(ExtensibleStorage.DataStorage)\
             .ToElements()
@@ -184,13 +174,10 @@ def get_saved_project_id(doc):
                     if schema.is_valid:
                         project_id = schema.get("project_id")
                         if project_id:
-                            logger.debug("Found saved project ID: {0}".format(project_id))
                             return project_id
             except Exception as e:
-                logger.debug("Error checking storage entity: {0}".format(str(e)))
                 continue
         
-        logger.debug("No saved project ID found")
         return None
     except Exception as e:
         logger.error("Error in get_saved_project_id: {0}".format(str(e)))
@@ -222,7 +209,6 @@ class StreamBIMClient:
                     self.accessToken = data.get('accessToken')
                     self.username = data.get('username')
         except Exception as e:
-            print("Error loading tokens: {}".format(str(e)))
             self.idToken = None
             self.accessToken = None
             self.username = None
@@ -242,7 +228,7 @@ class StreamBIMClient:
                     'username': self.username
                 }, f)
         except Exception as e:
-            print("Error saving tokens: {}".format(str(e)))
+            pass
     
     def clear_tokens(self):
         """Clear saved tokens."""
@@ -253,7 +239,7 @@ class StreamBIMClient:
             if os.path.exists(self.token_file):
                 os.remove(self.token_file)
         except Exception as e:
-            print("Error clearing tokens: {}".format(str(e)))
+            pass
         
     def login(self, username, password):
         """Login to StreamBIM and get authentication token.
@@ -482,11 +468,9 @@ class StreamBIMClient:
                 error_message = "Authentication failed. Please log in again."
                 
             self.last_error = error_message
-            print("Error getting projects: {}".format(error_message))
             return []
         except Exception as e:
             self.last_error = str(e)
-            print("Error getting projects: {}".format(str(e)))
             return []
     
     def set_current_project(self, project_id):
@@ -521,11 +505,9 @@ class StreamBIMClient:
                 error_message = "Authentication failed. Please log in again."
                 
             self.last_error = error_message
-            print("Error getting checklists: {}".format(error_message))
             return []
         except Exception as e:
             self.last_error = str(e)
-            print("Error getting checklists: {}".format(str(e)))
             return []
     
     def get_checklist_items(self, checklist_id, checklist_item=None, limit=10000):
@@ -554,8 +536,6 @@ class StreamBIMClient:
                 "filename": ""
             }
 
-            logger.debug("Query: {}".format(query))
-
             # Add checklist item filter if specified
             if checklist_item:
                 # Convert checklist_item to UTF-8 if it's not already
@@ -567,21 +547,15 @@ class StreamBIMClient:
                     "properties": {checklist_item: {"$exists": True}}
                 })
 
-            logger.debug("Query: {}".format(query))
-            
             # Convert the entire query to UTF-8 JSON
             query_json = json.dumps(query, ensure_ascii=False).encode('utf-8')
             
             # Encode the query as a base64 string
             encoded_query = base64.b64encode(query_json)
-
-            logger.debug("Encoded query: {}".format(encoded_query))
             
             url = "{}/project-{}/api/v1/checklists/export/json/?query={}".format(
                 self.base_url, self.current_project, encoded_query
             )
-
-            logger.debug("URL: {}".format(url))
             
             req = urllib2.Request(url)
             req.add_header('Authorization', 'Bearer {}'.format(self.idToken))
@@ -593,8 +567,6 @@ class StreamBIMClient:
             # Decode UTF-8 strings in the response
             result = self._decode_utf8(result)
 
-            logger.debug("Result: {}".format(result))
-            
             return result.get('data', [])
         except urllib2.HTTPError as e:
             error_message = "HTTP Error: {} - {}".format(e.code, e.reason)
@@ -604,15 +576,12 @@ class StreamBIMClient:
                 error_message = "Server error. The query might be malformed: {}".format(e.read())
                 
             self.last_error = error_message
-            print("Error getting checklist items: {}".format(error_message))
             return []
         except UnicodeError as e:
             self.last_error = "Unicode error: {}".format(str(e))
-            print("Unicode error in checklist items: {}".format(str(e)))
             return []
         except Exception as e:
             self.last_error = str(e)
-            print("Error getting checklist items: {}".format(str(e)))
             return []
     
     def create_ifc_search(self, checklist_id, building_id, checklist_value):
@@ -658,7 +627,6 @@ class StreamBIMClient:
             
             search_id = result.get('searchId')
             if search_id:
-                logger.debug("Created IFC search with searchId: {}".format(search_id))
                 return str(search_id)
             else:
                 self.last_error = "No searchId in response"
@@ -709,7 +677,6 @@ class StreamBIMClient:
             result = self._decode_utf8(result)
             
             data = result.get('data', [])
-            logger.debug("Retrieved {} IFC object refs for searchId: {}".format(len(data), search_id))
             return data
             
         except urllib2.HTTPError as e:
@@ -746,15 +713,12 @@ class StreamBIMClient:
         # Check cache first
         cache_key = (checklist_id, building_id, group_key)
         if cache_key in self._group_key_cache:
-            logger.debug("Using cached IFC GUIDs for group key: {}".format(group_key))
             return self._group_key_cache[cache_key]
         
         # Resolve via API
-        logger.debug("Resolving group key to IFC GUIDs: {}".format(group_key))
         search_id = self.create_ifc_search(checklist_id, building_id, group_key)
         
         if not search_id:
-            logger.warning("Failed to create IFC search for group key: {}".format(group_key))
             self._group_key_cache[cache_key] = []
             return []
         
@@ -770,6 +734,5 @@ class StreamBIMClient:
         
         # Cache the result
         self._group_key_cache[cache_key] = ifc_guids
-        logger.debug("Resolved group key '{}' to {} IFC GUIDs".format(group_key, len(ifc_guids)))
         
         return ifc_guids 

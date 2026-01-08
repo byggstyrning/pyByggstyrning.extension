@@ -8,6 +8,7 @@ parameters from spatial elements to contained elements.
 __title__ = "Edit Spatial\nMappings"
 __author__ = "Byggstyrning AB"
 __doc__ = "Configure spatial parameter mappings for 3D Zones, Rooms and Areas"
+__highlight__ = 'new'
 
 # Import standard libraries
 import sys
@@ -40,7 +41,7 @@ extension_dir = op.dirname(tab_dir)
 lib_path = op.join(extension_dir, 'lib')
 
 if lib_path not in sys.path:
-    sys.path.append(lib_path)
+    sys.path.insert(0, lib_path)
 
 # Initialize logger
 logger = script.get_logger()
@@ -295,11 +296,12 @@ class ParameterSelectorDialog(forms.WPFWindow):
             initial_source: Optional initial source parameter name to preselect
             initial_target: Optional initial target parameter name to preselect
         """
+        # Load styles BEFORE window initialization
+        from styles import ensure_styles_loaded
+        ensure_styles_loaded()
+        
         xaml_path = op.join(pushbutton_dir, 'ParameterSelector.xaml')
         forms.WPFWindow.__init__(self, xaml_path)
-        
-        # Load common styles programmatically (same as Zone3DConfigEditorUI)
-        self.load_styles()
         
         self.selected_source = None
         self.selected_target = None
@@ -766,65 +768,7 @@ def get_source_element_instance_properties(doc, source_category, use_linked_docu
 # Module-level cache for styles ResourceDictionary
 _styles_dict_cache = None
 
-def ensure_styles_loaded():
-    """Ensure CommonStyles are loaded into Application.Resources before XAML parsing."""
-    global _styles_dict_cache
-    
-    try:
-        from System.Windows import Application
-        from System.Windows.Markup import XamlReader
-        from System.IO import File
-        
-        # Check if styles are already loaded in Application.Resources
-        if Application.Current is not None and Application.Current.Resources is not None:
-            try:
-                test_resource = Application.Current.Resources['EnhancedDataGridStyle']
-                if test_resource is not None:
-                    return  # Already loaded
-            except:
-                pass
-        
-        # Load styles if not cached
-        if _styles_dict_cache is None:
-            # Calculate extension directory correctly
-            # tab_dir is already the extension root (pyByggstyrning.extension)
-            styles_path = op.join(tab_dir, 'lib', 'styles', 'CommonStyles.xaml')
-            
-            if op.exists(styles_path):
-                # Read and parse XAML
-                xaml_content = File.ReadAllText(styles_path)
-                _styles_dict_cache = XamlReader.Parse(xaml_content)
-                logger.debug("Loaded styles from: {}".format(styles_path))
-            else:
-                logger.warning("CommonStyles.xaml not found at: {}".format(styles_path))
-                return
-        
-        # Ensure Application.Current exists
-        if Application.Current is None:
-            from System.Windows import Application as App
-            app = App()
-        
-        # Merge into Application.Resources
-        if Application.Current.Resources is None:
-            from System.Windows import ResourceDictionary
-            Application.Current.Resources = ResourceDictionary()
-        
-        # Merge styles using MergedDictionaries (proper WPF way)
-        try:
-            Application.Current.Resources.MergedDictionaries.Add(_styles_dict_cache)
-        except:
-            # Fallback: try to copy resources manually if MergedDictionaries fails
-            try:
-                for key in _styles_dict_cache.Keys:
-                    try:
-                        if Application.Current.Resources[key] is None:
-                            pass
-                    except:
-                        Application.Current.Resources[key] = _styles_dict_cache[key]
-            except Exception as e:
-                logger.warning("Could not merge styles dictionary: {}".format(str(e)))
-    except Exception as e:
-        logger.warning("Could not load styles into Application.Resources: {}".format(str(e)))
+# ensure_styles_loaded() is now imported from lib.styles
 
 
 class Zone3DConfigEditorUI(forms.WPFWindow):
@@ -833,14 +777,12 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
     def __init__(self):
         """Initialize the Configuration Editor UI."""
         # Load styles BEFORE window initialization
+        from styles import ensure_styles_loaded
         ensure_styles_loaded()
         
         # Initialize WPF window
         xaml_path = op.join(pushbutton_dir, 'Zone3DConfigEditor.xaml')
         forms.WPFWindow.__init__(self, xaml_path)
-        
-        # Also load styles into window resources as fallback
-        self.load_styles()
         
         # Initialize data collections
         self.configs = ObservableCollection[object]()
@@ -1008,7 +950,27 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         # Clear existing inlines
         sender.Inlines.Clear()
         
-        # Create formatted text with blue bold arrows
+        # Get arrow brush from resources (adapts to dark/light mode)
+        arrow_brush = None
+        try:
+            # Try to get ArrowBrush from window resources first
+            if hasattr(self, 'Resources') and self.Resources and 'ArrowBrush' in self.Resources:
+                arrow_brush = self.Resources['ArrowBrush']
+            # If not found, try Application resources
+            else:
+                from System.Windows import Application
+                if Application.Current is not None and Application.Current.Resources is not None:
+                    app_resources = Application.Current.Resources
+                    if 'ArrowBrush' in app_resources:
+                        arrow_brush = app_resources['ArrowBrush']
+        except Exception as e:
+            logger.debug("Could not load ArrowBrush from resources: {}".format(str(e)))
+        
+        # Fallback to Brushes.Blue if resource not found
+        if arrow_brush is None:
+            arrow_brush = Brushes.Blue
+        
+        # Create formatted text with styled arrows
         for i, (src, tgt) in enumerate(zip(config_item.source_params, config_item.target_params)):
             if i > 0:
                 sender.Inlines.Add(LineBreak())
@@ -1016,9 +978,9 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
             # Add source parameter
             sender.Inlines.Add(Run(src))
             
-            # Add blue bold arrow
+            # Add styled bold arrow (light blue in dark mode, blue in light mode)
             arrow_run = Run(" -> ")
-            arrow_run.Foreground = Brushes.Blue
+            arrow_run.Foreground = arrow_brush
             arrow_run.FontWeight = FontWeights.Bold
             sender.Inlines.Add(arrow_run)
             

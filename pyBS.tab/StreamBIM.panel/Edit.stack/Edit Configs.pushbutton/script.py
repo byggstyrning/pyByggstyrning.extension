@@ -26,7 +26,7 @@ extension_dir = op.dirname(tab_dir)
 lib_path = op.join(extension_dir, 'lib')
 
 if lib_path not in sys.path:
-    sys.path.append(lib_path)
+    sys.path.insert(0, lib_path)
 
 # Import the streambim_api module
 from streambim import streambim_api
@@ -146,64 +146,7 @@ class MappingEntry(object):
     def RevitValue(self, value):
         self._revit_value = value
 
-# Helper function to load styles into Application.Resources before window creation
-def ensure_styles_loaded():
-    """Ensure CommonStyles are loaded into Application.Resources before XAML parsing."""
-    try:
-        from System.Windows import Application
-        from System.Windows.Markup import XamlReader
-        from System.IO import File
-        import os.path as op
-        
-        # Check if styles are already loaded
-        if Application.Current is not None and Application.Current.Resources is not None:
-            try:
-                # Try to access the resource to see if it exists
-                test_resource = Application.Current.Resources['BusyOverlayStyle']
-                if test_resource is not None:
-                    return  # Already loaded
-            except:
-                pass  # Resource doesn't exist, need to load it
-        
-        # Calculate styles path
-        script_dir = op.dirname(__file__)
-        stack_dir = op.dirname(script_dir)
-        panel_dir = op.dirname(stack_dir)
-        tab_dir = op.dirname(panel_dir)
-        extension_dir = op.dirname(tab_dir)
-        styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
-        
-        if op.exists(styles_path):
-            # Read and parse XAML
-            xaml_content = File.ReadAllText(styles_path)
-            styles_dict = XamlReader.Parse(xaml_content)
-            
-            # Ensure Application.Current exists
-            if Application.Current is None:
-                from System.Windows import Application as App
-                app = App()
-            
-            # Merge into Application.Resources
-            if Application.Current.Resources is None:
-                from System.Windows import ResourceDictionary
-                Application.Current.Resources = ResourceDictionary()
-            
-            # Merge styles using MergedDictionaries (proper WPF way)
-            try:
-                Application.Current.Resources.MergedDictionaries.Add(styles_dict)
-            except:
-                # Fallback: try to copy resources manually if MergedDictionaries fails
-                try:
-                    for key in styles_dict.Keys:
-                        try:
-                            if Application.Current.Resources[key] is None:
-                                pass
-                        except:
-                            Application.Current.Resources[key] = styles_dict[key]
-                except:
-                    logger.warning("Could not merge styles dictionary")
-    except Exception as e:
-        logger.warning("Could not pre-load styles into Application.Resources: {}".format(str(e)))
+# ensure_styles_loaded() is now imported from lib.styles
 
 class ConfigEditorUI(forms.WPFWindow):
     """Configuration Editor UI implementation."""
@@ -211,13 +154,11 @@ class ConfigEditorUI(forms.WPFWindow):
     def __init__(self):
         """Initialize the Configuration Editor UI."""
         # Load styles into Application.Resources BEFORE creating window
+        from styles import ensure_styles_loaded
         ensure_styles_loaded()
         
         # Initialize WPF window
         forms.WPFWindow.__init__(self, 'ConfigEditor.xaml')
-        
-        # Load styles ResourceDictionary (for window-specific resources if needed)
-        self.load_styles()
         
         # Initialize StreamBIM API client
         self.streambim_client = streambim_api.StreamBIMClient()
@@ -290,12 +231,10 @@ class ConfigEditorUI(forms.WPFWindow):
                     # Try to merge the entire dictionary
                     self.Resources.MergedDictionaries.Add(styles_dict)
                     
-                logger.debug("Loaded styles from: {}".format(styles_path))
         except Exception as e:
             logger.warning("Could not load styles: {}. Using default styles.".format(str(e)))
             import traceback
-            logger.debug("Style loading error details: {}".format(traceback.format_exc()))
-    
+
     def set_busy(self, is_busy, message="Loading..."):
         """Show or hide the busy overlay indicator."""
         try:
@@ -305,7 +244,7 @@ class ConfigEditorUI(forms.WPFWindow):
             else:
                 self.busyOverlay.Visibility = Visibility.Collapsed
         except Exception as e:
-            logger.debug("Error setting busy indicator: {}".format(str(e)))
+            pass
     
     def try_automatic_login(self):
         """Attempt to automatically log in using saved tokens."""
@@ -314,17 +253,13 @@ class ConfigEditorUI(forms.WPFWindow):
         
         # Check if token exists
         if self.streambim_client.idToken:
-            self.update_status("Found saved StreamBIM login...")
-            
             # Try to load saved project ID
             saved_project_id = get_saved_project_id(revit.doc)
             if saved_project_id:
                 self.streambim_client.set_current_project(saved_project_id)
-                self.update_status("Using saved project ID: {}".format(saved_project_id))
             
             return True
         else:
-            self.update_status("No saved StreamBIM login found. Please log in using the ChecklistImporter first.")
             return False
         
     def load_configurations(self):
@@ -335,11 +270,9 @@ class ConfigEditorUI(forms.WPFWindow):
         try:
             # Clear existing configurations
             self.configs.Clear()
-            logger.debug("Cleared existing configurations")
             
             # Load configurations from consolidated storage
             loaded_configs = load_configs_with_pickle(revit.doc)
-            logger.debug("Loaded {} configurations from storage".format(len(loaded_configs)))
             
             if loaded_configs:
                 # Add them to the observable collection
@@ -354,14 +287,6 @@ class ConfigEditorUI(forms.WPFWindow):
                         mapping_config=config.get('mapping_config')
                     )
                     self.configs.Add(config_item)
-                    logger.debug("Added config: {} -> {}".format(
-                        config_item.streambim_property, 
-                        config_item.revit_parameter
-                    ))
-                
-                self.update_status("Loaded {} configurations".format(len(self.configs)))
-            else:
-                self.update_status("No configurations found")
                 
             # Force the UI to refresh the configurations list
             self.refresh_ui()
@@ -370,7 +295,6 @@ class ConfigEditorUI(forms.WPFWindow):
             logger.error("Error loading configurations: {}".format(str(e)))
             import traceback
             logger.error("Stack trace: {}".format(traceback.format_exc()))
-            self.update_status("Error loading configurations: {}".format(str(e)))
         finally:
             # Hide busy indicator
             self.set_busy(False)
@@ -397,7 +321,6 @@ class ConfigEditorUI(forms.WPFWindow):
             # Ask user to log in
             login_result = self.show_login_dialog()
             if not login_result:
-                self.update_status("Login cancelled or failed")
                 return
                 
         # Set the project ID in the API client
@@ -410,7 +333,6 @@ class ConfigEditorUI(forms.WPFWindow):
     def run_selected_button_click(self, sender, args):
         """Process selected configs when the Run Selected button is clicked."""
         if not self.configsListView.SelectedItems or self.configsListView.SelectedItems.Count == 0:
-            self.update_status("No configurations selected")
             return
             
         # Confirm before proceeding
@@ -433,7 +355,6 @@ class ConfigEditorUI(forms.WPFWindow):
             # Ask user to log in
             login_result = self.show_login_dialog()
             if not login_result:
-                self.update_status("Login cancelled or failed")
                 return
                 
         # Set the project ID in the API client
@@ -458,11 +379,8 @@ class ConfigEditorUI(forms.WPFWindow):
             password = login_ui.password_tb.Password
             
             if not username or not password:
-                self.update_status("Username and password are required")
                 return False
                 
-            self.update_status("Logging in to StreamBIM...")
-            
             # Login to StreamBIM
             login_result = self.api_client.login(username, password)
             
@@ -471,7 +389,6 @@ class ConfigEditorUI(forms.WPFWindow):
             if isinstance(login_result, dict):
                 if login_result.get('success'):
                     login_success = True
-                    self.update_status("Logged in successfully")
                 elif login_result.get('requires_mfa'):
                     # MFA required - show message
                     MessageBox.Show(
@@ -479,17 +396,13 @@ class ConfigEditorUI(forms.WPFWindow):
                         "MFA Required",
                         MessageBoxButton.OK
                     )
-                    self.update_status("MFA required. Please use Checklist Importer tool.")
                     return False
                 else:
-                    self.update_status("Login failed: {}".format(self.api_client.last_error))
                     return False
             elif login_result:
                 # Legacy boolean success
                 login_success = True
-                self.update_status("Logged in successfully")
             else:
-                self.update_status("Login failed: {}".format(self.api_client.last_error))
                 return False
             
             if login_success:
@@ -498,7 +411,6 @@ class ConfigEditorUI(forms.WPFWindow):
                 projects = self.api_client.get_projects()
                 
                 if not projects or len(projects) == 0:
-                    self.update_status("No projects found")
                     return False
                 
                 # Use the first project if none is specified
@@ -508,17 +420,11 @@ class ConfigEditorUI(forms.WPFWindow):
                     
                     # Save the project ID
                     self.save_project_id(first_project_id)
-                    
-                    self.update_status("Using project: {}".format(
-                        projects[0].get('attributes', {}).get('name', 'Unknown')
-                    ))
                 
                 return True
             else:
-                self.update_status("Login failed: {}".format(self.api_client.last_error))
                 return False
         else:
-            self.update_status("Login cancelled")
             return False
 
     def save_project_id(self, project_id):
@@ -540,7 +446,6 @@ class ConfigEditorUI(forms.WPFWindow):
                 with revit.Transaction("Save StreamBIM Project ID", revit.doc):
                     with StreamBIMSettingsSchema(data_storage) as entity:
                         entity.set("project_id", project_id)
-                self.update_status("Saved project ID: {}".format(project_id))
         except Exception as e:
             logger.error("Error saving project ID: {}".format(str(e)))
 
@@ -550,9 +455,6 @@ class ConfigEditorUI(forms.WPFWindow):
         # Disable buttons during processing
         self.runAllButton.IsEnabled = False
         self.runSelectedButton.IsEnabled = False
-        
-        logger.debug("Starting batch import process for {} configurations".format(len(configs)))
-        self.update_status("Starting batch import process...")
         
         # Show busy indicator during batch import
         self.set_busy(True, "Processing batch import...")
@@ -568,18 +470,6 @@ class ConfigEditorUI(forms.WPFWindow):
             
             # Process each configuration separately
             for i, config in enumerate(configs):
-                logger.debug("==== Processing configuration {}/{}: {} ====".format(
-                    i + 1, len(configs), config.DisplayName
-                ))
-                logger.debug("Checklist: {} (ID: {})".format(config.ChecklistName, config.checklist_id))
-                logger.debug("Property: {} -> Parameter: {}".format(config.streambim_property, config.revit_parameter))
-                logger.debug("Mapping enabled: {}".format(config.mapping_enabled))
-                
-                # Update status
-                self.update_status("Processing configuration {}/{}: {}".format(
-                    i + 1, len(configs), config.DisplayName
-                ))
-                
                 # Update main progress bar
                 self.mainProgressBar.Value = i
                 
@@ -588,8 +478,6 @@ class ConfigEditorUI(forms.WPFWindow):
                 
                 # Skip configurations without checklist ID
                 if not config.checklist_id:
-                    logger.debug("Skipping configuration - no checklist ID")
-                    self.update_status("Skipping configuration with no checklist ID: {}".format(config.DisplayName))
                     config.elements_processed = 0
                     config.elements_updated = 0
                     continue
@@ -605,11 +493,6 @@ class ConfigEditorUI(forms.WPFWindow):
             # Complete the main progress bar
             self.mainProgressBar.Value = len(configs)
             
-            logger.debug("Batch import completed. Processed {} configurations. Updated {}/{} elements.".format(
-                len(configs), total_updated, total_processed))
-            self.update_status("Batch import completed. Updated {}/{} elements.".format(
-                total_updated, total_processed))
-            
             MessageBox.Show(
                 "Batch import completed.\n\nProcessed {} configurations.\nUpdated {} out of {} elements.".format(
                     len(configs), total_updated, total_processed),
@@ -622,8 +505,6 @@ class ConfigEditorUI(forms.WPFWindow):
             # Log detailed stack trace
             import traceback
             logger.error("Stack trace: {}".format(traceback.format_exc()))
-            logger.debug("Batch import failed with exception")
-            self.update_status("Error: {}".format(str(e)))
             
             # Show error message box
             MessageBox.Show(
@@ -633,7 +514,6 @@ class ConfigEditorUI(forms.WPFWindow):
             )
             
         finally:
-            logger.debug("Batch import process completed, resetting UI state")
             # Hide busy indicator
             self.set_busy(False)
             # Re-enable buttons
@@ -669,7 +549,7 @@ class ConfigEditorUI(forms.WPFWindow):
             )
         except Exception as e:
             # Log any errors but continue execution
-            logger.debug("Error processing UI events: {}".format(str(e)))
+            pass
     
     def get_all_elements_with_ifc_guid(self):
         """Get all elements with an IfcGUID parameter."""
@@ -698,8 +578,8 @@ class ConfigEditorUI(forms.WPFWindow):
     
     def update_status(self, message):
         """Update the status display."""
-        self.statusTextBlock.Text = message
-        self.process_ui_events()
+        # Status bar removed from UI - method kept for compatibility but does nothing
+        pass
 
     def get_property_value(self, checklist_item, property_name):
         """Get property value from checklist item.
@@ -740,7 +620,6 @@ class ConfigEditorUI(forms.WPFWindow):
                         param.Set(int_value)
                         return True
                 except (ValueError, TypeError):
-                    logger.debug("Could not convert '{}' to integer".format(value))
                     return False
                     
             elif storage_type == StorageType.Double:
@@ -751,7 +630,6 @@ class ConfigEditorUI(forms.WPFWindow):
                         param.Set(double_value)
                         return True
                 except (ValueError, TypeError):
-                    logger.debug("Could not convert '{}' to double".format(value))
                     return False
                     
             elif storage_type == StorageType.ElementId:
@@ -763,7 +641,6 @@ class ConfigEditorUI(forms.WPFWindow):
                         param.Set(element_id)
                         return True
                 except (ValueError, TypeError):
-                    logger.debug("Could not convert '{}' to ElementId".format(value))
                     return False
                     
             return False
@@ -781,19 +658,11 @@ class ConfigEditorUI(forms.WPFWindow):
             # Get checklist items from StreamBIM
             try:
                 # Get checklist items with proper error handling
-                logger.debug("Retrieving checklist items for checklist ID: {}".format(config.checklist_id))
-                logger.debug("Streambim property: {}".format(config.streambim_property))
                 checklist_items = self.api_client.get_checklist_items(config.checklist_id, config.streambim_property, limit=0)
                 if not checklist_items:
-                    logger.debug("No checklist items found for checklist ID: {}".format(config.checklist_id))
-                    self.update_status("No checklist items found for checklist ID: {}".format(config.checklist_id))
                     config.elements_processed = 0
                     config.elements_updated = 0
                     return (0, 0)
-                    
-                logger.debug("Retrieved {} checklist items for {}".format(len(checklist_items), config.ChecklistName))
-                self.update_status("Retrieved {} checklist items for {}".format(
-                    len(checklist_items), config.ChecklistName))
                 
             except Exception as e:
                 logger.error("Error retrieving checklist items: {}".format(str(e)))
@@ -805,19 +674,16 @@ class ConfigEditorUI(forms.WPFWindow):
             value_mapping = {}
             if config.mapping_enabled and config.mapping_config:
                 try:
-                    logger.debug("Loading value mappings...")
                     mapping_data = json.loads(config.mapping_config)
                     for mapping in mapping_data:
                         checklist_value = mapping.get('ChecklistValue')
                         revit_value = mapping.get('RevitValue')
                         if checklist_value and revit_value:
                             value_mapping[checklist_value] = revit_value
-                    logger.debug("Loaded {} value mappings".format(len(value_mapping)))
                 except Exception as e:
                     logger.error("Error parsing mapping config: {}".format(str(e)))
             
             # Build IFC GUID lookup dictionary once - OPTIMIZATION
-            logger.debug("Building IFC GUID element lookup dictionary...")
             ifc_guid_dict = {}
             
             # Get all elements in the document
@@ -844,15 +710,11 @@ class ConfigEditorUI(forms.WPFWindow):
                 except:
                     continue
             
-            logger.debug("Found {} elements with IFC GUIDs".format(ifc_guid_count))
-            
             # Start a transaction for this configuration
             t = Transaction(revit.doc, "Batch Import: " + config.DisplayName)
             t.Start()
             
             try:
-                logger.debug("Starting element processing")
-                
                 # Set an estimated number of elements for the progress tracking
                 config.elements_total = len(checklist_items)
                 self.update_config_progress(config)
@@ -927,15 +789,12 @@ class ConfigEditorUI(forms.WPFWindow):
                 config.elements_processed = processed_count
                 config.elements_updated = updated_count
                 self.update_config_progress(config)
-                logger.debug("Completed configuration {}/{}: {} - Processed: {}, Updated: {}".format(
-                    config_index + 1, total_configs, config.DisplayName, processed_count, updated_count))
                 
             except Exception as e:
                 # Roll back the transaction if there was an error
                 if t.HasStarted():
                     t.RollBack()
                 logger.error("Error processing configuration: {}".format(str(e)))
-                self.update_status("Error processing configuration: {}".format(str(e)))
                 
         except Exception as e:
             logger.error("Error in process_single_configuration: {}".format(str(e)))
@@ -952,7 +811,6 @@ class ConfigEditorUI(forms.WPFWindow):
         selected_config = self.configsListView.SelectedItem
         
         if not selected_config:
-            self.update_status("No configuration selected")
             return
         
         # Store the current configuration
@@ -981,12 +839,10 @@ class ConfigEditorUI(forms.WPFWindow):
         # Update UI
         self.editConfigTab.IsEnabled = True
         self.tabControl.SelectedItem = self.editConfigTab
-        self.update_status("Editing configuration: {}".format(selected_config.DisplayName))
     
     def save_button_click(self, sender, args):
         """Handle save button click."""
         if not self.current_config:
-            self.update_status("No configuration to save")
             return
         
         # Collect mapping data
@@ -1034,21 +890,14 @@ class ConfigEditorUI(forms.WPFWindow):
                 # Reload configurations to refresh the list
                 self.load_configurations()
                 
-                # Update UI
-                self.update_status("Configuration saved successfully")
-                
                 # Go back to configs tab
                 self.back_button_click(None, None)
-            else:
-                self.update_status("Error saving configuration")
             
         except Exception as e:
             logger.error("Error saving configuration: {}".format(str(e)))
-            self.update_status("Error saving configuration: {}".format(str(e)))
     
     def refresh_ui(self):
         """Force UI refresh."""
-        logger.debug("Forcing UI refresh")
         # First clear and re-set the ItemsSource
         self.configsListView.ItemsSource = None
         self.configsListView.ItemsSource = self.configs
@@ -1058,13 +907,7 @@ class ConfigEditorUI(forms.WPFWindow):
     def delete_button_click(self, sender, args):
         """Handle delete button click."""
         if not self.current_config:
-            self.update_status("No configuration to delete")
             return
-        
-        # Log details about the current config
-        logger.debug("Current config for deletion:")
-        logger.debug("- Type: {}".format(type(self.current_config)))
-        logger.debug("- DisplayName: {}".format(self.current_config.DisplayName))
         
         # Confirm deletion
         result = MessageBox.Show(
@@ -1074,26 +917,12 @@ class ConfigEditorUI(forms.WPFWindow):
         )
         
         # Properly check the result - MessageBox.Show returns MessageBoxResult
-        logger.debug("MessageBox result: {}".format(result))
         if result != MessageBoxResult.Yes:
-            logger.debug("Deletion cancelled by user")
             return
             
-        logger.debug("User confirmed deletion - proceeding to delete")
-        
         try:
             # Get all configurations
             all_configs = load_configs_with_pickle(revit.doc)
-            
-            # Log configuration being deleted
-            logger.debug("Deleting configuration:")
-            logger.debug("- Checklist ID: {}".format(self.current_config.checklist_id))
-            logger.debug("- Checklist name: {}".format(self.current_config.checklist_name))
-            logger.debug("- StreamBIM property: {}".format(self.current_config.streambim_property))
-            logger.debug("- Revit parameter: {}".format(self.current_config.revit_parameter))
-            
-            # Count configurations before filtering
-            logger.debug("Total configurations before delete: {}".format(len(all_configs)))
             
             # Filter out the configuration to delete with exact matching
             updated_configs = []
@@ -1104,34 +933,16 @@ class ConfigEditorUI(forms.WPFWindow):
                 property_match = config.get('streambim_property') == self.current_config.streambim_property
                 parameter_match = config.get('revit_parameter') == self.current_config.revit_parameter
                 
-                logger.debug("Checking config: {}/{}/{} - Match: {}/{}/{}".format(
-                    config.get('checklist_id'), 
-                    config.get('streambim_property'),
-                    config.get('revit_parameter'),
-                    checklist_id_match,
-                    property_match,
-                    parameter_match
-                ))
-                
                 # Only keep configurations that don't match ALL criteria
                 if not (checklist_id_match and property_match and parameter_match):
                     updated_configs.append(config)
                 else:
                     found_match = True
-                    logger.debug("Found matching config to delete")
-            
-            if not found_match:
-                logger.debug("WARNING: No matching configuration found to delete!")
-            
-            # Count configurations after filtering
-            logger.debug("Total configurations after delete: {}".format(len(updated_configs)))
             
             # Save the updated configurations
-            logger.debug("Saving updated configurations...")
             success = save_configs_with_pickle(revit.doc, updated_configs)
             
             if success:
-                logger.debug("Configurations saved successfully, updating UI...")
                 # Go back to configs tab first to release the current config
                 self.current_config = None
                 self.editConfigTab.IsEnabled = False
@@ -1142,17 +953,11 @@ class ConfigEditorUI(forms.WPFWindow):
                 
                 # Force UI refresh
                 self.refresh_ui()
-                
-                # Update UI
-                self.update_status("Configuration deleted successfully")
-            else:
-                self.update_status("Error deleting configuration")
             
         except Exception as e:
             logger.error("Error deleting configuration: {}".format(str(e)))
             import traceback
             logger.error("Stack trace: {}".format(traceback.format_exc()))
-            self.update_status("Error deleting configuration: {}".format(str(e)))
     
     def back_button_click(self, sender, args):
         """Handle back button click."""
@@ -1165,18 +970,15 @@ class ConfigEditorUI(forms.WPFWindow):
         # Update UI
         self.editConfigTab.IsEnabled = False
         self.tabControl.SelectedItem = self.configsTab
-        self.update_status("Returned to configurations list")
     
     def add_new_row_button_click(self, sender, args):
         """Add a new empty row to the mapping DataGrid."""
         self.mappings.Add(MappingEntry(ChecklistValue="", RevitValue=""))
-        self.update_status("Added new mapping row")
     
     def remove_row_button_click(self, sender, args):
         """Remove the selected row from the mapping DataGrid."""
         if self.mappingDataGrid.SelectedItem:
             self.mappings.Remove(self.mappingDataGrid.SelectedItem)
-            self.update_status("Removed selected mapping row")
     
     def enable_mapping_checked(self, sender, args):
         """Handle enabling the mapping feature."""
@@ -1188,8 +990,8 @@ class ConfigEditorUI(forms.WPFWindow):
     
     def update_status(self, message):
         """Update status text."""
-        self.statusTextBlock.Text = message
-        logger.debug(message)
+        # Status bar removed from UI - method kept for compatibility but does nothing
+        pass
 
 def find_elements_with_param(param_name, doc):
     """Find all elements with a specific parameter."""
@@ -1213,7 +1015,6 @@ def find_elements_with_param(param_name, doc):
             except:
                 continue
                 
-        logger.debug("Found {} elements with parameter '{}'".format(len(all_elements), param_name))
         return all_elements
         
     except Exception as e:
@@ -1222,10 +1023,6 @@ def find_elements_with_param(param_name, doc):
     
 # Main execution
 if __name__ == '__main__':
-    # Log information about the streambim_api module
-    logger.debug("StreamBIM API module location: {}".format(streambim_api.__file__))
-    logger.debug("save_configs_with_pickle function: {}".format(save_configs_with_pickle))
-    
     # Check for saved login BEFORE creating the window
     temp_client = streambim_api.StreamBIMClient()
     temp_client.load_tokens()

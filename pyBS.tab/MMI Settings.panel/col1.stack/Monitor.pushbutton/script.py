@@ -8,7 +8,7 @@ When inactive, it does nothing.
 __title__ = "Monitor"
 __author__ = "Byggstyrning AB"
 __doc__ = "Toggle MMI Monitor on/off for the current session"
-__highlight__ = 'new'
+__highlight__ = 'updated'
 
 # Import standard libraries
 import sys
@@ -734,7 +734,7 @@ if __name__ == '__main__':
             if monitor_settings["warn_on_move"]:
                 enabled_features.append("Warn when moving elements >{}".format(MMI_THRESHOLD))
             if monitor_settings["validate_mmi"]:
-                enabled_features.append("Validate MMI format")
+                enabled_features.append("Attempt to fix MMI values")
             if monitor_settings["check_mmi_after_sync"]:
                 enabled_features.append("Check MMI after sync")
                 

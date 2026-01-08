@@ -8,6 +8,7 @@ and isolates them in the active view. Works with 3D views and plan views.
 __title__ = "Isolate 3D Zones"
 __author__ = "Byggstyrning AB"
 __doc__ = "Isolate all 3D Zone Generic Model instances in the active view"
+__highlight__ = 'new'
 
 # Import standard libraries
 import clr

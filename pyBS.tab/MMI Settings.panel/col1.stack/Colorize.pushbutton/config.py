@@ -25,6 +25,8 @@ from Autodesk.Revit.UI import *
 from pyrevit import script
 from pyrevit import forms
 from pyrevit import revit
+from pyrevit import HOST_APP
+from pyrevit.framework import List
 
 # Add the extension directory to the path
 script_path = __file__
@@ -39,11 +41,81 @@ lib_path = op.join(extension_dir, 'lib')
 if lib_path not in sys.path:
     sys.path.append(lib_path)
 
+# Import styles for theme support
+from styles import ensure_styles_loaded
+
 # Try direct import from current directory's parent path
 sys.path.append(op.dirname(op.dirname(panel_dir)))
 
 # Initialize logger
 logger = script.get_logger()
+
+# Debug logging setup
+import json
+import datetime
+import codecs
+DEBUG_LOG_PATH = op.join(extension_dir, '.cursor', 'debug.log')
+
+def safe_str(obj):
+    """Safely convert object to string, handling Unicode."""
+    if obj is None:
+        return None
+    try:
+        # Check for unicode type (IronPython 2.7)
+        if isinstance(obj, unicode):
+            return obj
+    except NameError:
+        # unicode doesn't exist (Python 3+)
+        pass
+    if isinstance(obj, str):
+        try:
+            return obj.decode('utf-8')
+        except:
+            return obj
+    return str(obj)
+
+def safe_json_encode(obj):
+    """Safely encode object to JSON, handling Unicode issues."""
+    if isinstance(obj, dict):
+        return {safe_str(k): safe_json_encode(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [safe_json_encode(item) for item in obj]
+    else:
+        return safe_str(obj)
+
+def debug_log(location, message, data=None, hypothesis_id=None):
+    """Write debug log entry."""
+    try:
+        # Clean all data to avoid Unicode issues
+        safe_data = safe_json_encode(data) if data else {}
+        
+        log_entry = {
+            "timestamp": int((datetime.datetime.now() - datetime.datetime(1970, 1, 1)).total_seconds() * 1000),
+            "location": safe_str(location),
+            "message": safe_str(message),
+            "data": safe_data,
+            "sessionId": "debug-session",
+            "runId": "run1",
+            "hypothesisId": safe_str(hypothesis_id) if hypothesis_id else None
+        }
+        # Ensure directory exists
+        log_dir = op.dirname(DEBUG_LOG_PATH)
+        if not op.exists(log_dir):
+            try:
+                os.makedirs(log_dir)
+            except:
+                pass
+        # Write to file with UTF-8 encoding
+        json_str = json.dumps(log_entry, ensure_ascii=False)
+        with codecs.open(DEBUG_LOG_PATH, 'a', encoding='utf-8') as f:
+            f.write(json_str + '\n')
+        # Also log to pyRevit output for visibility (simplified)
+        logger.debug("[DEBUG] {}: {}".format(safe_str(location), safe_str(message)))
+    except Exception as e:
+        # Log to pyRevit logger as fallback
+        logger.error("Debug log failed: {} - Path: {}".format(str(e), DEBUG_LOG_PATH))
+        import traceback
+        logger.error(traceback.format_exc())
 
 # Import MMI libraries
 from mmi.core import get_mmi_parameter_name
@@ -91,25 +163,154 @@ MMI_FILTER_RANGES = [
      "color": Color(175, 50, 205)},
 ]
 
-def get_all_filterable_categories(doc):
-    """Get all categories that can be used in filters."""
-    filterable_categories = []
+def get_categories_with_parameter(doc, mmi_param_id, mmi_param_name):
+    """Get categories where the MMI parameter actually exists.
     
-    # Get all categories
-    categories = doc.Settings.Categories
+    This checks ParameterBindings first, then verifies by checking elements.
+    Only returns categories where the parameter can be used in filters.
+    """
+    # Use .NET List[ElementId] like ColorSplasher does (line 489)
+    valid_categories = List[ElementId]()
     
-    for category in categories:
-        # Only include categories that allow bound parameters and are visible
-        if category.AllowsBoundParameters and category.CategoryType == CategoryType.Model:
+    
+    # Method 1: Check ParameterBindings (works for project/shared parameters)
+    try:
+        param_bindings = doc.ParameterBindings
+        iterator = param_bindings.ForwardIterator()
+        iterator.Reset()
+        
+        while iterator.MoveNext():
+            binding = iterator.Current
+            param_def = binding.Key
+            
+            # Check by ID first
+            if param_def.Id == mmi_param_id:
+                # Found the parameter binding - get its categories
+# Exclude certain categories that shouldn't be in filters
+                excluded_category_ids = {
+                    ElementId(-2000700),  # Materials
+                    ElementId(-2003200),  # Areas
+                    ElementId(-2000160),  # Rooms
+                    ElementId(-2008107),  # HVAC Zones
+                }
+                
+                categories = binding.Categories
+                for cat in categories:
+                    if cat.CategoryType == CategoryType.Model and cat.AllowsBoundParameters:
+                        # Skip excluded categories
+                        if cat.Id in excluded_category_ids:
+continue
+                        
+                        valid_categories.Add(cat.Id)
+if valid_categories.Count > 0:
+                    return valid_categories
+            
+            # Also check by name (for built-in parameters that might not match by ID)
+            if param_def.Name == mmi_param_name:
+# Exclude certain categories that shouldn't be in filters
+                excluded_category_ids = {
+                    ElementId(-2000700),  # Materials
+                    ElementId(-2003200),  # Areas
+                    ElementId(-2000160),  # Rooms
+                    ElementId(-2008107),  # HVAC Zones
+                }
+                
+                categories = binding.Categories
+                for cat in categories:
+                    if cat.CategoryType == CategoryType.Model and cat.AllowsBoundParameters:
+                        # Skip excluded categories
+                        if cat.Id in excluded_category_ids:
+                            continue
+                        
+                        # Avoid duplicates
+                        if cat.Id not in [c.IntegerValue for c in valid_categories]:
+                            valid_categories.Add(cat.Id)
+if valid_categories.Count > 0:
+                    return valid_categories
+    except Exception as ex:
+        pass
+    
+    # Method 2: For built-in parameters or if ParameterBindings didn't work,
+    # find categories by checking elements that have the parameter
+# Get unique categories from elements that have this parameter
+    category_ids_found = set()
+    
+    # Check ALL elements, not just view-independent ones, to find all categories
+    collector = FilteredElementCollector(doc) \
+        .WhereElementIsNotElementType() \
+        .ToElements()
+    
+    checked_count = 0
+    max_checks = 1000  # Check more elements to find all categories
+    
+    for elem in collector:
+        if checked_count >= max_checks:
+            break
+        
+        try:
+            # Skip elements without a valid category
+            if not elem.Category or not elem.Category.Id:
+                continue
+            
+            # Skip non-model categories (like Materials, which is -2000700)
+            if elem.Category.CategoryType != CategoryType.Model:
+                continue
+            
+            # Check if element has the parameter
+            param = None
             try:
-                # Check if category can be used in filters
-                builtin_cat = category.Id.IntegerValue
-                if builtin_cat < 0:  # Built-in categories have negative IDs
-                    filterable_categories.append(category.Id)
+                param = elem.LookupParameter(mmi_param_name)
             except:
                 pass
+            
+            param_found = False
+            if param and param.Id == mmi_param_id:
+                param_found = True
+            
+            # Also check by iterating Parameters (for built-in parameters)
+            if not param_found:
+                for pr in elem.Parameters:
+                    if pr.Id == mmi_param_id:
+                        param_found = True
+                        break
+            
+            if param_found:
+                # Element has the parameter - add its category
+                cat_id = elem.Category.Id.IntegerValue
+                category_ids_found.add(cat_id)
+        except Exception as ex:
+pass
+        
+        checked_count += 1
     
-    return filterable_categories
+    # Convert found category IDs to ElementId list
+    # Filter out invalid categories and categories that shouldn't be in filters
+    excluded_category_ids = {
+        -2000700,  # Materials (not an element category)
+        -2003200,  # Areas (special category, not typically filtered)
+        -2000160,  # Rooms (special category, not typically filtered)
+        -2008107,  # HVAC Zones (special category)
+    }
+    
+    for cat_id_int in category_ids_found:
+        try:
+            cat_id = ElementId(cat_id_int)
+            category = Category.GetCategory(doc, cat_id)
+            
+            # Skip excluded categories
+            if cat_id_int in excluded_category_ids:
+continue
+            
+            # Only add model categories that allow bound parameters
+            if category and category.CategoryType == CategoryType.Model and category.AllowsBoundParameters:
+                # Additional validation: ensure category can be used in filters
+                # Some categories like Areas, Rooms, HVAC Zones shouldn't be in element filters
+                try:
+                    # Test if category can be used in a filter by checking if it's filterable
+                    # This is a heuristic - we'll include it if it passes the above checks
+                    valid_categories.Add(cat_id)
+except Exception as ex:
+return valid_categories
 
 def create_mmi_filter(doc, filter_range, mmi_param_id, categories):
     """Create a single MMI filter for an exact MMI value.
@@ -124,7 +325,8 @@ def create_mmi_filter(doc, filter_range, mmi_param_id, categories):
         ParameterFilterElement or None if failed
     """
     try:
-        filter_name = filter_range["name"]
+        # Filter name should be just "MMI_xxx" (e.g., "MMI_000"), not "MMI_000_Tidligfase"
+        filter_name = "MMI_{}".format(filter_range["value"])
         mmi_value = filter_range["value"]
         
         # Check if filter already exists
@@ -139,17 +341,29 @@ def create_mmi_filter(doc, filter_range, mmi_param_id, categories):
         
         # Create filter rule for exact MMI value match
         # MMI values are stored as strings like "000", "100", "125", etc.
-        # Use Equals rule for exact matching
+        # Use CreateEqualsRule (same as ColorSplasher does for String parameters)
+        # ColorSplasher uses CreateEqualsRule for all parameter types, including built-in parameters
+        # The key is getting the parameter ID from an element's Parameter object, not from bindings
         
-        rule = ParameterFilterRuleFactory.CreateEqualsRule(
-            mmi_param_id,
-            mmi_value,
-            True  # Case sensitive
-        )
+        # Get Revit version
+        version = int(HOST_APP.version)
+        if version > 2023:
+            # Revit 2024+ uses different signature (no case_sensitive parameter)
+            rule = ParameterFilterRuleFactory.CreateEqualsRule(
+                mmi_param_id,
+                mmi_value
+            )
+        else:
+            # Revit 2023 and earlier requires case_sensitive parameter
+            rule = ParameterFilterRuleFactory.CreateEqualsRule(
+                mmi_param_id,
+                mmi_value,
+                True  # Case sensitive
+            )
         
         element_filter = ElementParameterFilter(rule)
         
-        # Create the ParameterFilterElement
+# Create the ParameterFilterElement
         param_filter = ParameterFilterElement.Create(
             doc,
             filter_name,
@@ -157,7 +371,7 @@ def create_mmi_filter(doc, filter_range, mmi_param_id, categories):
             element_filter
         )
         
-        logger.debug("Created filter: {} for MMI value '{}'".format(filter_name, mmi_value))
+logger.debug("Created filter: {} for MMI value '{}'".format(filter_name, mmi_value))
         return param_filter
         
     except Exception as ex:
@@ -245,83 +459,60 @@ def create_and_apply_mmi_filters():
                        title="MMI Parameter Not Configured")
             return
         
-        logger.debug("Using MMI parameter: {}".format(mmi_param_name))
-        
-        # Get the MMI parameter ID from a shared parameter or project parameter
+        # Get parameter ID from an element (ColorSplasher method)
+        # ColorSplasher gets parameter ID directly from element.Parameters, not from ParameterBindings
+        # This works for BOTH project/shared parameters AND built-in parameters
+        # See ColorSplasher line 1413-1414: iterates through elem.Parameters to find matching name
         mmi_param_id = None
-        param_definition = None
         
-        # Try to find the parameter in project parameters first
-        param_bindings = doc.ParameterBindings
-        iterator = param_bindings.ForwardIterator()
+        collector = FilteredElementCollector(doc) \
+            .WhereElementIsNotElementType() \
+            .WhereElementIsViewIndependent() \
+            .ToElements()
         
-        while iterator.MoveNext():
-            definition = iterator.Key
-            if definition.Name == mmi_param_name:
-                param_definition = definition
-                logger.debug("Found parameter definition in bindings: {}".format(mmi_param_name))
+        # Try up to 200 elements to find the parameter
+        checked_count = 0
+        max_checks = 200
+        
+        for elem in collector:
+            if checked_count >= max_checks:
                 break
-        
-        # If found in bindings, try to get parameter ID from an element
-        if param_definition:
-            collector = FilteredElementCollector(doc) \
-                .WhereElementIsNotElementType() \
-                .ToElements()
             
-            # Try up to 100 elements to find the parameter
-            checked_count = 0
-            max_checks = 100
-            
-            for elem in collector:
-                if checked_count >= max_checks:
+            try:
+                # Method 1: Try LookupParameter first (works for project/shared parameters)
+                param = elem.LookupParameter(mmi_param_name)
+                if param and param.Id:
+                    mmi_param_id = param.Id
                     break
-                    
-                try:
-                    param = elem.LookupParameter(mmi_param_name)
-                    if param and param.Id:
-                        mmi_param_id = param.Id
-                        logger.debug("Found parameter ID from element {}: {}".format(elem.Id, mmi_param_id))
-                        break
-                except:
-                    pass
                 
-                checked_count += 1
+                # Method 2: Iterate through Parameters (works for built-in parameters too)
+                # This is how ColorSplasher does it (see line 1413-1414)
+                if not mmi_param_id:
+                    for pr in elem.Parameters:
+                        if pr.Definition.Name == mmi_param_name:
+                            if pr.Id:
+                                mmi_param_id = pr.Id
+                                break
+                    if mmi_param_id:
+                        break
+            except Exception as ex:
+                pass
+            
+            checked_count += 1
         
-        # If still not found, try checking element types as well
-        if not mmi_param_id:
-            logger.debug("Parameter ID not found on elements, checking element types...")
-            type_collector = FilteredElementCollector(doc) \
-                .WhereElementIsElementType() \
-                .ToElements()
-            
-            checked_count = 0
-            max_checks = 50
-            
-            for elem_type in type_collector:
-                if checked_count >= max_checks:
-                    break
-                    
-                try:
-                    param = elem_type.LookupParameter(mmi_param_name)
-                    if param and param.Id:
-                        mmi_param_id = param.Id
-                        logger.debug("Found parameter ID from element type {}: {}".format(elem_type.Id, mmi_param_id))
-                        break
-                except:
-                    pass
-                
-                checked_count += 1
+        # Note: MMI is always an instance parameter, so we don't need to check element types
         
         if not mmi_param_id:
+            # Build error message
             error_msg = (
-                "Could not find the MMI parameter '{}' in the model.\n\n"
-                "The parameter may not be assigned to any elements, or it may be a built-in parameter "
-                "that cannot be used for view filters.\n\n"
+                "Could not find the MMI parameter '{}' on any elements in the model.\n\n"
                 "Please check:\n"
-                "• Ensure elements have the '{}' parameter assigned\n"
-                "• Verify the parameter is a project parameter or shared parameter\n"
-                "• Consider reconfiguring the MMI parameter in Settings"
-            ).format(mmi_param_name, mmi_param_name)
+                "• Verify the parameter name matches exactly (case-sensitive)\n"
+                "• Ensure there are elements in the view with this parameter\n"
+                "• Try setting the parameter value on at least one element first\n"
+                "• Verify the parameter is accessible on elements\n"
+                "• Configure the MMI parameter in Settings if needed"
+            ).format(mmi_param_name)
             
             forms.alert(error_msg, title="Parameter Not Found")
             logger.error("Failed to find MMI parameter '{}' for filter creation".format(mmi_param_name))
@@ -329,14 +520,22 @@ def create_and_apply_mmi_filters():
         
         logger.debug("Found MMI parameter ID: {}".format(mmi_param_id))
         
-        # Get all filterable categories
-        categories = get_all_filterable_categories(doc)
-        if not categories:
-            forms.alert("No filterable categories found in the model.", 
-                       title="No Categories")
+        # Get categories where the parameter actually exists
+        categories = get_categories_with_parameter(doc, mmi_param_id, mmi_param_name)
+        if categories.Count == 0:
+            error_msg = (
+                "The MMI parameter '{}' was not found on any elements or categories in the model.\n\n"
+                "Please ensure:\n"
+                "• The parameter exists and is bound to at least one category\n"
+                "• There are elements in the model with this parameter\n"
+                "• The parameter is accessible on model elements"
+            ).format(mmi_param_name)
+            forms.alert(error_msg, title="No Categories Found")
+            logger.error("No categories found with parameter '{}'".format(mmi_param_name))
             return
         
-        logger.debug("Found {} filterable categories".format(len(categories)))
+        logger.debug("Found {} categories with parameter".format(categories.Count))
+        
         
         # Create filters in a transaction
         created_filters = []
@@ -356,27 +555,184 @@ def create_and_apply_mmi_filters():
                        title="Error")
             return
         
-        # Apply filters to the active view
-        with Transaction(doc, "Apply MMI Filters to View") as t:
-            t.Start()
-            
-            for param_filter, filter_range in created_filters:
-                apply_filter_to_view(doc, active_view, param_filter, filter_range)
-            
-            t.Commit()
+        # Check if view has a template and ask user where to apply filters
+        template_id = active_view.ViewTemplateId
+        template_view = None
+        template_name = None
+        apply_to_template = False
+        apply_to_view = False
+        
+        if template_id != ElementId.InvalidElementId:
+            # View has a template - ask user where to apply filters
+            template_view = doc.GetElement(template_id)
+            if template_view:
+                template_name = template_view.Name
+# Ask user where to apply filters using custom WPF dialog
+                xaml_file = op.join(pushbutton_dir, 'FilterSelectionDialog.xaml')
+                
+                class FilterSelectionDialog(forms.WPFWindow):
+                    def __init__(self, xaml_file, view_name, template_name, filter_count):
+                        # Load styles into Application.Resources BEFORE creating window (like MMISettingsWindow)
+                        ensure_styles_loaded()
+                        
+                        forms.WPFWindow.__init__(self, xaml_file)
+                        
+                        # Ensure window Resources has the styles merged (for dark mode support)
+                        try:
+                            from System.Windows import Application, ResourceDictionary
+                            if Application.Current is not None and Application.Current.Resources is not None:
+                                # Merge Application resources into window resources if needed
+                                if self.Resources is None:
+                                    self.Resources = ResourceDictionary()
+                                # Copy theme-aware brushes to window resources
+                                for key in ['WindowBackgroundBrush', 'TextBrush', 'ControlBackgroundBrush', 
+                                           'BorderBrush', 'PopupBackgroundBrush', 'BackgroundLightBrush',
+                                           'BackgroundLighterBrush', 'AccentBrush', 'DisabledTextBrush']:
+                                    try:
+                                        if key in Application.Current.Resources.Keys:
+                                            self.Resources[key] = Application.Current.Resources[key]
+                                    except:
+                                        pass
+                        except Exception as ex:
+                            logger.debug("Could not merge Application resources to window: {}".format(str(ex)))
+                        
+                        # Ensure options panel is visible and TextBrush is available
+                        try:
+                            from System.Windows import Visibility
+                            from System.Windows.Media import SolidColorBrush, Colors
+                            
+                            # Ensure TextBrush is available
+                            if self.Resources is None:
+                                self.Resources = ResourceDictionary()
+                            
+                            if 'TextBrush' not in self.Resources.Keys:
+                                if Application.Current is not None and Application.Current.Resources is not None:
+                                    if 'TextBrush' in Application.Current.Resources.Keys:
+                                        self.Resources['TextBrush'] = Application.Current.Resources['TextBrush']
+                                    else:
+                                        self.Resources['TextBrush'] = SolidColorBrush(Colors.Black)
+                                else:
+                                    self.Resources['TextBrush'] = SolidColorBrush(Colors.Black)
+                            
+                            # Ensure options panel is visible
+                            options_panel = self.FindName('optionsPanel')
+                            if options_panel:
+                                options_panel.Visibility = Visibility.Visible
+                                # Ensure all TextBlock children are visible
+                                for i in range(options_panel.Children.Count):
+                                    child = options_panel.Children[i]
+                                    if hasattr(child, 'Visibility'):
+                                        child.Visibility = Visibility.Visible
+                        except Exception as ex:
+                            logger.debug("Could not verify options panel: {}".format(str(ex)))
+                        
+                        self.viewNameRun.Text = view_name
+                        self.templateNameRun.Text = template_name
+                        self.filterCountRun.Text = str(filter_count)
+                        self.selected_option = None
+                    
+                    def OkButton_Click(self, sender, e):
+                        selected_item = self.optionComboBox.SelectedItem
+                        if selected_item:
+                            self.selected_option = selected_item.Content
+                        self.Close()
+                    
+                
+                try:
+                    dialog = FilterSelectionDialog(xaml_file, active_view.Name, template_name, len(created_filters))
+                    dialog.ShowDialog()
+                    selected_option = dialog.selected_option
+                except Exception as ex:
+                    # Fallback to simple alert if custom dialog fails
+                    logger.debug("Custom dialog failed, using fallback: {}".format(str(ex)))
+                    import traceback
+                    logger.debug(traceback.format_exc())
+                    options = ["Add to Template", "Add to View", "Both"]
+                    selected_option = forms.ask_for_one_item(
+                        items=options,
+                        default=options[0] if options else None,
+                        prompt="Where would you like to apply the {} MMI filters?".format(len(created_filters)),
+                        title="Apply Filters to Template or View?"
+                    )
+                
+                if not selected_option:
+                    # User cancelled
+                    logger.info("User cancelled filter application")
+                    return
+                
+                
+                if selected_option == "Add to Template" or selected_option == "Both":
+                    apply_to_template = True
+                if selected_option == "Add to View" or selected_option == "Both":
+                    apply_to_view = True
+        else:
+            # No template - apply to view only
+            apply_to_view = True
+        
+        # Apply filters to template if requested
+        if apply_to_template and template_view:
+            try:
+                with Transaction(doc, "Apply MMI Filters to View Template") as t:
+                    t.Start()
+                    
+                    for param_filter, filter_range in created_filters:
+                        apply_filter_to_view(doc, template_view, param_filter, filter_range)
+                    
+                    t.Commit()
+                
+                logger.info("Successfully applied {} filters to template '{}'".format(
+                    len(created_filters), template_name))
+            except Exception as ex:
+                logger.error("Error applying filters to template: {}".format(ex))
+                import traceback
+                logger.error(traceback.format_exc())
+                forms.alert(
+                    "Error applying filters to template '{}':\n\n{}".format(template_name, ex),
+                    title="Error"
+                )
+                # Continue to apply to view if that was also requested
+        
+        # Apply filters to the active view if requested
+        if apply_to_view:
+            try:
+                with Transaction(doc, "Apply MMI Filters to View") as t:
+                    t.Start()
+                    
+                    for param_filter, filter_range in created_filters:
+                        apply_filter_to_view(doc, active_view, param_filter, filter_range)
+                    
+                    t.Commit()
+                
+                logger.info("Successfully applied {} filters to view '{}'".format(
+                    len(created_filters), active_view.Name))
+            except Exception as ex:
+                logger.error("Error applying filters to view: {}".format(ex))
+                import traceback
+                logger.error(traceback.format_exc())
+                forms.alert(
+                    "Error applying filters to view '{}':\n\n{}".format(active_view.Name, ex),
+                    title="Error"
+                )
         
         # Show success message
+        applied_locations = []
+        if apply_to_template:
+            applied_locations.append("template '{}'".format(template_name))
+        if apply_to_view:
+            applied_locations.append("view '{}'".format(active_view.Name))
+        
+        location_text = " and ".join(applied_locations)
         forms.show_balloon(
             header="MMI View Filters Created",
-            text="Created {} view filters and applied them to '{}'.\n\nFilters:\n• {}".format(
+            text="Created {} view filters and applied them to {}.".format(
                 len(created_filters),
-                active_view.Name,
-                "\n• ".join([f["display_name"] for p, f in created_filters])
+                location_text
             ),
             is_new=True
         )
         
-        logger.debug("Successfully created and applied {} MMI filters".format(len(created_filters)))
+        logger.debug("Successfully created and applied {} MMI filters to {}".format(
+            len(created_filters), location_text))
         
     except Exception as ex:
         logger.error("Error creating MMI filters: {}".format(ex))

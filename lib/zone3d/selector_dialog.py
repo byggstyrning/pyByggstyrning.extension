@@ -88,12 +88,14 @@ class SpatialSelectorWindow(forms.WPFWindow):
             pushbutton_dir: Pushbutton directory (for XAML files)
             extension_dir: Extension root directory (for styles)
         """
+        # Load styles BEFORE window initialization
+        # Note: lib is added to sys.path by scripts that import this module
+        from styles import ensure_styles_loaded
+        ensure_styles_loaded()
+        
         # Load XAML file
         xaml_path = op.join(pushbutton_dir, self.get_xaml_filename())
         forms.WPFWindow.__init__(self, xaml_path)
-        
-        # Load common styles programmatically
-        self.load_styles(extension_dir)
         
         # Store all items and filtered items
         self.all_items = element_items

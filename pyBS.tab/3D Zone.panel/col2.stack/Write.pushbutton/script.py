@@ -8,6 +8,7 @@ spatial elements (Rooms, Spaces, Areas, Mass/Generic Model) to contained element
 __title__ = "Write Mappings"
 __author__ = "Byggstyrning AB"
 __doc__ = "Write spatial mappings to elements"
+__highlight__ = 'new'
 
 # Import standard libraries
 import sys
@@ -43,7 +44,7 @@ extension_dir = op.dirname(tab_dir)
 lib_path = op.join(extension_dir, 'lib')
 
 if lib_path not in sys.path:
-    sys.path.append(lib_path)
+    sys.path.insert(0, lib_path)
 
 # Initialize logger
 logger = script.get_logger()
@@ -115,12 +116,13 @@ class ConfigSelectorWindow(forms.WPFWindow):
         Args:
             configs: List of configuration dictionaries
         """
+        # Load styles BEFORE window initialization
+        from styles import ensure_styles_loaded
+        ensure_styles_loaded()
+        
         # Load XAML file
         xaml_path = op.join(pushbutton_dir, 'ConfigSelector.xaml')
         forms.WPFWindow.__init__(self, xaml_path)
-        
-        # Load common styles programmatically
-        self.load_styles()
         
         # Store selected configs (will be populated when Write is clicked)
         self.selected_configs = None

@@ -14,7 +14,7 @@ MMI_THRESHOLD = 400
 
 # Standard config keys mapping
 CONFIG_KEYS = {
-    "✅ Validate MMI": "validate_mmi",
+    "✅ Attempt to fix MMI values": "validate_mmi",
     "🔒 Pin elements >=400": "pin_elements",
     "⚠️ Warn when moving elements >=425": "warn_on_move",
     "🔄 Check MMI after sync": "check_mmi_after_sync"

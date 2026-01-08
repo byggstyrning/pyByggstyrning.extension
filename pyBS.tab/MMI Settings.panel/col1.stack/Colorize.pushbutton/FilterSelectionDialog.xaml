@@ -1,0 +1,92 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Apply Filters to Template or View?" 
+        Height="260" Width="500"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize"
+        Background="{DynamicResource WindowBackgroundBrush}">
+    <!-- Styles will be loaded programmatically -->
+    
+    <Grid x:Name="mainGrid" Margin="{DynamicResource GridMargin}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        
+        <!-- Explanation Text -->
+        <TextBlock Grid.Row="0" 
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,15"
+                   FontSize="12"
+                   Foreground="{DynamicResource TextBrush}">
+            <Run Text="The view '"/>
+            <Run x:Name="viewNameRun" Text=""/>
+            <Run Text="' uses a view template '"/>
+            <Run x:Name="templateNameRun" Text=""/>
+            <Run Text="'."/>
+            <LineBreak/>
+            <LineBreak/>
+            <Run Text="Where would you like to apply the " FontSize="14" FontWeight="SemiBold"/>
+            <Run x:Name="filterCountRun" Text="" FontSize="14" FontWeight="SemiBold"/>
+            <Run Text=" MMI filters?" FontSize="14" FontWeight="SemiBold"/>
+        </TextBlock>
+        
+        <!-- Options List -->
+        <StackPanel x:Name="optionsPanel"
+                    Grid.Row="1" 
+                    Margin="0,0,0,15"
+                    Visibility="Visible">
+            <TextBlock Text="• Add to Template: Filters will be applied to the template, affecting all views using this template"
+                       TextWrapping="Wrap"
+                       FontSize="11"
+                       Margin="0,0,0,8"
+                       Foreground="{DynamicResource TextBrush}"/>
+            <TextBlock Text="• Add to View: Filters will be applied only to this view (may be overridden by template)"
+                       TextWrapping="Wrap"
+                       FontSize="11"
+                       Margin="0,0,0,8"
+                       Foreground="{DynamicResource TextBrush}"/>
+            <TextBlock Text="• Both: Filters will be applied to both the template and this view"
+                       TextWrapping="Wrap"
+                       FontSize="11"
+                       Margin="0,0,0,8"
+                       Foreground="{DynamicResource TextBrush}"/>
+        </StackPanel>
+        
+        <!-- Selection ComboBox and OK Button Row -->
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <ComboBox Grid.Column="0"
+                      x:Name="optionComboBox"
+                      Margin="0,0,10,0"
+                      SelectedIndex="0"
+                      Height="33"
+                      HorizontalAlignment="Stretch"
+                      HorizontalContentAlignment="Left"
+                      IsEditable="False"
+                      IsTextSearchEnabled="True"
+                      Background="{DynamicResource ControlBackgroundBrush}"
+                      BorderBrush="{DynamicResource BorderBrush}"
+                      Padding="5,3"
+                      Foreground="{DynamicResource TextBrush}"
+                      Style="{DynamicResource StandardComboBoxStyle}">
+                <ComboBoxItem Content="Add to Template"/>
+                <ComboBoxItem Content="Add to View"/>
+                <ComboBoxItem Content="Both"/>
+            </ComboBox>
+            <Button Grid.Column="1"
+                    Content="OK" 
+                    x:Name="okButton"
+                    Width="90"
+                    Height="33"
+                    FontSize="12"
+                    Click="OkButton_Click"
+                    Style="{DynamicResource StandardButtonStyle}"/>
+        </Grid>
+    </Grid>
+</Window>
+

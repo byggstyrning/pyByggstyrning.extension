@@ -26,13 +26,15 @@ from collections import namedtuple
 # Add the extension directory to the path - FIXED PATH RESOLUTION
 import os.path as op
 script_path = __file__
-panel_dir = op.dirname(script_path)
+pushbutton_dir = op.dirname(script_path)
+stack_dir = op.dirname(pushbutton_dir)
+panel_dir = op.dirname(stack_dir)
 tab_dir = op.dirname(panel_dir)
-extension_dir = op.dirname(op.dirname(tab_dir))
+extension_dir = op.dirname(tab_dir)
 lib_path = op.join(extension_dir, 'lib')
 
 if lib_path not in sys.path:
-    sys.path.append(lib_path)
+    sys.path.insert(0, lib_path)
 
 # Try direct import from current directory's parent path
 sys.path.append(op.dirname(op.dirname(panel_dir)))
@@ -161,7 +163,6 @@ def get_or_create_mapping_storage(doc):
         return None
         
     try:
-        logger.debug("Searching for existing mapping storage...")
         data_storage = FilteredElementCollector(doc)\
             .OfClass(ExtensibleStorage.DataStorage)\
             .ToElements()
@@ -172,17 +173,13 @@ def get_or_create_mapping_storage(doc):
                 # Check if this storage has our schema
                 entity = ds.GetEntity(MappingSchema.schema)
                 if entity.IsValid():
-                    logger.debug("Found existing mapping storage")
                     return ds
             except Exception as e:
-                logger.debug("Error checking storage entity: {}".format(str(e)))
                 continue
         
-        logger.debug("No existing mapping storage found, creating new one...")
         # If not found, create a new one
         with revit.Transaction("Create StreamBIM Mapping Storage", doc):
             new_storage = ExtensibleStorage.DataStorage.Create(doc)
-            logger.debug("Created new mapping storage")
             return new_storage
             
     except Exception as e:
@@ -194,11 +191,12 @@ class StreamBIMImporterUI(forms.WPFWindow):
     
     def __init__(self):
         """Initialize the StreamBIM Importer UI."""
+        # Load styles BEFORE window initialization
+        from styles import ensure_styles_loaded
+        result = ensure_styles_loaded()
+        
         # Initialize WPF window
         forms.WPFWindow.__init__(self, 'ChecklistImporter.xaml')
-        
-        # Load styles ResourceDictionary
-        self.load_styles()
         
         # Initialize StreamBIM API client
         self.streambim_client = streambim_api.StreamBIMClient()
@@ -301,11 +299,9 @@ class StreamBIMImporterUI(forms.WPFWindow):
                     # Try to merge the entire dictionary
                     self.Resources.MergedDictionaries.Add(styles_dict)
                     
-                logger.debug("Loaded styles from: {}".format(styles_path))
         except Exception as e:
             logger.warning("Could not load styles: {}. Using default styles.".format(str(e)))
             import traceback
-            logger.debug("Style loading error details: {}".format(traceback.format_exc()))
 
     def set_busy(self, is_busy, message="Loading..."):
         """Show or hide the busy overlay indicator."""
@@ -316,7 +312,7 @@ class StreamBIMImporterUI(forms.WPFWindow):
             else:
                 self.busyOverlay.Visibility = Visibility.Collapsed
         except Exception as e:
-            logger.debug("Error setting busy indicator: {}".format(str(e)))
+            pass
 
     def load_regions(self):
         """Load available StreamBIM regions from the API."""
@@ -373,8 +369,6 @@ class StreamBIMImporterUI(forms.WPFWindow):
             # Hide busy indicator
             self.set_busy(False)
             
-            logger.debug("Loaded {} regions".format(len(self.regions)))
-            
         except Exception as e:
             logger.error("Error loading regions: {}".format(str(e)))
             # Fallback to default region
@@ -408,7 +402,6 @@ class StreamBIMImporterUI(forms.WPFWindow):
     def try_automatic_login(self):
         """Attempt to automatically log in using saved tokens."""
         if self.streambim_client.idToken:
-            self.update_status("Found saved login...")
             # If we have a saved username, display it in the username field
             try:
                 if hasattr(self.streambim_client, 'username') and self.streambim_client.username:
@@ -463,10 +456,23 @@ class StreamBIMImporterUI(forms.WPFWindow):
             for project in projects:
                 # Handle new project-links data structure
                 attrs = project.get('attributes', {})
+                # Ensure Name and Description are strings, not collections
+                name_value = attrs.get('name', 'Unknown')
+                if isinstance(name_value, (list, tuple)):
+                    name_value = ', '.join(str(x) for x in name_value) if name_value else 'Unknown'
+                else:
+                    name_value = str(name_value) if name_value else 'Unknown'
+                
+                desc_value = attrs.get('description', '')
+                if isinstance(desc_value, (list, tuple)):
+                    desc_value = ', '.join(str(x) for x in desc_value) if desc_value else ''
+                else:
+                    desc_value = str(desc_value) if desc_value else ''
+                
                 project_obj = Project(
                     Id=str(project.get('id')),
-                    Name=attrs.get('name', 'Unknown'),
-                    Description=attrs.get('description', '')
+                    Name=name_value,
+                    Description=desc_value
                 )
                 self.projects.Add(project_obj)
                 
@@ -691,9 +697,17 @@ class StreamBIMImporterUI(forms.WPFWindow):
             
             for checklist in checklists:
                 checklist_id = checklist.get('id')
+                attrs = checklist.get('attributes', {})
+                # Ensure Name is a string, not a collection
+                name_value = attrs.get('name', 'Unknown')
+                if isinstance(name_value, (list, tuple)):
+                    name_value = ', '.join(str(x) for x in name_value) if name_value else 'Unknown'
+                else:
+                    name_value = str(name_value) if name_value else 'Unknown'
+                
                 checklist_obj = Checklist(
                     Id=checklist_id,
-                    Name=checklist.get('attributes', {}).get('name', 'Unknown')
+                    Name=name_value
                 )
                 self.checklists.Add(checklist_obj)
                 self.all_checklists.append(checklist_obj)  # Store in all checklists list for filtering
@@ -883,7 +897,6 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.progressText.Text = "Building element lookup dictionary..."
         self.update_status("Building IFC GUID lookup dictionary...")
         
-        logger.debug("Building IFC GUID element lookup dictionary...")
         ifc_guid_dict = {}
         
         # Collect elements to update
@@ -915,8 +928,6 @@ class StreamBIMImporterUI(forms.WPFWindow):
             except:
                 continue
         
-        logger.debug("Found {} elements with IFC GUIDs".format(ifc_guid_count))
-        
         self.progressBar.Value = 40
         self.progressText.Text = "Processing checklist items..."
         
@@ -942,7 +953,6 @@ class StreamBIMImporterUI(forms.WPFWindow):
                 return
             
             self.update_status("Resolving grouped checklist items...")
-            logger.info("Processing grouped checklist with group-by: {}".format(self.selected_checklist_group_by))
             
             # Build mapping from IFC GUID to property value
             guid_to_value = {}
@@ -994,8 +1004,6 @@ class StreamBIMImporterUI(forms.WPFWindow):
                 except Exception as e:
                     logger.error("Error resolving group key: {}".format(str(e)))
                     continue
-            
-            logger.info("Resolved {} groups to {} IFC GUID mappings".format(total_groups, len(guid_to_value)))
             
         else:
             # Non-grouped checklist: direct GUID matching (existing behavior)
@@ -1113,8 +1121,8 @@ class StreamBIMImporterUI(forms.WPFWindow):
     
     def update_status(self, message):
         """Update status text."""
-        self.statusTextBlock.Text = message
-        logger.debug(message)
+        # Status bar removed from UI - method kept for compatibility but does nothing
+        pass
 
     def projects_list_double_click(self, sender, args):
         """Handle double-click on projects list view."""
@@ -1196,16 +1204,6 @@ class StreamBIMImporterUI(forms.WPFWindow):
         streambim_prop = self.streamBIMPropertiesComboBox.SelectedItem
         revit_param = self.revitParametersComboBox.SelectedItem
         
-        logger.debug("Saving mapping configuration:")
-        logger.debug("- StreamBIM property: {}".format(streambim_prop))
-        logger.debug("- Revit parameter: {}".format(revit_param))
-        logger.debug("- Selected checklist ID: {}".format(self.selected_checklist_id))
-        logger.debug("- Selected checklist name: {}".format(self.selected_checklist_name))
-
-        # Debug print each mapping entry
-        for mapping in self.mappings:
-            logger.debug("- Mapping: {}".format(mapping))
-        
         if not streambim_prop or not revit_param or not self.selected_checklist_id:
             self.update_status("Cannot save mapping: missing property or parameter selection")
             return False
@@ -1221,7 +1219,6 @@ class StreamBIMImporterUI(forms.WPFWindow):
                 })
             
         mapping_json = json.dumps(mapping_data, ensure_ascii=False)
-        logger.debug("Mapping JSON: {}".format(mapping_json))
         
         try:
             # Create configuration dictionary for the new config
@@ -1237,7 +1234,6 @@ class StreamBIMImporterUI(forms.WPFWindow):
             
             # Load existing configurations
             existing_configs = load_configs_with_pickle(revit.doc)
-            logger.debug("Loaded {} existing configurations".format(len(existing_configs)))
             
             # Check if we already have a config with the same checklist_id and property
             updated_existing = False
@@ -1245,14 +1241,12 @@ class StreamBIMImporterUI(forms.WPFWindow):
                 if (config.get('checklist_id') == self.selected_checklist_id and 
                     config.get('streambim_property') == streambim_prop):
                     # Update the existing config
-                    logger.debug("Updating existing configuration")
                     existing_configs[i] = new_config
                     updated_existing = True
                     break
             
             # If we didn't update an existing config, append the new one
             if not updated_existing:
-                logger.debug("Adding new configuration")
                 existing_configs.append(new_config)
             
             # Save all configurations
@@ -1273,7 +1267,6 @@ class StreamBIMImporterUI(forms.WPFWindow):
     def load_mapping_configuration(self):
         """Load mapping configuration from extensible storage if available."""
         if self.is_loading_configuration:
-            logger.debug("Already loading configuration, skipping")
             return False
             
         self.is_loading_configuration = True
@@ -1284,7 +1277,6 @@ class StreamBIMImporterUI(forms.WPFWindow):
                 return False
                 
             streambim_prop = self.streamBIMPropertiesComboBox.SelectedItem
-            logger.debug("Loading configuration for StreamBIM property: {}".format(streambim_prop))
 
             # Clear the mappings list
             self.mappings.Clear()
@@ -1292,23 +1284,17 @@ class StreamBIMImporterUI(forms.WPFWindow):
             self.mappingGrid.Visibility = Visibility.Collapsed
 
             if not streambim_prop or not self.selected_checklist_id:
-                logger.debug("No StreamBIM property or checklist ID selected")
                 return False
                 
             # Load configurations from new pickle-based storage
             loaded_configs = load_configs_with_pickle(revit.doc)
-            logger.debug("Loaded {} configurations from storage".format(len(loaded_configs)))
             
             # Find a matching configuration
             matching_config = None
             for config in loaded_configs:
-                logger.debug("Checking config: checklist_id={}, property={}".format(
-                    config.get('checklist_id'), config.get('streambim_property')))
-                
                 if (config.get('checklist_id') == self.selected_checklist_id and 
                     config.get('streambim_property') == streambim_prop):
                     matching_config = config
-                    logger.debug("Found matching configuration")
                     break
             
             if matching_config:
@@ -1317,20 +1303,10 @@ class StreamBIMImporterUI(forms.WPFWindow):
                 mapping_config = matching_config.get('mapping_config')
                 mapping_enabled = matching_config.get('mapping_enabled')
 
-                logger.debug("Found matching configuration:")
-                logger.debug("- Checklist ID: {}".format(matching_config.get('checklist_id')))
-                logger.debug("- Checklist name: {}".format(matching_config.get('checklist_name')))
-                logger.debug("- StreamBIM property: {}".format(matching_config.get('streambim_property')))
-                logger.debug("- Revit parameter to restore: {}".format(revit_parameter))
-                logger.debug("- Enable mapping: {}".format(mapping_enabled))
-                
                 # Only try to restore parameter selection if we have parameters loaded
                 if revit_parameter and self.revitParametersComboBox.Items and self.revitParametersComboBox.Items.Count > 0:
-                    logger.debug("Available Revit parameters:")
                     for index, item in enumerate(self.revitParametersComboBox.Items):
-                        logger.debug("- Item: '{}' (type: {})".format(item, type(item)))
                         if str(item).strip() == str(revit_parameter).strip():
-                            logger.debug("Found matching parameter: {} at index {}".format(item, index))
                             self.revitParametersComboBox.SelectedIndex = index
                             break
                 
@@ -1344,7 +1320,6 @@ class StreamBIMImporterUI(forms.WPFWindow):
                                 ChecklistValue=mapping.get('ChecklistValue', ''),
                                 RevitValue=mapping.get('RevitValue', '')
                             ))
-                        logger.debug("Restored {} mapping entries".format(len(mapping_data)))
                     except Exception as e:
                         logger.error("Error parsing mapping JSON: {}".format(str(e)))
                 
@@ -1352,11 +1327,8 @@ class StreamBIMImporterUI(forms.WPFWindow):
                 self.enableMappingCheckBox.IsChecked = mapping_enabled if mapping_enabled is not None else False
                 self.mappingGrid.Visibility = Visibility.Visible if self.enableMappingCheckBox.IsChecked else Visibility.Collapsed
                 self.update_status("Loaded mapping configuration")
-                logger.debug("Loaded mapping configuration")
 
                 return True
-            else:
-                logger.debug("No matching configuration found in new storage")
             
             return False
         except Exception as e:
@@ -1423,7 +1395,6 @@ class StreamBIMImporterUI(forms.WPFWindow):
             
             # Load existing configurations
             existing_configs = load_configs_with_pickle(revit.doc)
-            logger.debug("Loaded {} existing configurations".format(len(existing_configs)))
             
             # Check if we already have a config with the same checklist_id and property
             updated_existing = False
@@ -1431,14 +1402,12 @@ class StreamBIMImporterUI(forms.WPFWindow):
                 if (config.get('checklist_id') == self.current_checklist['id'] and 
                     config.get('streambim_property') == self.selected_property):
                     # Update the existing config
-                    logger.debug("Updating existing configuration")
                     existing_configs[i] = new_config
                     updated_existing = True
                     break
             
             # If we didn't update an existing config, append the new one
             if not updated_existing:
-                logger.debug("Adding new configuration")
                 existing_configs.append(new_config)
             
             # Save all configurations

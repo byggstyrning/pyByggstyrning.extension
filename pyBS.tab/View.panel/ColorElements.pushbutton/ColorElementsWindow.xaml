@@ -6,7 +6,8 @@
     Width="500"
     ResizeMode="CanResizeWithGrip"
     WindowStartupLocation="CenterScreen"
-    ShowInTaskbar="True">
+    ShowInTaskbar="True"
+    Background="{DynamicResource WindowBackgroundBrush}">
     
     <!-- Styles will be loaded programmatically -->
     
@@ -14,7 +15,6 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto" MinHeight="50"/>
         </Grid.RowDefinitions>
         
         <!-- Busy Indicator Overlay -->
@@ -35,42 +35,41 @@
             <!-- Left Panel - Categories -->
             <Border Style="{DynamicResource PanelBorderStyle}" Margin="10,5,5,5">
                 <DockPanel>
-                    <TextBlock Text="Category" Style="{DynamicResource SubheaderTextBlockStyle}" DockPanel.Dock="Top" Margin="5"/>
+                    <TextBlock Text="Select categories" Style="{DynamicResource SubheaderTextBlockStyle}" DockPanel.Dock="Top" Margin="5"/>
                     <CheckBox x:Name="selectAllCategoriesCheckBox" Content="Select All" Style="{DynamicResource StandardCheckBoxStyle}" Margin="5,0,5,5" DockPanel.Dock="Top" IsThreeState="True" VerticalAlignment="Center" VerticalContentAlignment="Center" Checked="SelectAllCategories_Changed" Unchecked="SelectAllCategories_Changed" Indeterminate="SelectAllCategories_Changed"/>
-                    <ScrollViewer VerticalScrollBarVisibility="Auto">
-                        <ListBox x:Name="categoryListBox" Style="{DynamicResource StandardListBoxStyle}" BorderThickness="0">
-                            <ListBox.ItemTemplate>
-                                <DataTemplate>
-                                    <Grid Background="Transparent" VerticalAlignment="Center">
-                                        <CheckBox Content="{Binding name}" Tag="{Binding}" IsChecked="{Binding IsSelected, Mode=TwoWay}" Margin="0" Padding="0,0,0,1" VerticalAlignment="Center" VerticalContentAlignment="Center"/>
-                                    </Grid>
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                            <ListBox.ItemContainerStyle>
-                                <Style TargetType="ListBoxItem">
-                                    <Setter Property="Padding" Value="0"/>
-                                    <Setter Property="Margin" Value="0"/>
-                                    <Setter Property="VerticalContentAlignment" Value="Center"/>
-                                    <Setter Property="Template">
-                                        <Setter.Value>
-                                            <ControlTemplate TargetType="ListBoxItem">
-                                                <Border Background="{TemplateBinding Background}" 
-                                                        BorderBrush="{TemplateBinding BorderBrush}"
-                                                        BorderThickness="{TemplateBinding BorderThickness}">
-                                                    <ContentPresenter VerticalAlignment="Center"/>
-                                                </Border>
-                                            </ControlTemplate>
-                                        </Setter.Value>
-                                    </Setter>
-                                </Style>
-                            </ListBox.ItemContainerStyle>
-                        </ListBox>
-                    </ScrollViewer>
+                    <ListBox x:Name="categoryListBox" Style="{DynamicResource StandardListBoxStyle}" BorderThickness="0" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Auto">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Background="Transparent" VerticalAlignment="Center">
+                                    <CheckBox Content="{Binding name}" Tag="{Binding}" IsChecked="{Binding IsSelected, Mode=TwoWay}" Margin="0" Padding="0,0,0,1" VerticalAlignment="Center" VerticalContentAlignment="Center" Foreground="{DynamicResource TextBrush}" Style="{DynamicResource StandardCheckBoxStyle}"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="Padding" Value="0"/>
+                                <Setter Property="Margin" Value="0"/>
+                                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                                <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListBoxItem">
+                                            <Border Background="{TemplateBinding Background}" 
+                                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                                    BorderThickness="{TemplateBinding BorderThickness}">
+                                                <ContentPresenter VerticalAlignment="Center"/>
+                                            </Border>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                    </ListBox>
                 </DockPanel>
             </Border>
             
             <!-- Right Panel - Parameters and Values -->
-            <Grid Grid.Column="1" Margin="5,5,10,5">
+            <Grid Grid.Column="1" Margin="10">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
@@ -79,25 +78,26 @@
                 </Grid.RowDefinitions>
                 
                 <!-- Parameter Type Selection -->
-                <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="5">
+                <StackPanel Grid.Row="0" Orientation="Horizontal">
                     <RadioButton x:Name="instanceRadioButton" Content="Instance" IsChecked="True" GroupName="ParameterType" Style="{DynamicResource SegmentedRadioButtonFirstStyle}"/>
                     <RadioButton x:Name="typeRadioButton" Content="Type" GroupName="ParameterType" Style="{DynamicResource SegmentedRadioButtonLastStyle}"/>
                 </StackPanel>
                 
                 <!-- Parameter Selection -->
-                <Grid Grid.Row="1" Margin="5">
+                <Grid Grid.Row="1" Margin="0,10,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <ComboBox x:Name="parameterSelector" Style="{DynamicResource SearchableComboBoxStyle}" Tag="Select parameter..." Margin="0"/>
+                    <ComboBox x:Name="parameterSelector" Style="{DynamicResource SearchableComboBoxStyle}" Tag="Select parameter...">
+                    </ComboBox>
                     <Button Grid.Column="1" Width="30" Height="30" Margin="4,0,0,0" Padding="0" ToolTip="Refresh Parameters" x:Name="refreshParametersButton" Background="Transparent" BorderThickness="0" Cursor="Hand">
                         <Image x:Name="refreshParametersImage" Stretch="Uniform" Width="30" Height="30"/>
                     </Button>
                 </Grid>
                 
                 <!-- Values and Colors -->
-                <Border Grid.Row="2" Style="{DynamicResource PanelBorderStyle}">
+                <Border Grid.Row="2" Style="{DynamicResource PanelBorderStyle}" Margin="0,10,0,0">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
@@ -129,8 +129,8 @@
                                             <ColumnDefinition Width="70"/>
                                         </Grid.ColumnDefinitions>
                                         <CheckBox Grid.Column="0" Margin="0,0" IsChecked="{Binding IsChecked, Mode=TwoWay}" Checked="ValueCheckbox_Changed" Unchecked="ValueCheckbox_Changed"/>
-                                        <TextBlock Grid.Column="1" Text="{Binding value}" VerticalAlignment="Center" Margin="5,0"/>
-                                        <Border Grid.Column="2" Width="50" Height="20" Background="{Binding color}" BorderBrush="Black" BorderThickness="1" HorizontalAlignment="Center"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding value}" VerticalAlignment="Center" Margin="5,0" Foreground="{DynamicResource TextBrush}"/>
+                                        <Border Grid.Column="2" Width="50" Height="20" Background="{Binding color}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" HorizontalAlignment="Center"/>
                                     </Grid>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
@@ -146,7 +146,7 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="Override Projection/Cut Lines" VerticalAlignment="Center"/>
+                        <TextBlock Text="Override Projection/Cut Lines" VerticalAlignment="Center" Foreground="{DynamicResource TextBrush}"/>
                         <CheckBox Grid.Column="1" Style="{DynamicResource ToggleSwitchStyle}" x:Name="overrideProjectionCheckbox"/>
                     </Grid>
                     
@@ -155,7 +155,7 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="Select Elements in Properties" VerticalAlignment="Center"/>
+                        <TextBlock Text="Select Elements in Properties" VerticalAlignment="Center" Foreground="{DynamicResource TextBrush}"/>
                         <CheckBox Grid.Column="1" Style="{DynamicResource ToggleSwitchStyle}" x:Name="showElementsCheckbox"/>
                     </Grid>
 
@@ -170,12 +170,5 @@
                 </StackPanel>
             </Grid>
         </Grid>
-        
-        <!-- Status Bar -->
-        <Border Grid.Row="2" Style="{DynamicResource StatusBarBorderStyle}">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="80">
-                <TextBlock x:Name="statusText" Style="{DynamicResource StatusTextBlockStyle}"/>
-            </ScrollViewer>
-        </Border>
     </Grid>
 </Window> 

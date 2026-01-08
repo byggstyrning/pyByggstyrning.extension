@@ -6,7 +6,8 @@
     Height="600"
     WindowStartupLocation="CenterScreen"
     ShowInTaskbar="False"
-    ResizeMode="CanResize">
+    ResizeMode="CanResize"
+    Background="{DynamicResource WindowBackgroundBrush}">
     
     <!-- Styles will be loaded programmatically -->
     
@@ -58,7 +59,8 @@
                 </Grid.ColumnDefinitions>
                 
                 <CheckBox x:Name="selectAllCheckbox" Grid.Column="0" Content="Select All" 
-                          Checked="SelectAll_Checked" Unchecked="SelectAll_Unchecked" />
+                          Checked="SelectAll_Checked" Unchecked="SelectAll_Unchecked"
+                          Foreground="{DynamicResource TextBrush}" Style="{DynamicResource StandardCheckBoxStyle}"/>
             </Grid>
             
             <!-- DataGrid with Views -->
@@ -69,7 +71,8 @@
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <CheckBox IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" 
-                                          HorizontalAlignment="Center" />
+                                          HorizontalAlignment="Center"
+                                          Foreground="{DynamicResource TextBrush}" Style="{DynamicResource StandardCheckBoxStyle}"/>
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>

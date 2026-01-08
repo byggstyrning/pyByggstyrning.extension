@@ -1,6 +1,7 @@
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Spatial Mappings" Width="1100" Height="900" WindowStartupLocation="CenterScreen">
+        Title="Spatial Mappings" Width="1100" Height="900" WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource WindowBackgroundBrush}">
     <!-- Styles will be loaded programmatically -->
     <Grid Margin="10">
         <Grid.RowDefinitions>
@@ -24,31 +25,38 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <ListView x:Name="configsListView" Grid.Row="0" Margin="0,0,0,10" SelectionMode="Single">
+                    <ListView x:Name="configsListView" Grid.Row="0" Margin="0,0,0,10" SelectionMode="Single"
+                              Background="{DynamicResource ControlBackgroundBrush}"
+                              Foreground="{DynamicResource TextBrush}"
+                              BorderBrush="{DynamicResource BorderBrush}"
+                              BorderThickness="1">
                         <ListView.View>
                             <GridView>
                                 <GridViewColumn Header="Name" Width="200">
                                     <GridViewColumn.CellTemplate>
                                         <DataTemplate>
-                                            <TextBlock Text="{Binding Name}" VerticalAlignment="Center" Margin="5,0"/>
+                                            <TextBlock Text="{Binding Name}" VerticalAlignment="Center" Margin="5,0"
+                                                      Foreground="{DynamicResource TextBrush}"/>
                                         </DataTemplate>
                                     </GridViewColumn.CellTemplate>
                                 </GridViewColumn>
                                 <GridViewColumn Header="Source Categories" Width="200">
                                     <GridViewColumn.CellTemplate>
                                         <DataTemplate>
-                                            <TextBlock Text="{Binding SourceCategoriesDisplay}" VerticalAlignment="Center" Margin="5,0"/>
+                                            <TextBlock Text="{Binding SourceCategoriesDisplay}" VerticalAlignment="Center" Margin="5,0"
+                                                      Foreground="{DynamicResource TextBrush}"/>
                                         </DataTemplate>
                                     </GridViewColumn.CellTemplate>
                                 </GridViewColumn>
                                 <GridViewColumn Header="Mappings" Width="250">
                                     <GridViewColumn.CellTemplate>
                                         <DataTemplate>
-                                            <TextBlock x:Name="mappingsTextBlock" TextWrapping="Wrap" VerticalAlignment="Center" Margin="5,0" Loaded="MappingsTextBlock_Loaded"/>
+                                            <TextBlock x:Name="mappingsTextBlock" TextWrapping="Wrap" VerticalAlignment="Center" Margin="5,0"
+                                                      Foreground="{DynamicResource TextBrush}" Loaded="MappingsTextBlock_Loaded"/>
                                         </DataTemplate>
                                     </GridViewColumn.CellTemplate>
                                 </GridViewColumn>
-                                <GridViewColumn Header="Enabled" Width="60">
+                                <GridViewColumn Header="Enabled" Width="80">
                                     <GridViewColumn.CellTemplate>
                                         <DataTemplate>
                                             <CheckBox x:Name="enabledCheckBox" IsChecked="{Binding Enabled, Mode=TwoWay}" 
@@ -58,7 +66,7 @@
                                         </DataTemplate>
                                     </GridViewColumn.CellTemplate>
                                 </GridViewColumn>
-                                <GridViewColumn Header="On IFC Export" Width="100">
+                                <GridViewColumn Header="On IFC Export" Width="130">
                                     <GridViewColumn.CellTemplate>
                                         <DataTemplate>
                                             <CheckBox x:Name="writeBeforeIfcCheckBox" IsChecked="{Binding WriteBeforeIfcExport, Mode=TwoWay}" 
@@ -68,7 +76,7 @@
                                         </DataTemplate>
                                     </GridViewColumn.CellTemplate>
                                 </GridViewColumn>
-                                <GridViewColumn Header="Only Empty" Width="80">
+                                <GridViewColumn Header="Only Empty" Width="100">
                                     <GridViewColumn.CellTemplate>
                                         <DataTemplate>
                                             <CheckBox x:Name="onlyEmptyCheckBox" IsChecked="{Binding OnlyEmpty, Mode=TwoWay}" 
@@ -113,14 +121,16 @@
 
                         <!-- Row 0: Mapping Name -->
                         <TextBlock Text="Name:" Grid.Row="0" Grid.Column="0" Margin="0,10,10,5" VerticalAlignment="Center" Style="{DynamicResource SubheaderTextBlockStyle}"/>
-                        <StackPanel Grid.Row="0" Grid.Column="1" Margin="0,10,0,5">
+                        <StackPanel Grid.Row="0" Grid.Column="1">
                             <Border BorderBrush="#999999" BorderThickness="2" CornerRadius="3">
-                                <TextBox x:Name="nameTextBox" Height="25" Tag="Enter mapping name..." BorderThickness="0">
+                                <TextBox x:Name="nameTextBox" Tag="Enter mapping name..." BorderThickness="0">
                                     <TextBox.Style>
                                         <Style TargetType="TextBox">
-                                            <Setter Property="Padding" Value="10,3"/>
+                                            <Setter Property="Padding" Value="10,3,0,0"/>
+                                            <Setter Property="Margin" Value="0,0,0,0"/>
                                             <Setter Property="VerticalContentAlignment" Value="Center"/>
-                                            <Setter Property="Background" Value="White"/>
+                                            <Setter Property="Background" Value="{DynamicResource ControlBackgroundBrush}"/>
+                                            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
                                             <Setter Property="Template">
                                                 <Setter.Value>
                                                     <ControlTemplate TargetType="TextBox">
@@ -202,7 +212,7 @@
                                 <ListBox x:Name="targetFilterCategoriesListBox" Height="120" SelectionMode="Multiple" Style="{DynamicResource StandardListBoxStyle}" BorderThickness="0">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate>
-                                            <TextBlock Text="{Binding}">
+                                            <TextBlock Text="{Binding}" Foreground="{DynamicResource TextBrush}">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock">
                                                         <Setter Property="FontWeight" Value="Normal"/>

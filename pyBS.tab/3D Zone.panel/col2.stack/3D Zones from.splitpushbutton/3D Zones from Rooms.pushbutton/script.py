@@ -8,6 +8,7 @@ replacing the extrusion profile with each room's boundary loops.
 __title__ = "Create 3D Zones from Rooms"
 __author__ = "Byggstyrning AB"
 __doc__ = "Create Generic Model family instances from Room boundaries using 3DZone.rfa template"
+__highlight__ = 'new'
 
 # Import standard libraries
 import sys
@@ -43,7 +44,7 @@ extension_dir = op.dirname(tab_dir)  # Go up one more level to get extension roo
 lib_path = op.join(extension_dir, 'lib')
 
 if lib_path not in sys.path:
-    sys.path.append(lib_path)
+    sys.path.insert(0, lib_path)
 
 # Initialize logger
 logger = script.get_logger()

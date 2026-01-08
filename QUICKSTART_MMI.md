@@ -136,7 +136,7 @@ Configure automated monitoring features for quality control.
 
 ### Available Settings
 
-1. **Validate MMI** - Auto-corrects MMI value formats (e.g., "2 00" → "200")
+1. **Attempt to fix MMI values** - Auto-corrects MMI value formats (e.g., "2 00" → "200")
 2. **Pin elements >=400** - Auto-pins high-status elements to prevent modification
 3. **Warn when moving elements >=425** - Shows warnings when moving approved elements
 4. **Check MMI after sync** - Verifies MMI values after sync with central
@@ -149,7 +149,7 @@ Configure automated monitoring features for quality control.
 
 <img width="600" height="181" alt="image" src="https://github.com/user-attachments/assets/105a62c2-fbf7-4287-9197-69ca9325ccd9" />
 
-**Recommended:** Enable Validate MMI, Pin elements >=400, and Check MMI after sync for most projects.
+**Recommended:** Enable Attempt to fix MMI values, Pin elements >=400, and Check MMI after sync for most projects.
 
 ---
 
@@ -174,7 +174,7 @@ The MMI Monitor automatically enforces the rules you configured in MMI Settings 
 ### What the Monitor Does
 
 The monitor runs in the background and:
-- **Validates MMI formats** - Auto-corrects spacing and formatting issues
+- **Attempts to fix MMI formats** - Auto-corrects spacing and formatting issues
 - **Pins high-status elements** - Prevents accidental changes to elements with MMI >=400
 - **Warns on moves** - Notifies when approved elements are moved
 - **Checks after sync** - Verifies MMI values after syncing with central

@@ -9,6 +9,7 @@ Instances are placed in the active view respecting the view's phase.
 __title__ = "Create 3D Zones from Regions"
 __author__ = "Byggstyrning AB"
 __doc__ = "Create Generic Model family instances from FilledRegion boundaries using 3DZone.rfa template"
+__highlight__ = 'new'
 
 # Import standard libraries
 import sys

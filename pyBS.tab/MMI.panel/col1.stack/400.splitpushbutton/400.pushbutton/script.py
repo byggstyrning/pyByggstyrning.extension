@@ -6,6 +6,8 @@ Objektet är klart för produktion eller byggarbetsplats. Objektet är definiera
 
 If elements are selected: Sets the MMI parameter value to 400 on selected elements.
 If no selection: Selects all elements with MMI value 400.
+
+Shift-Click: Selects all elements with MMI value 400.
 Based on MMI veilederen: https://mmi-veilederen.no/?page_id=85"""
 
 # Add the lib directory to sys.path for importing
@@ -23,18 +25,21 @@ lib_path = op.join(extension_dir, 'lib')
 if lib_path not in sys.path:
     sys.path.append(lib_path)
 
-from pyrevit import revit
+from pyrevit import revit, script
 from mmi.core import set_selection_mmi_value
 from mmi.utils import select_elements_by_mmi
+
+# Check if shift is held (alternative to config.py)
+is_shift = script.get_config().get_option('shiftclick', False)
 
 # Check if there's a selection
 selection = revit.get_selection()
 
-if not selection or not selection.element_ids:
-    # No selection: select elements by MMI value
+if is_shift or not selection or not selection.element_ids:
+    # No selection or Shift held: select elements by MMI value
     select_elements_by_mmi(revit.doc, revit.uidoc, "400")
 else:
-    # Selection exists: set MMI value on selected elements
+    # Selection exists and no Shift: set MMI value on selected elements
     set_selection_mmi_value(revit.doc, "400")
 
 # --------------------------------------------------
