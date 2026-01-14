@@ -231,7 +231,13 @@
                             
                             <StackPanel Grid.Row="3" Grid.Column="0" Margin="0,10,5,0">
                                 <TextBlock Text="Sort Source Elements By (optional):" Margin="0,0,0,3" Style="{DynamicResource SecondaryTextBlockStyle}"/>
-                                <ComboBox x:Name="sourceSortPropertyComboBox" Style="{DynamicResource StandardComboBoxStyle}"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <ComboBox x:Name="sourceSortPropertyComboBox" Style="{DynamicResource StandardComboBoxStyle}" Width="200"/>
+                                    <RadioButton x:Name="sortAscendingRadioButton" Content="Ascending" IsChecked="True" 
+                                                 GroupName="SortDirection" Style="{DynamicResource SegmentedRadioButtonFirstStyle}" Margin="15,0,0,0"/>
+                                    <RadioButton x:Name="sortDescendingRadioButton" Content="Descending" 
+                                                 GroupName="SortDirection" Style="{DynamicResource SegmentedRadioButtonLastStyle}"/>
+                                </StackPanel>
                             </StackPanel>
                         </Grid>
 

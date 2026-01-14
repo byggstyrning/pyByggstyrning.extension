@@ -96,6 +96,10 @@ def deserialize_config(config_dict):
     if "source_sort_property" not in deserialized:
         deserialized["source_sort_property"] = "ElementId"
     
+    # Ensure source_sort_descending defaults to False if missing (backward compatibility)
+    if "source_sort_descending" not in deserialized:
+        deserialized["source_sort_descending"] = False
+    
     return deserialized
 
 def get_or_create_storage(doc):

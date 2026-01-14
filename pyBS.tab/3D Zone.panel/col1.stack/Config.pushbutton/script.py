@@ -90,6 +90,7 @@ class ConfigItem(INotifyPropertyChanged):
         self.use_linked_document = config_dict.get("use_linked_document", False)
         self.linked_document_name = config_dict.get("linked_document_name", None)
         self.source_sort_property = config_dict.get("source_sort_property", "ElementId")
+        self.source_sort_descending = config_dict.get("source_sort_descending", False)
         # Initialize the event handler list
         self._property_changed_handlers = []
     
@@ -832,6 +833,10 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         self.sourceSortPropertyComboBox.Items.Add("ElementId")
         self.sourceSortPropertyComboBox.SelectedItem = "ElementId"
         
+        # Initialize sort direction radio buttons (default to ascending)
+        self.sortAscendingRadioButton.IsChecked = True
+        self.sortDescendingRadioButton.IsChecked = False
+        
         # Initial UI state
         self.tabControl.SelectedItem = self.configsTab
         self.editConfigTab.IsEnabled = False
@@ -1016,7 +1021,8 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
                         "ifc_export_only_empty": config_item.ifc_export_only_empty,
                         "use_linked_document": config_item.use_linked_document if hasattr(config_item, 'use_linked_document') else False,
                         "linked_document_name": config_item.linked_document_name if hasattr(config_item, 'linked_document_name') else None,
-                        "source_sort_property": config_item.source_sort_property if hasattr(config_item, 'source_sort_property') else "ElementId"
+                        "source_sort_property": config_item.source_sort_property if hasattr(config_item, 'source_sort_property') else "ElementId",
+                        "source_sort_descending": config_item.source_sort_descending if hasattr(config_item, 'source_sort_descending') else False
                     }
                     break
             
@@ -1306,6 +1312,10 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         self.useLinkedDocumentCheckBox.IsChecked = False
         self.linkedDocumentComboBox.SelectedItem = None
         
+        # Reset sort direction (default to ascending)
+        self.sortAscendingRadioButton.IsChecked = True
+        self.sortDescendingRadioButton.IsChecked = False
+        
         # Reset validation state
         self._validation_errors = {
             "name": False,
@@ -1434,6 +1444,15 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
             self.sourceSortPropertyComboBox.Items.Clear()
             self.sourceSortPropertyComboBox.Items.Add("ElementId")
             self.sourceSortPropertyComboBox.SelectedItem = "ElementId"
+        
+        # Load sort direction (default to ascending/False)
+        sort_descending = selected_config.source_sort_descending if hasattr(selected_config, 'source_sort_descending') else False
+        if sort_descending:
+            self.sortDescendingRadioButton.IsChecked = True
+            self.sortAscendingRadioButton.IsChecked = False
+        else:
+            self.sortAscendingRadioButton.IsChecked = True
+            self.sortDescendingRadioButton.IsChecked = False
         
         # Switch to edit tab
         self.editConfigTab.IsEnabled = True
@@ -1571,6 +1590,11 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
             if self.sourceSortPropertyComboBox.SelectedItem:
                 source_sort_property = str(self.sourceSortPropertyComboBox.SelectedItem)
             
+            # Get sort direction setting (default to False/ascending)
+            source_sort_descending = False
+            if self.sortDescendingRadioButton.IsChecked:
+                source_sort_descending = True
+            
             # Get all configurations
             all_configs = config.load_configs(revit.doc)
             
@@ -1589,7 +1613,8 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
                     "ifc_export_only_empty": False,  # Default to False, user can enable in ListView
                     "use_linked_document": use_linked_document,
                     "linked_document_name": linked_document_name,
-                    "source_sort_property": source_sort_property
+                    "source_sort_property": source_sort_property,
+                    "source_sort_descending": source_sort_descending
                 }
                 all_configs.append(new_config)
             else:
@@ -1617,7 +1642,8 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
                                 "ifc_export_only_empty": cfg.get("ifc_export_only_empty", False),
                                 "use_linked_document": use_linked_document,
                                 "linked_document_name": linked_document_name,
-                                "source_sort_property": source_sort_property
+                                "source_sort_property": source_sort_property,
+                                "source_sort_descending": source_sort_descending
                             }
                             config_found = True
                             break
@@ -1636,7 +1662,9 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
                             "write_before_ifc_export": False,
                             "ifc_export_only_empty": False,
                             "use_linked_document": use_linked_document,
-                            "linked_document_name": linked_document_name
+                            "linked_document_name": linked_document_name,
+                            "source_sort_property": source_sort_property,
+                            "source_sort_descending": source_sort_descending
                         }
                         all_configs.append(new_config)
                 else:
@@ -1657,7 +1685,8 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
                                 "ifc_export_only_empty": self.current_config.ifc_export_only_empty if self.current_config else False,
                                 "use_linked_document": use_linked_document,
                                 "linked_document_name": linked_document_name,
-                                "source_sort_property": source_sort_property
+                                "source_sort_property": source_sort_property,
+                                "source_sort_descending": source_sort_descending
                             }
                             break
             

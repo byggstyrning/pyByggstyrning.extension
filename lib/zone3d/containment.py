@@ -1392,7 +1392,7 @@ def get_containing_area(element, doc, areas_by_level=None):
         logger.debug("Error getting containing area: {}".format(str(e)))
         return None
 
-def build_source_element_spatial_index(source_elements, doc, cell_size_feet=50.0, sort_property="ElementId"):
+def build_source_element_spatial_index(source_elements, doc, cell_size_feet=50.0, sort_property="ElementId", sort_descending=False):
     """Build a spatial hash index for source elements to enable fast containment queries.
     
     Creates a 2D grid (XY plane) where each cell contains a list of source elements
@@ -1404,6 +1404,7 @@ def build_source_element_spatial_index(source_elements, doc, cell_size_feet=50.0
         doc: Revit document
         cell_size_feet: Size of each grid cell in Revit internal units (feet)
         sort_property: Property name to sort by (default: "ElementId")
+        sort_descending: If True, sort in descending order (default: False)
         
     Returns:
         dict: Spatial index mapping (ix, iy) -> sorted list of source elements
@@ -1419,15 +1420,15 @@ def build_source_element_spatial_index(source_elements, doc, cell_size_feet=50.0
     # Sort elements by specified property (elements should already be sorted, but ensure consistency)
     # If sort_property is ElementId, use simple integer value sort
     if sort_property == "ElementId":
-        sorted_elements = sorted(source_elements, key=lambda el: el.Id.IntegerValue)
+        sorted_elements = sorted(source_elements, key=lambda el: el.Id.IntegerValue, reverse=sort_descending)
     else:
         # Import sort function from core
         try:
             from zone3d.core import sort_source_elements
-            sorted_elements = sort_source_elements(source_elements, sort_property)
+            sorted_elements = sort_source_elements(source_elements, sort_property, descending=sort_descending)
         except ImportError:
             # Fallback to ElementId sorting if import fails
-            sorted_elements = sorted(source_elements, key=lambda el: el.Id.IntegerValue)
+            sorted_elements = sorted(source_elements, key=lambda el: el.Id.IntegerValue, reverse=sort_descending)
     
     for element in sorted_elements:
         element_id = element.Id.IntegerValue
@@ -1468,7 +1469,7 @@ def build_source_element_spatial_index(source_elements, doc, cell_size_feet=50.0
     
     return spatial_index
 
-def get_containing_element_indexed(target_el, doc, element_index, cell_size_feet=50.0):
+def get_containing_element_indexed(target_el, doc, element_index, cell_size_feet=50.0, sort_property="ElementId", sort_descending=False):
     """Find containing element using pre-built spatial index (fast path).
     
     Uses spatial hash lookup instead of database queries. Checks a 3x3 cell
@@ -1481,7 +1482,7 @@ def get_containing_element_indexed(target_el, doc, element_index, cell_size_feet
         cell_size_feet: Size of each grid cell (must match index cell size)
         
     Returns:
-        Element: Containing element with lowest ElementId, or None
+        Element: First containing element matching user's sort order, or None
     """
     try:
         point = get_element_representative_point(target_el)
@@ -1493,27 +1494,42 @@ def get_containing_element_indexed(target_el, doc, element_index, cell_size_feet
         iy = int(point.Y / cell_size_feet)
         
         # Check 3x3 neighborhood to handle boundary cases
-        candidates = []
-        seen_ids = set()
-        
+        # Collect all candidates from all cells, allowing duplicates
+        all_candidates = []
         for di in [-1, 0, 1]:
             for dj in [-1, 0, 1]:
                 cell_key = (ix + di, iy + dj)
                 if cell_key in element_index:
-                    for source_el in element_index[cell_key]:
-                        el_id = source_el.Id.IntegerValue
-                        if el_id not in seen_ids:
-                            seen_ids.add(el_id)
-                            candidates.append(source_el)
+                    all_candidates.extend(element_index[cell_key])
         
-        if not candidates:
+        if not all_candidates:
             return None
         
-        # Check candidates in ElementId order (deterministic - lowest wins)
-        # Elements are already sorted in the index, but we may have duplicates from multiple cells
-        candidates_sorted = sorted(candidates, key=lambda el: el.Id.IntegerValue)
+        # Deduplicate candidates
+        seen_ids = set()
+        candidates_dict = {}
+        for source_el in all_candidates:
+            el_id = source_el.Id.IntegerValue
+            if el_id not in seen_ids:
+                seen_ids.add(el_id)
+                candidates_dict[el_id] = source_el
         
-        for source_el in candidates_sorted:
+        # Convert to list and sort by sort_property to preserve user's configured sort order
+        candidates = list(candidates_dict.values())
+        if sort_property == "ElementId":
+            candidates.sort(key=lambda el: el.Id.IntegerValue, reverse=sort_descending)
+        else:
+            # Use sort_source_elements function to maintain consistency with spatial index sorting
+            try:
+                from zone3d.core import sort_source_elements
+                candidates = sort_source_elements(candidates, sort_property, descending=sort_descending)
+            except ImportError:
+                # Fallback to ElementId sorting if import fails
+                candidates.sort(key=lambda el: el.Id.IntegerValue, reverse=sort_descending)
+        
+        # Check candidates in user's configured sort order (preserved from spatial index)
+        # Elements are already sorted in the index, and deduplication preserves sort order
+        for source_el in candidates:
             # Fast bounding box rejection
             try:
                 element_id = source_el.Id.IntegerValue
@@ -1527,7 +1543,7 @@ def get_containing_element_indexed(target_el, doc, element_index, cell_size_feet
             
             # Final point-in-solid check
             if is_point_in_element(source_el, point, doc):
-                return source_el  # Found containment - return lowest ElementId match
+                return source_el  # Found containment - return first match respecting user's sort order
         
         return None
     except Exception as e:
@@ -1603,7 +1619,8 @@ def get_containing_element(element, doc, source_categories):
 
 def get_containing_element_by_strategy(element, doc, strategy, source_categories=None, 
                                      rooms_by_level=None, spaces_by_level=None, areas_by_level=None,
-                                     element_index=None, element_index_cell_size=50.0):
+                                     element_index=None, element_index_cell_size=50.0, 
+                                     sort_property="ElementId", sort_descending=False):
     """Unified function that routes to appropriate containment method.
     
     Args:
@@ -1629,7 +1646,7 @@ def get_containing_element_by_strategy(element, doc, strategy, source_categories
     elif strategy == "element":
         # Use indexed lookup if index is provided (fast path)
         if element_index is not None:
-            return get_containing_element_indexed(element, doc, element_index, element_index_cell_size)
+            return get_containing_element_indexed(element, doc, element_index, element_index_cell_size, sort_property=sort_property, sort_descending=sort_descending)
         else:
             # Fallback to database query method
             return get_containing_element(element, doc, source_categories)

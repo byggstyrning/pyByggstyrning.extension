@@ -9,12 +9,13 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <ListView x:Name="configsListView" Grid.Row="0" Margin="0,0,0,10"
+        <ListBox x:Name="configsListView" Grid.Row="0" Margin="0,0,0,10"
                   Background="{DynamicResource ControlBackgroundBrush}"
                   Foreground="{DynamicResource TextBrush}"
                   BorderBrush="{DynamicResource BorderBrush}"
-                  BorderThickness="1">
-            <ListView.ItemTemplate>
+                  BorderThickness="1"
+                  Style="{DynamicResource StandardListBoxStyle}">
+            <ListBox.ItemTemplate>
                 <DataTemplate>
                     <StackPanel Orientation="Horizontal" Margin="5">
                         <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" VerticalAlignment="Center" Margin="0,0,10,0"
@@ -23,8 +24,8 @@
                                   Foreground="{DynamicResource TextBrush}"/>
                     </StackPanel>
                 </DataTemplate>
-            </ListView.ItemTemplate>
-        </ListView>
+            </ListBox.ItemTemplate>
+        </ListBox>
 
         <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right">
             <Button x:Name="writeButton" Content="Write" Width="100" IsDefault="True" Style="{DynamicResource StandardButtonStyle}"/>

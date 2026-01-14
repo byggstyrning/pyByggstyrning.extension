@@ -200,7 +200,7 @@ def has_target_parameter(element, target_param_names):
     
     return False
 
-def sort_source_elements(source_elements, sort_property="ElementId"):
+def sort_source_elements(source_elements, sort_property="ElementId", descending=False):
     """Sort source elements by a property value.
     
     Elements with empty/missing sort property values come first,
@@ -209,6 +209,7 @@ def sort_source_elements(source_elements, sort_property="ElementId"):
     Args:
         source_elements: List of source elements to sort
         sort_property: Name of property to sort by (default: "ElementId")
+        descending: If True, sort in descending order (default: False)
         
     Returns:
         list: Sorted list of source elements
@@ -218,7 +219,7 @@ def sort_source_elements(source_elements, sort_property="ElementId"):
     
     # If sorting by ElementId, use simple integer value sort
     if sort_property == "ElementId":
-        return sorted(source_elements, key=lambda el: el.Id.IntegerValue)
+        return sorted(source_elements, key=lambda el: el.Id.IntegerValue, reverse=descending)
     
     def get_sort_value(element):
         """Get sort value from element property.
@@ -275,13 +276,50 @@ def sort_source_elements(source_elements, sort_property="ElementId"):
     
     # Sort elements using the sort value function
     # Elements with empty values (has_value=0) come first, then sorted by value
+    # CRITICAL: descending only affects sort_value, not has_value (empty values always first)
     try:
-        sorted_elements = sorted(source_elements, key=get_sort_value)
-        return sorted_elements
+        # Separate empty and non-empty elements
+        empty_elements = []
+        non_empty_elements = []
+        for element in source_elements:
+            has_value, sort_value, element_id = get_sort_value(element)
+            if has_value == 0:
+                empty_elements.append(element)
+            else:
+                non_empty_elements.append(element)
+        
+        # Sort empty elements by element_id (deterministic)
+        empty_elements.sort(key=lambda el: el.Id.IntegerValue)
+        
+        # Sort non-empty elements by sort_value
+        # For descending, we need to handle different types differently
+        if descending:
+            # For descending, sort ascending first, then reverse
+            # This ensures proper descending order for all types (strings, numbers, etc.)
+            def get_non_empty_sort_key(element):
+                """Get sort key for non-empty elements (ascending)."""
+                has_value, sort_value, element_id = get_sort_value(element)
+                return (sort_value, element_id)
+            
+            non_empty_elements.sort(key=get_non_empty_sort_key)
+            non_empty_elements.reverse()
+        else:
+            # For ascending, normal sort
+            def get_non_empty_sort_key(element):
+                """Get sort key for non-empty elements (ascending)."""
+                has_value, sort_value, element_id = get_sort_value(element)
+                return (sort_value, element_id)
+            
+            non_empty_elements.sort(key=get_non_empty_sort_key)
+        
+        # Combine: empty elements first, then non-empty elements
+        result = empty_elements + non_empty_elements
+        
+        return result
     except Exception as e:
         logger.warning("Error sorting source elements by property '{}': {}".format(sort_property, str(e)))
         # Fallback to ElementId sorting
-        return sorted(source_elements, key=lambda el: el.Id.IntegerValue)
+        return sorted(source_elements, key=lambda el: el.Id.IntegerValue, reverse=descending)
 
 def is_3dzone_family(element):
     """Check if an element is a 3DZone family (Generic Model with family name containing "3DZone").
@@ -728,8 +766,10 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
         
         # Sort source elements by configured sort property (default: ElementId)
         sort_property = zone_config.get("source_sort_property", "ElementId")
-        source_elements = sort_source_elements(source_elements, sort_property)
-        logger.debug("[DEBUG] Sorted {} source elements by property: {}".format(len(source_elements), sort_property))
+        sort_descending = zone_config.get("source_sort_descending", False)
+        
+        source_elements = sort_source_elements(source_elements, sort_property, descending=sort_descending)
+        logger.debug("[DEBUG] Sorted {} source elements by property: {} (descending: {})".format(len(source_elements), sort_property, sort_descending))
         
         # Pre-compute geometries for Mass/Generic Model elements and Areas (batch operation)
         # This improves performance by calculating all geometries in one pass
@@ -743,7 +783,7 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
         if strategy == "element":
             index_start_time = time.time()
             element_index = containment.build_source_element_spatial_index(
-                source_elements, source_doc, element_index_cell_size, sort_property=sort_property
+                source_elements, source_doc, element_index_cell_size, sort_property=sort_property, sort_descending=sort_descending
             )
             index_time = time.time() - index_start_time
             logger.debug("[DEBUG] Built spatial index in {:.2f}s".format(index_time))
@@ -1020,7 +1060,8 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
                     containing_el = containment.get_containing_element_by_strategy(
                         target_el, source_doc, strategy, categories_for_containment,  # Use source_doc, not doc
                         rooms_by_level, spaces_by_level, areas_by_level,
-                        element_index, element_index_cell_size
+                        element_index, element_index_cell_size,
+                        sort_property=sort_property, sort_descending=sort_descending
                     )
                 
                 # Additional check: if using 3D Zone marker, verify family name matches
