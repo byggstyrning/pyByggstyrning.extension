@@ -63,56 +63,11 @@ except ImportError as e:
 class ConfigItemViewModel(INotifyPropertyChanged):
     """ViewModel for configuration item with checkbox binding."""
     def __init__(self, config_dict):
-        # #region agent log
-        try:
-            import json
-            import time
-            log_dir = op.join(extension_dir, '.cursor')
-            if not op.exists(log_dir):
-                os.makedirs(log_dir)
-            log_file = op.join(log_dir, 'debug.log')
-            with open(log_file, 'a') as f:
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "C",
-                    "location": "script.py:65",
-                    "message": "ConfigItemViewModel.__init__ entry",
-                    "data": {"config_dict_is_none": config_dict is None, "config_dict_keys": list(config_dict.keys()) if config_dict else []},
-                    "timestamp": int(time.time() * 1000)
-                }) + "\n")
-        except Exception as e:
-            logger.error("Failed to log ViewModel init: {}".format(str(e)))
-        # #endregion
-        
         self.config_dict = config_dict
         self.name = config_dict.get("name", "Unknown")
         self.order = config_dict.get("order", 0)
         self._is_selected = config_dict.get("enabled", False)
         self.display_name = self.name
-        
-        # #region agent log
-        try:
-            import json
-            import time
-            log_dir = op.join(extension_dir, '.cursor')
-            if not op.exists(log_dir):
-                os.makedirs(log_dir)
-            log_file = op.join(log_dir, 'debug.log')
-            with open(log_file, 'a') as f:
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "E",
-                    "location": "script.py:88",
-                    "message": "ConfigItemViewModel initialized",
-                    "data": {"name": self.name, "display_name": self.display_name, "is_selected": self._is_selected},
-                    "timestamp": int(time.time() * 1000)
-                }) + "\n")
-        except Exception as e:
-            logger.error("Failed to log ViewModel initialization: {}".format(str(e)))
-        # #endregion
-        
         # Initialize the event handler list
         self._property_changed_handlers = []
     
@@ -161,28 +116,6 @@ class ConfigSelectorWindow(forms.WPFWindow):
         Args:
             configs: List of configuration dictionaries
         """
-        # #region agent log
-        try:
-            import json
-            import time
-            log_dir = op.join(extension_dir, '.cursor')
-            if not op.exists(log_dir):
-                os.makedirs(log_dir)
-            log_file = op.join(log_dir, 'debug.log')
-            with open(log_file, 'a') as f:
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "B",
-                    "location": "script.py:113",
-                    "message": "ConfigSelectorWindow.__init__ entry",
-                    "data": {"configs_count": len(configs) if configs else 0, "configs_is_none": configs is None},
-                    "timestamp": int(time.time() * 1000)
-                }) + "\n")
-        except Exception as e:
-            logger.error("Failed to log window init entry: {}".format(str(e)))
-        # #endregion
-        
         # Load styles BEFORE window initialization
         from styles import ensure_styles_loaded
         ensure_styles_loaded()
@@ -196,153 +129,16 @@ class ConfigSelectorWindow(forms.WPFWindow):
         
         # Create ObservableCollection and populate with ViewModels
         self.config_items = ObservableCollection[object]()
-        
-        # #region agent log
-        logger.debug("[DEBUG] About to populate collection with {} configs".format(len(configs) if configs else 0))
-        try:
-            import json
-            import time
-            log_dir = op.join(extension_dir, '.cursor')
-            if not op.exists(log_dir):
-                os.makedirs(log_dir)
-            log_file = op.join(log_dir, 'debug.log')
-            with open(log_file, 'a') as f:
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "C",
-                    "location": "script.py:198",
-                    "message": "before populating collection",
-                    "data": {"configs_to_process": len(configs) if configs else 0},
-                    "timestamp": int(time.time() * 1000)
-                }) + "\n")
-        except Exception as e:
-            logger.error("Failed to log before populating collection: {}".format(str(e)))
-        # #endregion
-        
         for cfg in configs:
             view_model = ConfigItemViewModel(cfg)
             self.config_items.Add(view_model)
-            logger.debug("[DEBUG] Added ViewModel: {} (collection count: {})".format(view_model.DisplayName, self.config_items.Count))
-            
-            # #region agent log
-            try:
-                import json
-                import time
-                log_dir = op.join(extension_dir, '.cursor')
-                if not op.exists(log_dir):
-                    os.makedirs(log_dir)
-                log_file = op.join(log_dir, 'debug.log')
-                with open(log_file, 'a') as f:
-                    f.write(json.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "C",
-                        "location": "script.py:207",
-                        "message": "added viewmodel to collection",
-                        "data": {"collection_count": self.config_items.Count, "viewmodel_displayname": view_model.DisplayName if hasattr(view_model, 'DisplayName') else "N/A", "viewmodel_isselected": view_model.IsSelected if hasattr(view_model, 'IsSelected') else "N/A"},
-                        "timestamp": int(time.time() * 1000)
-                    }) + "\n")
-            except Exception as e:
-                logger.error("Failed to log viewmodel addition: {}".format(str(e)))
-            # #endregion
-        
-        logger.debug("[DEBUG] Collection populated with {} items".format(self.config_items.Count))
-        
-        # #region agent log
-        logger.debug("[DEBUG] Before setting ItemsSource - collection count: {}, ListView exists: {}".format(self.config_items.Count, hasattr(self, 'configsListView')))
-        try:
-            import json
-            import time
-            log_dir = op.join(extension_dir, '.cursor')
-            if not op.exists(log_dir):
-                os.makedirs(log_dir)
-            log_file = op.join(log_dir, 'debug.log')
-            with open(log_file, 'a') as f:
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "D",
-                    "location": "script.py:240",
-                    "message": "before setting ItemsSource",
-                    "data": {"collection_count": self.config_items.Count, "listview_exists": hasattr(self, 'configsListView')},
-                    "timestamp": int(time.time() * 1000)
-                }) + "\n")
-        except Exception as e:
-            logger.error("Failed to log before ItemsSource: {}".format(str(e)))
-        # #endregion
         
         # Bind collection to ListView
         self.configsListView.ItemsSource = self.config_items
-        logger.debug("[DEBUG] ItemsSource set - count: {}".format(self.configsListView.ItemsSource.Count if self.configsListView.ItemsSource else 0))
-        
-        # Force layout update
-        self.configsListView.UpdateLayout()
-        
-        # #region agent log
-        logger.debug("[DEBUG] After setting ItemsSource - ItemsSource is None: {}, Count: {}, Visibility: {}".format(
-            self.configsListView.ItemsSource is None,
-            self.configsListView.ItemsSource.Count if self.configsListView.ItemsSource else 0,
-            self.configsListView.Visibility
-        ))
-        try:
-            import json
-            import time
-            log_dir = op.join(extension_dir, '.cursor')
-            if not op.exists(log_dir):
-                os.makedirs(log_dir)
-            log_file = op.join(log_dir, 'debug.log')
-            with open(log_file, 'a') as f:
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "D",
-                    "location": "script.py:250",
-                    "message": "after setting ItemsSource",
-                    "data": {"itemsource_set": self.configsListView.ItemsSource is not None, "itemsource_count": self.configsListView.ItemsSource.Count if self.configsListView.ItemsSource else 0, "listview_visibility": str(self.configsListView.Visibility), "listview_height": self.configsListView.ActualHeight if hasattr(self.configsListView, 'ActualHeight') else "N/A"},
-                    "timestamp": int(time.time() * 1000)
-                }) + "\n")
-        except Exception as e:
-            try:
-                import json
-                import time
-                log_dir = op.join(extension_dir, '.cursor')
-                if not op.exists(log_dir):
-                    os.makedirs(log_dir)
-                log_file = op.join(log_dir, 'debug.log')
-                with open(log_file, 'a') as f:
-                    f.write(json.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "D",
-                        "location": "script.py:250",
-                        "message": "error checking ItemsSource",
-                        "data": {"error": str(e)},
-                        "timestamp": int(time.time() * 1000)
-                    }) + "\n")
-            except: pass
-        # #endregion
         
         # Set up event handlers
         self.writeButton.Click += self.write_button_click
         self.cancelButton.Click += self.cancel_button_click
-        
-        # Add Loaded event handler to ensure ItemsSource is set after window is fully loaded
-        self.Loaded += self.window_loaded
-    
-    def window_loaded(self, sender, args):
-        """Handle window loaded event - ensure ListView is properly bound."""
-        logger.debug("[DEBUG] Window loaded - refreshing ListView binding")
-        try:
-            # Refresh the binding
-            self.configsListView.ItemsSource = None
-            self.configsListView.ItemsSource = self.config_items
-            self.configsListView.UpdateLayout()
-            logger.debug("[DEBUG] Window loaded - ItemsSource refreshed, count: {}".format(
-                self.config_items.Count if self.config_items else 0
-            ))
-        except Exception as e:
-            logger.error("Error refreshing ListView in window_loaded: {}".format(str(e)))
     
     def load_styles(self):
         """Load the common styles ResourceDictionary."""
@@ -398,28 +194,6 @@ class ConfigSelectorWindow(forms.WPFWindow):
 # --- Main Execution ---
 
 if __name__ == '__main__':
-    # #region agent log
-    try:
-        import json
-        import time
-        log_dir = op.join(extension_dir, '.cursor')
-        if not op.exists(log_dir):
-            os.makedirs(log_dir)
-        log_file = op.join(log_dir, 'debug.log')
-        with open(log_file, 'a') as f:
-            f.write(json.dumps({
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "START",
-                "location": "script.py:396",
-                "message": "script execution started",
-                "data": {"extension_dir": extension_dir, "log_file": log_file},
-                "timestamp": int(time.time() * 1000)
-            }) + "\n")
-    except Exception as e:
-        logger.error("Failed to write initial log: {}".format(str(e)))
-    # #endregion
-    
     doc = revit.doc
     
     class BatchProgressAdapter(object):
@@ -489,29 +263,6 @@ if __name__ == '__main__':
     # Load all configurations (not just enabled)
     all_configs = config.load_configs(doc)
     
-    # #region agent log
-    logger.debug("[DEBUG] config.load_configs returned {} configs".format(len(all_configs) if all_configs else 0))
-    try:
-        import json
-        import time
-        log_dir = op.join(extension_dir, '.cursor')
-        if not op.exists(log_dir):
-            os.makedirs(log_dir)
-        log_file = op.join(log_dir, 'debug.log')
-        with open(log_file, 'a') as f:
-            f.write(json.dumps({
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "A",
-                "location": "script.py:459",
-                "message": "config.load_configs result",
-                "data": {"config_count": len(all_configs) if all_configs else 0, "configs_is_none": all_configs is None, "configs_type": str(type(all_configs))},
-                "timestamp": int(time.time() * 1000)
-            }) + "\n")
-    except Exception as e:
-        logger.error("Failed to log config.load_configs result: {}".format(str(e)))
-    # #endregion
-    
     if not all_configs:
         forms.alert(
             "No configurations found.\n\n"
@@ -523,53 +274,8 @@ if __name__ == '__main__':
     # Sort configs by order for display
     all_configs.sort(key=lambda x: (x.get("order", 0), x.get("name", "")))
     
-    # #region agent log
-    try:
-        import json
-        import time
-        log_dir = op.join(extension_dir, '.cursor')
-        if not op.exists(log_dir):
-            os.makedirs(log_dir)
-        log_file = op.join(log_dir, 'debug.log')
-        with open(log_file, 'a') as f:
-            f.write(json.dumps({
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "B",
-                "location": "script.py:427",
-                "message": "configs after sort, before window creation",
-                "data": {"config_count": len(all_configs), "first_config_name": all_configs[0].get("name", "N/A") if all_configs else None},
-                "timestamp": int(time.time() * 1000)
-            }) + "\n")
-    except Exception as e:
-        logger.error("Failed to log before window creation: {}".format(str(e)))
-    # #endregion
-    
     # Show configuration selector window
     selector_window = ConfigSelectorWindow(all_configs)
-    
-    # #region agent log
-    try:
-        import json
-        import time
-        log_dir = op.join(extension_dir, '.cursor')
-        if not op.exists(log_dir):
-            os.makedirs(log_dir)
-        log_file = op.join(log_dir, 'debug.log')
-        with open(log_file, 'a') as f:
-            f.write(json.dumps({
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "C",
-                "location": "script.py:459",
-                "message": "window created, checking collection",
-                "data": {"collection_count": selector_window.config_items.Count if hasattr(selector_window, 'config_items') else 0},
-                "timestamp": int(time.time() * 1000)
-            }) + "\n")
-    except Exception as e:
-        logger.error("Failed to log window creation check: {}".format(str(e)))
-    # #endregion
-    
     selector_window.ShowDialog()
     
     # Get selected configurations
