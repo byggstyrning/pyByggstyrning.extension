@@ -166,7 +166,12 @@ class AreaAdapter(SpatialElementAdapter):
     """Adapter for Area elements."""
     
     def get_number(self, element):
-        """Get area number using LookupParameter."""
+        """Get area number using BuiltInParameter (same as rooms)."""
+        # Areas use the same ROOM_NUMBER built-in parameter as Rooms
+        param = element.get_Parameter(BuiltInParameter.ROOM_NUMBER)
+        if param and param.HasValue:
+            return param.AsString()
+        # Fallback to LookupParameter
         param_names_to_try = ["Number", "Area Number", "AREA_NUMBER", "AREA_NUM"]
         for param_name in param_names_to_try:
             param = element.LookupParameter(param_name)
@@ -175,7 +180,12 @@ class AreaAdapter(SpatialElementAdapter):
         return "?"
     
     def get_name(self, element):
-        """Get area name using LookupParameter."""
+        """Get area name using BuiltInParameter (same as rooms)."""
+        # Areas use the same ROOM_NAME built-in parameter as Rooms
+        param = element.get_Parameter(BuiltInParameter.ROOM_NAME)
+        if param and param.HasValue:
+            return param.AsString()
+        # Fallback to LookupParameter
         param_names_to_try = ["Name", "Area Name", "AREA_NAME"]
         for param_name in param_names_to_try:
             param = element.LookupParameter(param_name)

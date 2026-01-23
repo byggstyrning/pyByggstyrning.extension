@@ -63,17 +63,86 @@ class AreaItem(SpatialElementItem):
 class AreaSelectorWindow(SpatialSelectorWindow):
     """Custom WPF window for selecting areas with search functionality."""
     
+    def __init__(self, element_items, pushbutton_dir, extension_dir, doc=None):
+        """Initialize the area selector window.
+        
+        Args:
+            element_items: List of AreaItem objects
+            pushbutton_dir: Pushbutton directory (for XAML files)
+            extension_dir: Extension root directory (for styles)
+            doc: Revit document (optional, kept for backward compatibility)
+        """
+        # Call parent init
+        super(AreaSelectorWindow, self).__init__(element_items, pushbutton_dir, extension_dir)
+        
+        # Bind DataGrid instead of ListView
+        if hasattr(self, 'areasDataGrid'):
+            self.areasDataGrid.ItemsSource = self.filtered_items
+    
     def get_xaml_filename(self):
         """Return XAML filename."""
         return "AreaSelector.xaml"
     
     def get_listview_name(self):
-        """Return ListView control name."""
-        return "areasListView"
+        """Return DataGrid control name (for backward compatibility)."""
+        return "areasDataGrid"
     
     def get_element_attribute(self):
         """Return element attribute name."""
         return "area"
+    
+    def apply_filters(self):
+        """Apply search text filter to items."""
+        try:
+            # Start with all items
+            filtered = list(self.all_items)
+            
+            # Apply search text filter
+            if hasattr(self, 'searchTextBox') and self.searchTextBox.Text:
+                search_text = self.searchTextBox.Text.lower()
+                filtered = [
+                    item for item in filtered
+                    if (search_text in (item.element_number or "").lower() or
+                        search_text in (item.element_name or "").lower() or
+                        search_text in (item.level_name or "").lower())
+                ]
+            
+            # Update filtered items
+            self.filtered_items = filtered
+            
+            # Update DataGrid
+            if hasattr(self, 'areasDataGrid'):
+                self.areasDataGrid.ItemsSource = self.filtered_items
+        except Exception as e:
+            logger.debug("Error applying filters: {}".format(e))
+    
+    def searchTextBox_TextChanged(self, sender, args):
+        """Handle search text box text changed event."""
+        self.apply_filters()
+    
+    def create_button_click(self, sender, args):
+        """Handle Create button click - collect selected elements and close."""
+        # Collect all selected items from DataGrid
+        selected_items = []
+        if hasattr(self, 'areasDataGrid'):
+            for item in self.areasDataGrid.SelectedItems:
+                selected_items.append(item)
+        
+        # Extract elements from selected items
+        element_attr = self.get_element_attribute()
+        if selected_items:
+            # Try to get element via attribute, fallback to .element
+            self.selected_elements = []
+            for item in selected_items:
+                if hasattr(item, element_attr):
+                    self.selected_elements.append(getattr(item, element_attr))
+                elif hasattr(item, 'element'):
+                    self.selected_elements.append(item.element)
+        else:
+            self.selected_elements = []
+        
+        # Close window
+        self.Close()
 
 
 def show_area_filter_dialog(areas, doc):
