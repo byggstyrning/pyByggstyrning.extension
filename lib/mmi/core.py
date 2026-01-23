@@ -345,11 +345,19 @@ def save_monitor_config(doc, selected_config):
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         changes_made = False
         
+        # Build a reverse mapping (schema_key -> schema_key) for when config uses schema keys directly
+        valid_schema_keys = set(CONFIG_KEYS.values())
+        
         # Use the BaseSchema context manager directly to handle the transaction
         with MMIParameterSchema(data_storage, update=True) as entity: 
             logger.debug("Opened MMIParameterSchema context manager.")
-            for display_name, new_value in selected_config.items():
-                schema_key = CONFIG_KEYS.get(display_name)
+            for key, new_value in selected_config.items():
+                # Support both display names and schema keys as input
+                # First check if key is a display name that maps to a schema key
+                schema_key = CONFIG_KEYS.get(key)
+                # If not found, check if the key itself is already a valid schema key
+                if not schema_key and key in valid_schema_keys:
+                    schema_key = key
                 if schema_key:
                     try:
                         # Get current value *before* setting
