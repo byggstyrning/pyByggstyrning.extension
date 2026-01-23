@@ -193,6 +193,60 @@ class AreaAdapter(SpatialElementAdapter):
                 return param.AsString()
         return "Unnamed"
     
+    def get_area_type(self, element, doc):
+        """Get area type/scheme name for the Area.
+        
+        Note: In Revit, Areas have two related concepts:
+        - Area Scheme (e.g., "Gross Building", "Rentable") - accessible via element.AreaScheme
+        - Area Type (e.g., "Building Common Area", "Floor Area") - stored in AREA_TYPE parameter
+          but the element it points to has no Name property (Revit API limitation)
+        
+        This method returns the Area Scheme name since Area Type elements have no accessible name.
+        The AREA_TYPE_TEXT parameter shows the Area Type text but is read-only.
+        
+        Args:
+            element: Area element
+            doc: Revit document
+            
+        Returns:
+            str: Area scheme name or "?" if not found
+        """
+        try:
+            # Primary approach: use AreaScheme property directly
+            # This gives us the Area Scheme name (Gross Building, Rentable, etc.)
+            if hasattr(element, 'AreaScheme') and element.AreaScheme:
+                scheme_name = element.AreaScheme.Name
+                logger.debug("Area {}: AreaScheme.Name = '{}'".format(element.Id, scheme_name))
+                return scheme_name
+            else:
+                logger.debug("Area {}: AreaScheme not available".format(element.Id))
+            
+            # Fallback: try AREA_TYPE_TEXT parameter (read-only but gives the display text)
+            try:
+                param = element.get_Parameter(BuiltInParameter.AREA_TYPE_TEXT)
+                if param and param.HasValue:
+                    value = param.AsString()
+                    if value:
+                        logger.debug("Area {}: AREA_TYPE_TEXT = '{}'".format(element.Id, value))
+                        return value
+            except Exception as e:
+                logger.debug("Area {}: AREA_TYPE_TEXT error: {}".format(element.Id, e))
+            
+            # Fallback: try LookupParameter for "Area Type" as string
+            param = element.LookupParameter("Area Type")
+            if param and param.HasValue:
+                if param.StorageType == StorageType.String:
+                    value = param.AsString()
+                    if value:
+                        logger.debug("Area {}: LookupParameter('Area Type') = '{}'".format(element.Id, value))
+                        return value
+                        
+        except Exception as e:
+            logger.debug("Error getting area type for Area {}: {}".format(element.Id, e))
+        
+        logger.debug("Area {}: Could not get area type, returning '?'".format(element.Id))
+        return "?"
+    
     def calculate_height(self, element, doc, levels_cache=None):
         """Calculate height using 'Storey Above' parameter logic."""
         level_id = self.get_level_id(element)

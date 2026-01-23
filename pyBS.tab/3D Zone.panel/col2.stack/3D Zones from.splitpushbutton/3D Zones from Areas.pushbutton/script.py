@@ -58,6 +58,11 @@ class AreaItem(SpatialElementItem):
     def __init__(self, area, doc, has_zone=False):
         adapter = AreaAdapter()
         super(AreaItem, self).__init__(area, doc, has_zone, adapter, "area")
+        
+        # Add area type (specific to Areas)
+        self.area_type = adapter.get_area_type(area, doc)
+        logger.debug("AreaItem created: number='{}', name='{}', area_type='{}'".format(
+            self.element_number, self.element_name, self.area_type))
 
 
 class AreaSelectorWindow(SpatialSelectorWindow):
@@ -104,7 +109,8 @@ class AreaSelectorWindow(SpatialSelectorWindow):
                     item for item in filtered
                     if (search_text in (item.element_number or "").lower() or
                         search_text in (item.element_name or "").lower() or
-                        search_text in (item.level_name or "").lower())
+                        search_text in (item.level_name or "").lower() or
+                        search_text in (getattr(item, 'area_type', '') or "").lower())
                 ]
             
             # Update filtered items
@@ -168,6 +174,13 @@ def show_area_filter_dialog(areas, doc):
     # Count existing zones
     existing_count = sum(1 for item in area_items if item.has_zone)
     logger.debug("Found {} areas with existing 3D zones".format(existing_count))
+    
+    # Log sample area_type values for debugging
+    if area_items:
+        sample_items = area_items[:3]  # First 3 items
+        for item in sample_items:
+            logger.debug("Sample AreaItem: number='{}', area_type='{}', has_zone={}".format(
+                item.element_number, item.area_type, item.has_zone))
     
     # Show custom WPF selection dialog
     dialog = AreaSelectorWindow(area_items, pushbutton_dir, extension_dir)

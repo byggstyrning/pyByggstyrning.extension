@@ -110,6 +110,9 @@
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
                 
+                <!-- Area Type Column -->
+                <DataGridTextColumn Header="Area Type" Binding="{Binding area_type}" Width="150"/>
+                
                 <!-- Area Number Column -->
                 <DataGridTextColumn Header="Area Number" Binding="{Binding element_number}" Width="120"/>
                 
