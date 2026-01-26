@@ -1,0 +1,159 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Tag All Spaces" Width="1000" Height="700" WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource WindowBackgroundBrush}">
+    <!-- Styles will be loaded programmatically -->
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Tag Type Selector -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
+            <TextBlock Text="Space Tag Type:" VerticalAlignment="Center" Margin="0,0,10,0"
+                       Foreground="{DynamicResource TextBrush}"/>
+            <ComboBox x:Name="tagTypeComboBox" Width="300" 
+                      Style="{DynamicResource StandardComboBoxStyle}">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding display_name}" 
+                                   Foreground="{DynamicResource TextBrush}"/>
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+        </StackPanel>
+
+        <!-- Search Box -->
+        <TextBox x:Name="searchTextBox" Grid.Row="1" Margin="0,0,0,10"
+                 Style="{DynamicResource PlaceholderTextBoxStyle}" 
+                 Tag="Type to search views..."
+                 TextChanged="searchTextBox_TextChanged"/>
+
+        <!-- DataGrid -->
+        <DataGrid x:Name="viewsDataGrid" Grid.Row="2" Margin="0,0,0,10"
+                  SelectionMode="Extended"
+                  CanUserAddRows="False"
+                  CanUserDeleteRows="False"
+                  CanUserSortColumns="True"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  GridLinesVisibility="None"
+                  HeadersVisibility="Column"
+                  BorderBrush="{DynamicResource BorderBrush}"
+                  BorderThickness="2"
+                  Background="{DynamicResource ControlBackgroundBrush}"
+                  RowBackground="{DynamicResource DataGridRowBackgroundBrush}"
+                  HorizontalGridLinesBrush="{DynamicResource BorderBrush}"
+                  VerticalGridLinesBrush="Transparent"
+                  RowHeight="24"
+                  FontSize="12"
+                  SelectionUnit="FullRow"
+                  CanUserResizeRows="False"
+                  CanUserReorderColumns="False"
+                  AlternatingRowBackground="{DynamicResource BackgroundLightBrush}"
+                  VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Auto">
+            <DataGrid.Resources>
+                <!-- DataGridRow Style -->
+                <Style TargetType="DataGridRow">
+                    <Setter Property="Background" Value="{DynamicResource DataGridRowBackgroundBrush}"/>
+                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+                    <Setter Property="BorderThickness" Value="0"/>
+                    <Setter Property="Padding" Value="0"/>
+                    <Style.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter Property="Background" Value="{DynamicResource BackgroundLighterBrush}"/>
+                            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
+                            <Setter Property="Foreground" Value="White"/>
+                        </Trigger>
+                        <MultiTrigger>
+                            <MultiTrigger.Conditions>
+                                <Condition Property="IsSelected" Value="True"/>
+                                <Condition Property="IsMouseOver" Value="True"/>
+                            </MultiTrigger.Conditions>
+                            <Setter Property="Background" Value="{DynamicResource AccentHoverBrush}"/>
+                            <Setter Property="Foreground" Value="White"/>
+                        </MultiTrigger>
+                    </Style.Triggers>
+                </Style>
+                <!-- Column Header Style -->
+                <Style TargetType="DataGridColumnHeader">
+                    <Setter Property="Background" Value="{DynamicResource BackgroundLightBrush}"/>
+                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                    <Setter Property="FontSize" Value="12"/>
+                    <Setter Property="Padding" Value="6,6"/>
+                    <Setter Property="BorderThickness" Value="0,0,0,2"/>
+                    <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+                    <Setter Property="HorizontalContentAlignment" Value="Left"/>
+                    <Setter Property="VerticalContentAlignment" Value="Center"/>
+                    <Setter Property="Height" Value="40"/>
+                </Style>
+                <!-- Cell Style -->
+                <Style TargetType="DataGridCell">
+                    <Setter Property="BorderThickness" Value="0"/>
+                    <Setter Property="Padding" Value="6,3"/>
+                    <Setter Property="VerticalAlignment" Value="Center"/>
+                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+                    <Style.Triggers>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter Property="Foreground" Value="White"/>
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                            <Setter Property="BorderThickness" Value="1"/>
+                        </Trigger>
+                    </Style.Triggers>
+                </Style>
+            </DataGrid.Resources>
+            <DataGrid.Columns>
+                <!-- View Type Column -->
+                <DataGridTextColumn Header="View Type" Binding="{Binding view_type}" Width="120"
+                                    SortMemberPath="view_type" CanUserSort="True"/>
+                
+                <!-- View Name Column -->
+                <DataGridTextColumn Header="View Name" Binding="{Binding view_name}" Width="*"
+                                    SortMemberPath="view_name" CanUserSort="True"/>
+                
+                <!-- View Template Column -->
+                <DataGridTextColumn Header="View Template" Binding="{Binding view_template}" Width="150"
+                                    SortMemberPath="view_template" CanUserSort="True"/>
+                
+                <!-- View Phase Column -->
+                <DataGridTextColumn Header="Phase" Binding="{Binding view_phase}" Width="120"
+                                    SortMemberPath="view_phase" CanUserSort="True"/>
+                
+                <!-- Associated Level Column -->
+                <DataGridTextColumn Header="Level" Binding="{Binding level_name}" Width="150"
+                                    SortMemberPath="level_name" CanUserSort="True"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <!-- Status and Buttons -->
+        <Grid Grid.Row="3">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            
+            <TextBlock x:Name="statusText" Grid.Column="0" VerticalAlignment="Center"
+                       Foreground="{DynamicResource TextSecondaryBrush}"
+                       Text="Select views to tag spaces"/>
+            
+            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="tagButton" Content="Tag Spaces" Width="120" IsDefault="True" 
+                        Style="{DynamicResource StandardButtonStyle}"
+                        Click="tagButton_Click"/>
+                <Button x:Name="cancelButton" Content="Cancel" Width="100" IsCancel="True" 
+                        Style="{DynamicResource SecondaryButtonStyle}"
+                        Click="cancelButton_Click"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>
