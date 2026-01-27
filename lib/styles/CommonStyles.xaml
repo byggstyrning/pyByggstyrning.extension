@@ -9,6 +9,9 @@
     <Color x:Key="AccentColor">#ffbb00</Color>
     <Color x:Key="AccentHoverColor">#e6a800</Color>
     <Color x:Key="AccentPressedColor">#cc9900</Color>
+    <!-- Selection colors - darker for better contrast with white text -->
+    <Color x:Key="SelectionColor">#0078D4</Color>
+    <Color x:Key="SelectionHoverColor">#106EBE</Color>
     <Color x:Key="ErrorColor">#D32F2F</Color>
     <Color x:Key="SuccessColor">#4CAF50</Color>
     <Color x:Key="WarningColor">#FF9800</Color>
@@ -33,6 +36,9 @@
     <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}"/>
     <SolidColorBrush x:Key="AccentHoverBrush" Color="{StaticResource AccentHoverColor}"/>
     <SolidColorBrush x:Key="AccentPressedBrush" Color="{StaticResource AccentPressedColor}"/>
+    <!-- Selection brushes - for DataGrid/ListBox row selection -->
+    <SolidColorBrush x:Key="SelectionBrush" Color="{StaticResource SelectionColor}"/>
+    <SolidColorBrush x:Key="SelectionHoverBrush" Color="{StaticResource SelectionHoverColor}"/>
     <SolidColorBrush x:Key="ErrorBrush" Color="{StaticResource ErrorColor}"/>
     <SolidColorBrush x:Key="SuccessBrush" Color="{StaticResource SuccessColor}"/>
     <SolidColorBrush x:Key="WarningBrush" Color="{StaticResource WarningColor}"/>
@@ -1320,38 +1326,16 @@
         <Setter Property="BorderThickness" Value="1"/>
     </Style>
     
-    <!-- Enhanced DataGrid Row Style -->
+    <!-- Enhanced DataGrid Row Style - selection is handled by cells for reliable unfocused behavior -->
     <Style x:Key="EnhancedDataGridRowStyle" TargetType="DataGridRow">
         <Setter Property="Background" Value="{DynamicResource DataGridRowBackgroundBrush}"/>
         <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="Padding" Value="0"/>
         <Style.Triggers>
-            <!-- Explicitly set unselected state to ensure dark background -->
-            <MultiTrigger>
-                <MultiTrigger.Conditions>
-                    <Condition Property="IsSelected" Value="False"/>
-                    <Condition Property="IsMouseOver" Value="False"/>
-                </MultiTrigger.Conditions>
-                <Setter Property="Background" Value="{DynamicResource DataGridRowBackgroundBrush}"/>
-                <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
-            </MultiTrigger>
             <Trigger Property="IsMouseOver" Value="True">
                 <Setter Property="Background" Value="{DynamicResource BackgroundLighterBrush}"/>
-                <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
             </Trigger>
-            <Trigger Property="IsSelected" Value="True">
-                <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
-                <Setter Property="Foreground" Value="White"/>
-            </Trigger>
-            <MultiTrigger>
-                <MultiTrigger.Conditions>
-                    <Condition Property="IsSelected" Value="True"/>
-                    <Condition Property="IsMouseOver" Value="True"/>
-                </MultiTrigger.Conditions>
-                <Setter Property="Background" Value="{DynamicResource AccentHoverBrush}"/>
-                <Setter Property="Foreground" Value="White"/>
-            </MultiTrigger>
         </Style.Triggers>
     </Style>
     
@@ -1370,15 +1354,20 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="DataGridColumnHeader">
-                    <Border x:Name="BackgroundBorder"
-                            Background="{TemplateBinding Background}"
-                            BorderBrush="{TemplateBinding BorderBrush}"
-                            BorderThickness="{TemplateBinding BorderThickness}"
-                            Padding="{TemplateBinding Padding}">
-                        <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                                        VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
-                                        SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
-                    </Border>
+                    <Grid>
+                        <Border x:Name="BackgroundBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                            VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                            SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
+                        </Border>
+                        <!-- Column resize grippers -->
+                        <Thumb x:Name="PART_LeftHeaderGripper" HorizontalAlignment="Left" Width="1" Margin="-1,0,0,0" Background="Transparent" Cursor="SizeWE"/>
+                        <Thumb x:Name="PART_RightHeaderGripper" HorizontalAlignment="Right" Width="1" Margin="0,0,-1,0" Background="Transparent" Cursor="SizeWE"/>
+                    </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter TargetName="BackgroundBorder" Property="Background" Value="{DynamicResource BackgroundLighterBrush}"/>
@@ -1415,19 +1404,12 @@
             </Setter.Value>
         </Setter>
         <Style.Triggers>
-            <!-- Ensure unselected cells use transparent background to inherit from row -->
-            <MultiTrigger>
-                <MultiTrigger.Conditions>
-                    <Condition Property="IsSelected" Value="False"/>
-                </MultiTrigger.Conditions>
-                <Setter Property="Background" Value="Transparent"/>
-            </MultiTrigger>
             <Trigger Property="IsSelected" Value="True">
+                <Setter Property="Background" Value="{DynamicResource SelectionBrush}"/>
                 <Setter Property="Foreground" Value="White"/>
-                <Setter Property="Background" Value="Transparent"/>
             </Trigger>
             <Trigger Property="IsKeyboardFocusWithin" Value="True">
-                <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource SelectionBrush}"/>
                 <Setter Property="BorderThickness" Value="1"/>
             </Trigger>
         </Style.Triggers>
@@ -1482,38 +1464,16 @@
             </Setter.Value>
         </Setter>
         <Style.Resources>
-            <!-- DataGridRow Style -->
+            <!-- DataGridRow Style - selection is handled by cells for reliable unfocused behavior -->
             <Style TargetType="DataGridRow">
                 <Setter Property="Background" Value="{DynamicResource DataGridRowBackgroundBrush}"/>
                 <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
                 <Setter Property="BorderThickness" Value="0"/>
                 <Setter Property="Padding" Value="0"/>
                 <Style.Triggers>
-                    <!-- Explicitly set unselected state to ensure dark background -->
-                    <MultiTrigger>
-                        <MultiTrigger.Conditions>
-                            <Condition Property="IsSelected" Value="False"/>
-                            <Condition Property="IsMouseOver" Value="False"/>
-                        </MultiTrigger.Conditions>
-                        <Setter Property="Background" Value="{DynamicResource DataGridRowBackgroundBrush}"/>
-                        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
-                    </MultiTrigger>
                     <Trigger Property="IsMouseOver" Value="True">
                         <Setter Property="Background" Value="{DynamicResource BackgroundLighterBrush}"/>
-                        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
                     </Trigger>
-                    <Trigger Property="IsSelected" Value="True">
-                        <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
-                        <Setter Property="Foreground" Value="White"/>
-                    </Trigger>
-                    <MultiTrigger>
-                        <MultiTrigger.Conditions>
-                            <Condition Property="IsSelected" Value="True"/>
-                            <Condition Property="IsMouseOver" Value="True"/>
-                        </MultiTrigger.Conditions>
-                        <Setter Property="Background" Value="{DynamicResource AccentHoverBrush}"/>
-                        <Setter Property="Foreground" Value="White"/>
-                    </MultiTrigger>
                 </Style.Triggers>
             </Style>
             
@@ -1532,15 +1492,20 @@
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="DataGridColumnHeader">
-                            <Border x:Name="BackgroundBorder"
-                                    Background="{TemplateBinding Background}"
-                                    BorderBrush="{TemplateBinding BorderBrush}"
-                                    BorderThickness="{TemplateBinding BorderThickness}"
-                                    Padding="{TemplateBinding Padding}">
-                                <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                                                VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
-                                                SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
-                            </Border>
+                            <Grid>
+                                <Border x:Name="BackgroundBorder"
+                                        Background="{TemplateBinding Background}"
+                                        BorderBrush="{TemplateBinding BorderBrush}"
+                                        BorderThickness="{TemplateBinding BorderThickness}"
+                                        Padding="{TemplateBinding Padding}">
+                                    <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                    VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                                    SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
+                                </Border>
+                                <!-- Column resize grippers -->
+                                <Thumb x:Name="PART_LeftHeaderGripper" HorizontalAlignment="Left" Width="1" Margin="-1,0,0,0" Background="Transparent" Cursor="SizeWE"/>
+                                <Thumb x:Name="PART_RightHeaderGripper" HorizontalAlignment="Right" Width="1" Margin="0,0,-1,0" Background="Transparent" Cursor="SizeWE"/>
+                            </Grid>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
                                     <Setter TargetName="BackgroundBorder" Property="Background" Value="{DynamicResource BackgroundLighterBrush}"/>
@@ -1555,12 +1520,13 @@
                 </Setter>
             </Style>
             
-            <!-- DataGridCell Style -->
+            <!-- DataGridCell Style - cells handle selection background for reliable unfocused behavior -->
             <Style TargetType="DataGridCell">
                 <Setter Property="BorderThickness" Value="0"/>
                 <Setter Property="Padding" Value="10,6"/>
                 <Setter Property="VerticalAlignment" Value="Center"/>
                 <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+                <Setter Property="Background" Value="Transparent"/>
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="DataGridCell">
@@ -1577,10 +1543,11 @@
                 </Setter>
                 <Style.Triggers>
                     <Trigger Property="IsSelected" Value="True">
+                        <Setter Property="Background" Value="{DynamicResource SelectionBrush}"/>
                         <Setter Property="Foreground" Value="White"/>
                     </Trigger>
                     <Trigger Property="IsKeyboardFocusWithin" Value="True">
-                        <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                        <Setter Property="BorderBrush" Value="{DynamicResource SelectionBrush}"/>
                         <Setter Property="BorderThickness" Value="1"/>
                     </Trigger>
                 </Style.Triggers>
@@ -1603,21 +1570,26 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="DataGridColumnHeader">
-                    <Border x:Name="HeaderBorder"
-                            Background="{TemplateBinding Background}"
-                            BorderBrush="{TemplateBinding BorderBrush}"
-                            BorderThickness="{TemplateBinding BorderThickness}"
-                            Height="{TemplateBinding Height}"
-                            VerticalAlignment="Stretch"
-                            HorizontalAlignment="Stretch">
-                        <Grid VerticalAlignment="Stretch"
-                              HorizontalAlignment="Stretch">
-                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                                            VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
-                                            Margin="{TemplateBinding Padding}"
-                                            SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
-                        </Grid>
-                    </Border>
+                    <Grid>
+                        <Border x:Name="HeaderBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                Height="{TemplateBinding Height}"
+                                VerticalAlignment="Stretch"
+                                HorizontalAlignment="Stretch">
+                            <Grid VerticalAlignment="Stretch"
+                                  HorizontalAlignment="Stretch">
+                                <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                                Margin="{TemplateBinding Padding}"
+                                                SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
+                            </Grid>
+                        </Border>
+                        <!-- Column resize grippers -->
+                        <Thumb x:Name="PART_LeftHeaderGripper" HorizontalAlignment="Left" Width="1" Margin="-1,0,0,0" Background="Transparent" Cursor="SizeWE"/>
+                        <Thumb x:Name="PART_RightHeaderGripper" HorizontalAlignment="Right" Width="1" Margin="0,0,-1,0" Background="Transparent" Cursor="SizeWE"/>
+                    </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter TargetName="HeaderBorder" Property="Background" Value="{DynamicResource BackgroundLighterBrush}"/>
@@ -1639,6 +1611,52 @@
         <Setter Property="AlternatingRowBackground" Value="{DynamicResource BackgroundLightBrush}"/>
         <Setter Property="CanUserSortColumns" Value="True"/>
         <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+    </Style>
+    
+    <!-- Default DataGridRow Style - selection is handled by cells for reliable unfocused behavior -->
+    <Style TargetType="DataGridRow">
+        <Setter Property="Background" Value="{DynamicResource DataGridRowBackgroundBrush}"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Padding" Value="0"/>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource BackgroundLighterBrush}"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+    
+    <!-- Default DataGridCell Style - cells handle selection background for reliable unfocused behavior -->
+    <Style TargetType="DataGridCell">
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Padding" Value="6,3"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="DataGridCell">
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            Padding="{TemplateBinding Padding}"
+                            SnapsToDevicePixels="True">
+                        <ContentPresenter SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"
+                                        TextBlock.Foreground="{TemplateBinding Foreground}"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+        <Style.Triggers>
+            <Trigger Property="IsSelected" Value="True">
+                <Setter Property="Background" Value="{DynamicResource SelectionBrush}"/>
+                <Setter Property="Foreground" Value="White"/>
+            </Trigger>
+            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                <Setter Property="BorderBrush" Value="{DynamicResource SelectionBrush}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+            </Trigger>
+        </Style.Triggers>
     </Style>
     
     <!-- GroupBox Style -->

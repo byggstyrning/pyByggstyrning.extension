@@ -1,34 +1,30 @@
-"""Reload pyRevit into new session."""
+"""Update from Git and reload pyRevit."""
 # -*- coding=utf-8 -*-
 #pylint: disable=import-error,invalid-name,broad-except
-from pyrevit import EXEC_PARAMS
 from pyrevit import script
-from pyrevit import forms
 from pyrevit.loader import sessionmgr
 from pyrevit.loader import sessioninfo
 
+import extension_updater as updater
 
-res = True
-if EXEC_PARAMS.executed_from_ui:
-    res = forms.alert('Reloading increases the memory footprint and is '
-                      'automatically called by pyRevit when necessary.\n\n'
-                      'pyRevit developers can manually reload when:\n'
-                      '    - New buttons are added.\n'
-                      '    - Buttons have been removed.\n'
-                      '    - Button icons have changed.\n'
-                      '    - Base C# code has changed.\n'
-                      '    - Value of pyRevit parameters\n'
-                      '      (e.g. __title__, __doc__, ...) have changed.\n'
-                      '    - Cached engines need to be cleared.\n\n'
-                      'Are you sure you want to reload?',
-                      ok=False, yes=True, no=True)
+print("\n🔄 pyByggstyrning - Update & Reload\n")
 
-if res:
-    logger = script.get_logger()
-    results = script.get_results()
+# Update from git
+repo = updater.get_repo_info()
+if repo:
+    version = updater.get_version_string(repo)
+    print("📌 Current: {}".format(version))
+    print("🔍 Checking for updates...")
+    
+    success, message = updater.pull_updates(repo)
+    if "Updated" in message:
+        print("✅ {}".format(message))
+    else:
+        print("✅ Already up-to-date")
+else:
+    print("⚠️ No git repository found")
 
-    # re-load pyrevit session.
-    logger.info('Reloading....')
-    sessionmgr.reload_pyrevit()
+print("\n🚀 Reloading pyRevit...\n")
 
-    results.newsession = sessioninfo.get_session_uuid()
+sessionmgr.reload_pyrevit()
+script.get_results().newsession = sessioninfo.get_session_uuid()

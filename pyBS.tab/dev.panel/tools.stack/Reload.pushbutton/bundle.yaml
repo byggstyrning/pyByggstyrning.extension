@@ -1,9 +1,6 @@
 tooltip:
-  ru: Находит папки со скриптами и создает кнопки новых криптов или новых устанновленных расширений.
-  en_us: Searches the script folders and create buttons for the new script or newly installed extensions
-  fr_fr: Recherche de nouveaux scripts dans le dossier de scripts et crée de nouveau bouton ou ajoute une nouvelle extension
-  es_es: 'Busca las carpetas de código y crea botones para los nuevos códigos o nuevas extensiones instaladas'
-  de_de: Durchsucht die Skript Verzeichnisse und erstellt Buttons für neue Skripte oder neu installierte Erweiterungen
+  en_us: Update pyByggstyrning from Git and reload pyRevit. Checks for updates and pulls latest changes before reloading.
+  sv_se: Uppdatera pyByggstyrning från Git och ladda om pyRevit. Kontrollerar uppdateringar och hämtar senaste ändringarna före omladdning.
 engine:
   clean: true
 title:

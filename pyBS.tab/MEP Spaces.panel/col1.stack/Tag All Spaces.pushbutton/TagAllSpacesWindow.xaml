@@ -56,62 +56,7 @@
                   AlternatingRowBackground="{DynamicResource BackgroundLightBrush}"
                   VerticalScrollBarVisibility="Auto"
                   HorizontalScrollBarVisibility="Auto">
-            <DataGrid.Resources>
-                <!-- DataGridRow Style -->
-                <Style TargetType="DataGridRow">
-                    <Setter Property="Background" Value="{DynamicResource DataGridRowBackgroundBrush}"/>
-                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
-                    <Setter Property="BorderThickness" Value="0"/>
-                    <Setter Property="Padding" Value="0"/>
-                    <Style.Triggers>
-                        <Trigger Property="IsMouseOver" Value="True">
-                            <Setter Property="Background" Value="{DynamicResource BackgroundLighterBrush}"/>
-                            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
-                        </Trigger>
-                        <Trigger Property="IsSelected" Value="True">
-                            <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
-                            <Setter Property="Foreground" Value="White"/>
-                        </Trigger>
-                        <MultiTrigger>
-                            <MultiTrigger.Conditions>
-                                <Condition Property="IsSelected" Value="True"/>
-                                <Condition Property="IsMouseOver" Value="True"/>
-                            </MultiTrigger.Conditions>
-                            <Setter Property="Background" Value="{DynamicResource AccentHoverBrush}"/>
-                            <Setter Property="Foreground" Value="White"/>
-                        </MultiTrigger>
-                    </Style.Triggers>
-                </Style>
-                <!-- Column Header Style -->
-                <Style TargetType="DataGridColumnHeader">
-                    <Setter Property="Background" Value="{DynamicResource BackgroundLightBrush}"/>
-                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
-                    <Setter Property="FontWeight" Value="SemiBold"/>
-                    <Setter Property="FontSize" Value="12"/>
-                    <Setter Property="Padding" Value="6,6"/>
-                    <Setter Property="BorderThickness" Value="0,0,0,2"/>
-                    <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
-                    <Setter Property="HorizontalContentAlignment" Value="Left"/>
-                    <Setter Property="VerticalContentAlignment" Value="Center"/>
-                    <Setter Property="Height" Value="40"/>
-                </Style>
-                <!-- Cell Style -->
-                <Style TargetType="DataGridCell">
-                    <Setter Property="BorderThickness" Value="0"/>
-                    <Setter Property="Padding" Value="6,3"/>
-                    <Setter Property="VerticalAlignment" Value="Center"/>
-                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
-                    <Style.Triggers>
-                        <Trigger Property="IsSelected" Value="True">
-                            <Setter Property="Foreground" Value="White"/>
-                        </Trigger>
-                        <Trigger Property="IsKeyboardFocusWithin" Value="True">
-                            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
-                            <Setter Property="BorderThickness" Value="1"/>
-                        </Trigger>
-                    </Style.Triggers>
-                </Style>
-            </DataGrid.Resources>
+            <!-- Styles inherited from CommonStyles.xaml -->
             <DataGrid.Columns>
                 <!-- View Type Column -->
                 <DataGridTextColumn Header="View Type" Binding="{Binding view_type}" Width="120"
