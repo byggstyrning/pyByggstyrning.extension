@@ -7,7 +7,13 @@ parameters from spatial elements to contained elements.
 
 __title__ = "Edit Spatial\nMappings"
 __author__ = "Byggstyrning AB"
-__doc__ = "Configure spatial parameter mappings for 3D Zones, Rooms and Areas"
+__doc__ = """Configure spatial parameter mappings for 3D Zones, Rooms and Areas.
+
+Maps parameters from spatial elements (Rooms, Spaces, Areas, 3D Zones) to elements contained within them.
+
+Target Filter Categories is OPTIONAL:
+- Leave empty to write parameters to ALL elements inside the spatial geometry
+- Select specific categories to limit which element types receive the mapped parameters"""
 __highlight__ = 'new'
 
 # Import standard libraries
@@ -242,11 +248,13 @@ class ConfigItem(INotifyPropertyChanged):
             self.config_dict["linked_document_name"] = self.linked_document_name
             self._notify_property_changed("LinkedDocumentName")
 
-class ParameterMappingEntry(object):
+class ParameterMappingEntry(INotifyPropertyChanged):
     """Parameter mapping entry for DataGrid."""
     def __init__(self, SourceParameter="", TargetParameter=""):
         self._source_parameter = SourceParameter
         self._target_parameter = TargetParameter
+        # Initialize the event handler list for INotifyPropertyChanged
+        self._property_changed_handlers = []
         # Set arrow image source
         try:
             arrow_path = op.join(tab_dir, 'lib', 'styles', 'icons', 'arrow.png')
@@ -267,13 +275,35 @@ class ParameterMappingEntry(object):
             logger.debug(traceback.format_exc())
             self._arrow_image_source = None
 
+    def add_PropertyChanged(self, handler):
+        """Add a PropertyChanged event handler."""
+        if handler is not None:
+            self._property_changed_handlers.append(handler)
+    
+    def remove_PropertyChanged(self, handler):
+        """Remove a PropertyChanged event handler."""
+        if handler is not None and handler in self._property_changed_handlers:
+            self._property_changed_handlers.remove(handler)
+    
+    def _notify_property_changed(self, property_name):
+        """Notify that a property has changed."""
+        if self._property_changed_handlers:
+            args = PropertyChangedEventArgs(property_name)
+            for handler in self._property_changed_handlers:
+                try:
+                    handler(self, args)
+                except Exception as e:
+                    pass
+
     @property
     def SourceParameter(self):
         return self._source_parameter
 
     @SourceParameter.setter
     def SourceParameter(self, value):
-        self._source_parameter = value
+        if self._source_parameter != value:
+            self._source_parameter = value
+            self._notify_property_changed("SourceParameter")
 
     @property
     def TargetParameter(self):
@@ -281,7 +311,9 @@ class ParameterMappingEntry(object):
 
     @TargetParameter.setter
     def TargetParameter(self, value):
-        self._target_parameter = value
+        if self._target_parameter != value:
+            self._target_parameter = value
+            self._notify_property_changed("TargetParameter")
     
     @property
     def ArrowImageSource(self):

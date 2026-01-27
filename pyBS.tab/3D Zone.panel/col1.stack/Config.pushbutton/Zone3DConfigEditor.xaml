@@ -185,7 +185,11 @@
                             </Grid.RowDefinitions>
                             
                             <TextBlock Text="Source Category:" Grid.Row="0" Grid.Column="0" Style="{DynamicResource SubheaderTextBlockStyle}" Margin="0,0,0,5"/>
-                            <TextBlock Text="Target Filter Categories (optional):" Grid.Row="0" Grid.Column="1" Margin="5,0,0,5" Style="{DynamicResource SubheaderTextBlockStyle}"/>
+                            <StackPanel Grid.Row="0" Grid.Column="1" Margin="5,0,0,5">
+                                <TextBlock Text="Target Filter Categories (optional):" Style="{DynamicResource SubheaderTextBlockStyle}"/>
+                                <TextBlock Text="Leave empty to write to ALL elements within the source geometry. Select categories to limit which element types receive the mapped parameters." 
+                                           Style="{DynamicResource SecondaryTextBlockStyle}" TextWrapping="Wrap" Margin="0,2,0,0" FontStyle="Italic"/>
+                            </StackPanel>
                             
                             <Grid Grid.Row="1" Grid.Column="0" Margin="0,5,5,0">
                                 <Grid.RowDefinitions>

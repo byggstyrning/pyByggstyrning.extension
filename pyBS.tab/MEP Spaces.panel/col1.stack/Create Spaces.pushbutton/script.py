@@ -280,6 +280,7 @@ def create_spaces_from_linked_rooms(doc, linked_item, write_params=True,
     """
     results = {
         'created': 0,
+        'created_space_ids': [],  # Track created space IDs for re-tagging
         'skipped_no_level': 0,
         'skipped_no_phase': 0,
         'skipped_failed': 0,
@@ -469,6 +470,7 @@ def create_spaces_from_linked_rooms(doc, linked_item, write_params=True,
                 
                 if new_space:
                     results['created'] += 1
+                    results['created_space_ids'].append(new_space.Id)  # Track for re-tagging
                     batch_idx += 1
                     
                     # Write parameters if requested
@@ -558,6 +560,11 @@ def show_results(results):
     
     message_parts.append("{} spaces created".format(results['created']))
     
+    # Show tagging results if re-tagging was performed
+    if results.get('tagged', 0) > 0:
+        message_parts.append("{} spaces tagged in {} views".format(
+            results['tagged'], results.get('views_tagged', 0)))
+    
     if results['skipped_no_level'] > 0:
         message_parts.append("{} skipped (no matching level)".format(results['skipped_no_level']))
     
@@ -587,9 +594,12 @@ def show_results(results):
                  results['skipped_failed'] > 0)
     
     if results['created'] > 0 and not has_skips:
+        balloon_text = "{} spaces created successfully.".format(results['created'])
+        if results.get('tagged', 0) > 0:
+            balloon_text += "\n{} spaces tagged.".format(results['tagged'])
         forms.show_balloon(
             header="Spaces Created",
-            text="{} spaces created successfully.".format(results['created']),
+            text=balloon_text,
             is_new=True
         )
     else:
@@ -685,6 +695,31 @@ class CreateSpacesWindow(WPFWindow):
         except Exception as e:
             logger.debug("Error handling selection change: {}".format(str(e)))
     
+    def RetagCheckBox_Changed(self, sender, args):
+        """Enable/disable tag type selector based on checkbox state."""
+        try:
+            is_checked = self.retagSpacesCheckBox.IsChecked
+            self.tagTypeComboBox.IsEnabled = is_checked
+            
+            # Load tag types on first enable if not already loaded
+            if is_checked and self.tagTypeComboBox.ItemsSource is None:
+                self.load_tag_types()
+        except Exception as e:
+            logger.debug("Error handling retag checkbox change: {}".format(str(e)))
+    
+    def load_tag_types(self):
+        """Load space tag types into the ComboBox."""
+        try:
+            from spaces import get_space_tag_types
+            tag_types = get_space_tag_types(doc)
+            if tag_types:
+                self.tagTypeComboBox.ItemsSource = tag_types
+                self.tagTypeComboBox.SelectedIndex = 0
+            else:
+                logger.warning("No space tag types found in project")
+        except Exception as e:
+            logger.error("Error loading tag types: {}".format(str(e)))
+    
     def CreateButton_Click(self, sender, args):
         """Handle Create button click."""
         try:
@@ -695,6 +730,13 @@ class CreateSpacesWindow(WPFWindow):
             
             write_params = self.writeParamsCheckBox.IsChecked
             remove_existing = self.removeExistingCheckBox.IsChecked
+            retag_spaces = self.retagSpacesCheckBox.IsChecked
+            selected_tag_type = self.tagTypeComboBox.SelectedItem
+            
+            # Validate tag type selection if re-tagging is enabled
+            if retag_spaces and not selected_tag_type:
+                forms.alert("Please select a tag type for re-tagging.", title="No Tag Type")
+                return
             
             # Close window before showing progress bar (forms.ProgressBar is modal)
             self.Close()
@@ -703,6 +745,14 @@ class CreateSpacesWindow(WPFWindow):
             # Note: create_spaces_from_linked_rooms manages its own transactions
             # because NewSpace() uses the view's phase at transaction start
             try:
+                # If re-tagging is enabled and we're removing existing spaces,
+                # we need to capture which views have space tags BEFORE deleting
+                views_with_tags_before = None
+                if retag_spaces and remove_existing:
+                    from spaces import get_views_with_space_tags
+                    # Fast lookup - no progress bar needed (~50ms)
+                    views_with_tags_before = get_views_with_space_tags(doc)
+                
                 with forms.ProgressBar(title="Creating Spaces...") as pb:
                     results = create_spaces_from_linked_rooms(
                         doc,
@@ -711,6 +761,10 @@ class CreateSpacesWindow(WPFWindow):
                         remove_existing=remove_existing,
                         progress_bar=pb
                     )
+                
+                # Re-tag new spaces if option is enabled
+                if retag_spaces and results['created'] > 0 and selected_tag_type:
+                    self._retag_new_spaces(results, selected_tag_type, views_with_tags_before)
                 
                 # Show results (same format as Update Spaces)
                 show_results(results)
@@ -722,6 +776,81 @@ class CreateSpacesWindow(WPFWindow):
         except Exception as e:
             forms.alert("Error: {}".format(str(e)))
             logger.error("Create button error: {}".format(str(e)))
+    
+    def _retag_new_spaces(self, results, selected_tag_type, views_with_tags_before=None):
+        """Re-tag newly created spaces in views that have existing space tags.
+        
+        Args:
+            results: Results dict from create_spaces_from_linked_rooms (will be modified)
+            selected_tag_type: TagTypeItem with the selected tag type
+            views_with_tags_before: Optional dict of views that had space tags before deletion.
+                                    If provided, uses these views instead of looking up current tags.
+        """
+        try:
+            from spaces import get_views_with_space_tags, tag_spaces_in_view
+            
+            # Use pre-captured views if provided (when spaces were deleted before creation)
+            # Otherwise, find views that currently have space tags
+            if views_with_tags_before is not None:
+                views_with_tags = views_with_tags_before
+            else:
+                # Find views that have existing space tags (fast lookup - no progress bar needed)
+                views_with_tags = get_views_with_space_tags(doc)
+            
+            if not views_with_tags:
+                logger.debug("No views with existing space tags found - skipping re-tag")
+                forms.alert(
+                    "No views with existing space tags were found.\n\n"
+                    "To use re-tagging, first tag spaces in desired views using 'Tag All Spaces', "
+                    "then run 'Create Spaces' with re-tagging enabled.\n\n"
+                    "The views that had tags will be remembered and new spaces will be tagged in them.",
+                    title="Re-tagging Skipped"
+                )
+                return
+            
+            tag_type_id = selected_tag_type.element_id
+            new_space_ids = set(results['created_space_ids'])
+            
+            logger.debug("Re-tagging {} new spaces in {} views".format(
+                len(new_space_ids), len(views_with_tags)))
+            
+            # Tag newly created spaces in views that already have tags (with progress bar)
+            total_tagged = 0
+            view_ids_list = list(views_with_tags.keys())
+            total_views = len(view_ids_list)
+            
+            with forms.ProgressBar(title="Re-tagging spaces in views...", cancellable=True) as pb:
+                with revit.Transaction("Re-tag New Spaces"):
+                    # Activate tag type if not already
+                    tag_symbol = doc.GetElement(tag_type_id)
+                    if tag_symbol and not tag_symbol.IsActive:
+                        tag_symbol.Activate()
+                        doc.Regenerate()
+                    
+                    for i, view_id in enumerate(view_ids_list):
+                        if pb.cancelled:
+                            break
+                        
+                        pb.update_progress(i, total_views)
+                        
+                        view = doc.GetElement(view_id)
+                        if view:
+                            tagged, _, _ = tag_spaces_in_view(doc, view, tag_type_id, 
+                                                              space_ids=new_space_ids)
+                            total_tagged += tagged
+                    
+                    pb.update_progress(total_views, total_views)
+            
+            # Add tagging results
+            results['tagged'] = total_tagged
+            results['views_tagged'] = len(views_with_tags)
+            
+            logger.debug("Re-tagged {} spaces in {} views".format(
+                total_tagged, len(views_with_tags)))
+                
+        except Exception as e:
+            logger.error("Error re-tagging spaces: {}".format(str(e)))
+            results['errors'].append("Re-tagging error: {}".format(str(e)))
     
     def CancelButton_Click(self, sender, args):
         """Handle Cancel button click."""
