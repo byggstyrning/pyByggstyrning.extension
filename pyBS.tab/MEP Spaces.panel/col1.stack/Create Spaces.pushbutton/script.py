@@ -236,28 +236,42 @@ def get_host_phases(doc):
 def delete_existing_spaces(doc):
     """Delete all existing spaces in the document.
     
+    Pinned spaces cannot be deleted by Revit - these are reported separately.
+    
     Args:
         doc: Revit document
         
     Returns:
-        int: Number of spaces deleted
+        dict: Results with 'deleted', 'failed', and 'pinned_skipped' counts
     """
-    deleted_count = 0
+    result = {
+        'deleted': 0,
+        'failed': 0,
+        'pinned_skipped': 0
+    }
+    
     try:
         spaces = FilteredElementCollector(doc).OfClass(SpatialElement).ToElements()
-        space_ids = [s.Id for s in spaces if isinstance(s, Space)]
+        space_elements = [s for s in spaces if isinstance(s, Space)]
         
-        if space_ids:
-            for space_id in space_ids:
+        if space_elements:
+            for space in space_elements:
                 try:
-                    doc.Delete(space_id)
-                    deleted_count += 1
-                except Exception:
-                    pass
+                    # Check if pinned - Revit won't let us delete pinned elements
+                    if space.Pinned:
+                        result['pinned_skipped'] += 1
+                        continue
+                    
+                    doc.Delete(space.Id)
+                    result['deleted'] += 1
+                except Exception as e:
+                    result['failed'] += 1
+                    logger.debug("Error deleting space {}: {}".format(space.Id, str(e)))
+                    
     except Exception as e:
         logger.error("Error deleting spaces: {}".format(str(e)))
     
-    return deleted_count
+    return result
 
 
 def create_spaces_from_linked_rooms(doc, linked_item, write_params=True, 
@@ -285,6 +299,8 @@ def create_spaces_from_linked_rooms(doc, linked_item, write_params=True,
         'skipped_no_phase': 0,
         'skipped_failed': 0,
         'deleted': 0,
+        'delete_failed': 0,
+        'pinned_skipped': 0,
         'errors': [],
         'level_warnings': [],
         'phase_warnings': []
@@ -323,7 +339,10 @@ def create_spaces_from_linked_rooms(doc, linked_item, write_params=True,
             progress_bar.update_progress(0, total_rooms)
         t = Transaction(doc, "Delete Existing Spaces")
         start_transaction_with_warning_suppression(t)
-        results['deleted'] = delete_existing_spaces(doc)
+        delete_results = delete_existing_spaces(doc)
+        results['deleted'] = delete_results['deleted']
+        results['delete_failed'] = delete_results['failed']
+        results['pinned_skipped'] = delete_results['pinned_skipped']
         t.Commit()
     
     # Get host phases ONCE before the loop (performance optimization)
@@ -555,8 +574,17 @@ def show_results(results):
     """
     message_parts = []
     
+    # Report on deleted spaces
     if results['deleted'] > 0:
-        message_parts.append("{} existing spaces removed".format(results['deleted']))
+        message_parts.append("{} existing spaces deleted".format(results['deleted']))
+    
+    # Report on pinned spaces that couldn't be deleted
+    if results.get('pinned_skipped', 0) > 0:
+        message_parts.append("{} pinned spaces could not be deleted".format(results['pinned_skipped']))
+    
+    # Report on other failed deletions
+    if results.get('delete_failed', 0) > 0:
+        message_parts.append("{} spaces failed to delete".format(results['delete_failed']))
     
     message_parts.append("{} spaces created".format(results['created']))
     
@@ -592,9 +620,13 @@ def show_results(results):
     has_skips = (results['skipped_no_level'] > 0 or 
                  results['skipped_no_phase'] > 0 or 
                  results['skipped_failed'] > 0)
+    has_delete_issues = (results.get('delete_failed', 0) > 0 or 
+                         results.get('pinned_skipped', 0) > 0)
     
-    if results['created'] > 0 and not has_skips:
+    if results['created'] > 0 and not has_skips and not has_delete_issues:
         balloon_text = "{} spaces created successfully.".format(results['created'])
+        if results['deleted'] > 0:
+            balloon_text = "{} deleted, {} created.".format(results['deleted'], results['created'])
         if results.get('tagged', 0) > 0:
             balloon_text += "\n{} spaces tagged.".format(results['tagged'])
         forms.show_balloon(
