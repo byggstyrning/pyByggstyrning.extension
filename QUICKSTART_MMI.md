@@ -62,7 +62,8 @@ After restarting Revit, you should see a new **"pyBS"** tab in the Revit ribbon 
 - **MMI Panel** - Quick access buttons for setting MMI values (200, 225, 250, etc.)
 - **MMI Settings Panel** - Configuration tools for MMI parameters and monitoring
 
-<img width="914" height="224" alt="image" src="https://github.com/user-attachments/assets/75f5374f-ebcd-490d-b303-071c7375466a" />
+<img width="396" height="140" alt="image" src="https://github.com/user-attachments/assets/848ec07c-debe-4938-a5ef-da6ddf271086" />
+
 
 ---
 
@@ -81,21 +82,17 @@ Your Revit project should have a **shared parameter** or **project parameter** (
 3. **Go to the MMI Settings panel**
 4. **Click the "Settings" button**
 
-<img width="600" height="181" alt="image" src="https://github.com/user-attachments/assets/e7e6189e-4f9f-48a0-9174-2674bd89c172" />
+<img width="486" height="618" alt="image" src="https://github.com/user-attachments/assets/9be808d6-98bf-481f-98c9-b36c1f5e795d" />
 
 5. **Select your MMI parameter:**
    - Click **"Set MMI Parameter"**
    - A list of available instance parameters will appear
    - Select the parameter you want to use for MMI values
    - Click OK
-   - <img width="430" height="185" alt="image" src="https://github.com/user-attachments/assets/e558e38e-bd60-4943-8c28-517349610c3a" />
-
 
 6. **Confirmation:**
    - You'll see a balloon notification confirming the parameter has been set
    - The parameter setting is stored in the project file using Extensible Storage
-   - <img width="318" height="118" alt="image" src="https://github.com/user-attachments/assets/a84d0943-9803-4d44-9fc7-a4da848f7277" />
-
 
 ---
 
@@ -177,10 +174,7 @@ The monitor runs in the background and:
 - **Attempts to fix MMI formats** - Auto-corrects spacing and formatting issues
 - **Pins high-status elements** - Prevents accidental changes to elements with MMI >=400
 - **Warns on moves** - Notifies when approved elements are moved
-- **Checks after sync** - Verifies MMI values after syncing with central
-
-<img width="526" height="389" alt="image" src="https://github.com/user-attachments/assets/fd3ef22d-6246-4b7c-807f-87f2a9adb8f0" />
-
+- **Checks after sync** - Creates a view and lets the user set missing MMI values after syncing with central
 
 ### Stopping the Monitor
 
