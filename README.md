@@ -9,7 +9,7 @@ pyByggstyrning is a pyRevit extension designed to enhance Revit workflows with s
 - **StreamBIM Panel**: Tools for StreamBIM projects for importing checklist values from site to Revit.
 - **View Panel**: Color Elements tool that can help you quickly identify and select elements based on parameter values.
 
-![pyBS tab](screenshot-tab.png)
+<img width="1343" height="98" alt="image" src="https://github.com/user-attachments/assets/edf15115-8590-40d7-bd98-aa98f7eec606" />
 
 # Extra features
 
