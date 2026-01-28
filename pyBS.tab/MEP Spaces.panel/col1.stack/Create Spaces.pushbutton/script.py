@@ -616,26 +616,27 @@ def show_results(results):
         for phase_name, count in results['phase_warnings']:
             message += "\n  - '{}' ({} rooms)".format(phase_name, count)
     
-    # Use balloon for success, alert for issues
-    has_skips = (results['skipped_no_level'] > 0 or 
-                 results['skipped_no_phase'] > 0 or 
-                 results['skipped_failed'] > 0)
-    has_delete_issues = (results.get('delete_failed', 0) > 0 or 
-                         results.get('pinned_skipped', 0) > 0)
+    # Build balloon text
+    balloon_lines = []
     
-    if results['created'] > 0 and not has_skips and not has_delete_issues:
-        balloon_text = "{} spaces created successfully.".format(results['created'])
-        if results['deleted'] > 0:
-            balloon_text = "{} deleted, {} created.".format(results['deleted'], results['created'])
-        if results.get('tagged', 0) > 0:
-            balloon_text += "\n{} spaces tagged.".format(results['tagged'])
-        forms.show_balloon(
-            header="Spaces Created",
-            text=balloon_text,
-            is_new=True
-        )
-    else:
-        forms.alert(message, title="Create Spaces Results")
+    if results['deleted'] > 0:
+        balloon_lines.append("{} deleted".format(results['deleted']))
+    
+    if results.get('pinned_skipped', 0) > 0:
+        balloon_lines.append("{} pinned (not deleted)".format(results['pinned_skipped']))
+    
+    balloon_lines.append("{} created".format(results['created']))
+    
+    if results.get('tagged', 0) > 0:
+        balloon_lines.append("{} tagged".format(results['tagged']))
+    
+    balloon_text = ", ".join(balloon_lines) + "."
+    
+    forms.show_balloon(
+        header="Spaces",
+        text=balloon_text,
+        is_new=True
+    )
 
 
 class CreateSpacesWindow(WPFWindow):
