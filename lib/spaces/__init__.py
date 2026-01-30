@@ -300,15 +300,14 @@ def tag_spaces_in_view(doc, view, tag_type_id, space_ids=None):
         tagged_space_ids = set()
         for tag in existing_tags:
             try:
-                # Try different methods to get tagged element ID
-                if hasattr(tag, 'TaggedLocalElementId'):
+                # SpaceTag has a direct Space property that returns the tagged Space
+                if hasattr(tag, 'Space') and tag.Space:
+                    tagged_space_ids.add(tag.Space.Id)
+                # Fallback for other tag types
+                elif hasattr(tag, 'TaggedLocalElementId'):
                     tagged_id = tag.TaggedLocalElementId
                     if tagged_id and tagged_id != ElementId.InvalidElementId:
                         tagged_space_ids.add(tagged_id)
-                elif hasattr(tag, 'GetTaggedLocalElementIds'):
-                    for tagged_id in tag.GetTaggedLocalElementIds():
-                        if tagged_id and tagged_id != ElementId.InvalidElementId:
-                            tagged_space_ids.add(tagged_id)
             except Exception:
                 pass
         

@@ -603,8 +603,9 @@
                                                             <ColumnDefinition Width="20"/>
                                                         </Grid.ColumnDefinitions>
                                                         <Grid Grid.Column="0">
+                                                            <!-- Bind to SelectedItem directly - works for strings and objects with ToString() -->
                                                             <TextBlock x:Name="ToggleContentText"
-                                                                      Text="{Binding SelectedItem.display_name, RelativeSource={RelativeSource AncestorType=ComboBox}, TargetNullValue='', FallbackValue=''}"
+                                                                      Text="{Binding SelectedItem, RelativeSource={RelativeSource AncestorType=ComboBox}, TargetNullValue='', FallbackValue=''}"
                                                                       Foreground="{DynamicResource TextBrush}"
                                                                       HorizontalAlignment="Left"
                                                                       VerticalAlignment="Center"
