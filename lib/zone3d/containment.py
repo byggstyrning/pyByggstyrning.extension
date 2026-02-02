@@ -187,8 +187,20 @@ def get_element_test_points(element):
             return points
         
         if hasattr(loc, "Point"):
-            # LocationPoint - single point
-            points.append(loc.Point)
+            # LocationPoint - get vertical test points for columns/vertical elements
+            base_point = loc.Point
+            bbox = element.get_BoundingBox(None)
+            
+            if bbox and abs(bbox.Max.Z - bbox.Min.Z) > 0.1:
+                # Element has vertical extent - add points at 25%, 50%, 75% of height
+                min_z = bbox.Min.Z
+                max_z = bbox.Max.Z
+                for t in [0.25, 0.5, 0.75]:
+                    z = min_z + (max_z - min_z) * t
+                    points.append(XYZ(base_point.X, base_point.Y, z))
+            else:
+                # No significant vertical extent - use base point only
+                points.append(base_point)
         elif hasattr(loc, "Curve"):
             # LocationCurve - get multiple points along the curve
             curve = loc.Curve
@@ -1474,6 +1486,7 @@ def get_containing_element_indexed(target_el, doc, element_index, cell_size_feet
     
     Uses spatial hash lookup instead of database queries. Checks a 3x3 cell
     neighborhood around the target point to handle boundary cases.
+    Uses multiple test points for elements with vertical extent (columns).
     
     Args:
         target_el: Target element
@@ -1485,13 +1498,17 @@ def get_containing_element_indexed(target_el, doc, element_index, cell_size_feet
         Element: First containing element matching user's sort order, or None
     """
     try:
-        point = get_element_representative_point(target_el)
-        if not point:
+        # Get multiple test points for better detection (columns get vertical points)
+        test_points = get_element_test_points(target_el)
+        if not test_points:
             return None
         
+        # Use first point for spatial index lookup (X/Y position)
+        primary_point = test_points[0]
+        
         # Calculate grid cell for target point
-        ix = int(point.X / cell_size_feet)
-        iy = int(point.Y / cell_size_feet)
+        ix = int(primary_point.X / cell_size_feet)
+        iy = int(primary_point.Y / cell_size_feet)
         
         # Check 3x3 neighborhood to handle boundary cases
         # Collect all candidates from all cells, allowing duplicates
@@ -1530,20 +1547,22 @@ def get_containing_element_indexed(target_el, doc, element_index, cell_size_feet
         # Check candidates in user's configured sort order (preserved from spatial index)
         # Elements are already sorted in the index, and deduplication preserves sort order
         for source_el in candidates:
-            # Fast bounding box rejection
-            try:
-                element_id = source_el.Id.IntegerValue
-                if element_id in _geometry_cache:
-                    cached = _geometry_cache[element_id]
-                    bbox = cached.get("bbox")
-                    if bbox and not is_point_in_bbox(point, bbox):
-                        continue
-            except Exception as e:
-                continue
-            
-            # Final point-in-solid check
-            if is_point_in_element(source_el, point, doc):
-                return source_el  # Found containment - return first match respecting user's sort order
+            # Check each test point against this candidate
+            for point in test_points:
+                # Fast bounding box rejection
+                try:
+                    element_id = source_el.Id.IntegerValue
+                    if element_id in _geometry_cache:
+                        cached = _geometry_cache[element_id]
+                        bbox = cached.get("bbox")
+                        if bbox and not is_point_in_bbox(point, bbox):
+                            continue  # This point not in bbox, try next point
+                except Exception as e:
+                    continue
+                
+                # Final point-in-solid check
+                if is_point_in_element(source_el, point, doc):
+                    return source_el  # Found containment - return first match respecting user's sort order
         
         return None
     except Exception as e:
