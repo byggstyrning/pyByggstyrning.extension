@@ -409,12 +409,37 @@ class StreamBIMImporterUI(forms.WPFWindow):
             except:
                 # If username attribute doesn't exist, just continue
                 pass
-            self.on_login_success()
-            return True
+            
+            # Verify the token is still valid by trying to get projects
+            self.set_busy(True, "Verifying saved authentication...")
+            projects = self.streambim_client.get_projects()
+            self.set_busy(False)
+            
+            if projects:
+                # Token is valid and we got projects - proceed with login success
+                self.on_login_success(projects)
+                return True
+            else:
+                # Check if authentication failed (expired token)
+                if self.streambim_client.last_error and "Authentication failed" in self.streambim_client.last_error:
+                    # Token is expired - clear it and let user log in again
+                    logger.info("Saved token expired, clearing credentials")
+                    self.streambim_client.clear_tokens()
+                    self.loginStatusTextBlock.Text = "Session expired. Please log in again."
+                    return False
+                else:
+                    # Some other error (no projects, etc.) - still proceed with login success
+                    # but let the user see the empty project list
+                    self.on_login_success(projects)
+                    return True
         return False
     
-    def on_login_success(self):
-        """Handle successful login."""
+    def on_login_success(self, projects=None):
+        """Handle successful login.
+        
+        Args:
+            projects: Optional list of projects. If None, projects will be fetched.
+        """
         # Update login status
         try:
             if hasattr(self.streambim_client, 'username') and self.streambim_client.username:
@@ -440,15 +465,17 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.projectTab.IsEnabled = True
         self.tabControl.SelectedItem = self.projectTab
         
-        # Get projects
-        self.update_status("Retrieving projects...")
-        # Show busy indicator during project retrieval
-        self.set_busy(True, "Retrieving projects...")
+        # Get projects if not already provided
+        if projects is None:
+            self.update_status("Retrieving projects...")
+            # Show busy indicator during project retrieval
+            self.set_busy(True, "Retrieving projects...")
+            
+            projects = self.streambim_client.get_projects()
+            
+            # Hide busy indicator
+            self.set_busy(False)
         
-        projects = self.streambim_client.get_projects()
-        
-        # Hide busy indicator
-        self.set_busy(False)
         if projects:
             self.projects.Clear()
             saved_project = None
@@ -932,11 +959,13 @@ class StreamBIMImporterUI(forms.WPFWindow):
         self.progressText.Text = "Processing checklist items..."
         
         # Create value mapping dictionary if enabled
+        # Note: We allow empty RevitValue to clear parameter values
         value_mapping = {}
         if self.enableMappingCheckBox.IsChecked and self.mappings:
             for mapping in self.mappings:
-                if mapping.ChecklistValue and mapping.RevitValue:
-                    value_mapping[mapping.ChecklistValue] = mapping.RevitValue
+                # Only require ChecklistValue to be non-empty; RevitValue can be empty string
+                if mapping.ChecklistValue:
+                    value_mapping[mapping.ChecklistValue] = mapping.RevitValue if mapping.RevitValue else ""
         
         # Check if this is a grouped checklist
         is_grouped = self.selected_checklist_group_by and len(self.selected_checklist_group_by) > 0
@@ -1212,11 +1241,14 @@ class StreamBIMImporterUI(forms.WPFWindow):
 
         if self.enableMappingCheckBox.IsChecked:
             # Convert mappings to JSON
+            # Note: We allow empty RevitValue to clear parameter values
             for mapping in self.mappings:
-                mapping_data.append({
-                    'ChecklistValue': mapping.ChecklistValue,
-                    'RevitValue': mapping.RevitValue
-                })
+                # Only require ChecklistValue to be non-empty; RevitValue can be empty string
+                if mapping.ChecklistValue:
+                    mapping_data.append({
+                        'ChecklistValue': mapping.ChecklistValue,
+                        'RevitValue': mapping.RevitValue if mapping.RevitValue else ""
+                    })
             
         mapping_json = json.dumps(mapping_data, ensure_ascii=False)
         
@@ -1372,12 +1404,14 @@ class StreamBIMImporterUI(forms.WPFWindow):
             return
             
         # Handle mapping data
+        # Note: We allow empty RevitValue to clear parameter values
         mapping_data = []
         for mapping in self.mappings:
-            if mapping.ChecklistValue and mapping.RevitValue:
+            # Only require ChecklistValue to be non-empty; RevitValue can be empty string
+            if mapping.ChecklistValue:
                 mapping_data.append({
                     'ChecklistValue': mapping.ChecklistValue,
-                    'RevitValue': mapping.RevitValue
+                    'RevitValue': mapping.RevitValue if mapping.RevitValue else ""
                 })
         
         self.mapping_config = json.dumps(mapping_data)
