@@ -80,7 +80,6 @@
                                     <GridViewColumn.CellTemplate>
                                         <DataTemplate>
                                             <CheckBox x:Name="onlyEmptyCheckBox" IsChecked="{Binding OnlyEmpty, Mode=TwoWay}" 
-                                                     IsEnabled="{Binding WriteBeforeIfcExport}"
                                                      HorizontalAlignment="Center" VerticalAlignment="Center"
                                                      Style="{DynamicResource ToggleSwitchStyle}"
                                                      Checked="OnlyEmptyCheckBox_Checked" Unchecked="OnlyEmptyCheckBox_Unchecked"

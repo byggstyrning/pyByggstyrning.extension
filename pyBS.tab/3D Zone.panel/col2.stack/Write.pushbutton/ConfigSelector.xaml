@@ -5,11 +5,18 @@
     <!-- Styles will be loaded programmatically -->
     <Grid Margin="10">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <ListBox x:Name="configsListView" Grid.Row="0" Margin="0,0,0,10"
+        <!-- Active view toggle -->
+        <CheckBox x:Name="activeViewOnlyCheckBox" Grid.Row="0" 
+                  Content="Run only for elements in Active View" 
+                  Margin="0,0,0,10"
+                  Foreground="{DynamicResource TextBrush}"/>
+
+        <ListBox x:Name="configsListView" Grid.Row="1" Margin="0,0,0,10"
                   Background="{DynamicResource ControlBackgroundBrush}"
                   Foreground="{DynamicResource TextBrush}"
                   BorderBrush="{DynamicResource BorderBrush}"
@@ -27,7 +34,7 @@
             </ListBox.ItemTemplate>
         </ListBox>
 
-        <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right">
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
             <Button x:Name="writeButton" Content="Write" Width="100" IsDefault="True" Style="{DynamicResource StandardButtonStyle}"/>
             <Button x:Name="cancelButton" Content="Cancel" Width="100" IsCancel="True" Style="{DynamicResource SecondaryButtonStyle}"/>
         </StackPanel>

@@ -212,11 +212,11 @@ class ConfigItem(INotifyPropertyChanged):
     def OnlyEmpty(self, value):
         """Set ifc_export_only_empty state and update config dict."""
         old_value = self.ifc_export_only_empty
-        new_value = bool(value)
-        if old_value != new_value:
-            self.ifc_export_only_empty = new_value
-            self.config_dict["ifc_export_only_empty"] = self.ifc_export_only_empty
-            self._notify_property_changed("OnlyEmpty")
+        new_value = bool(value) if value is not None else False
+        # Always update regardless of old value to ensure binding consistency
+        self.ifc_export_only_empty = new_value
+        self.config_dict["ifc_export_only_empty"] = self.ifc_export_only_empty
+        self._notify_property_changed("OnlyEmpty")
     
     @property
     def UseLinkedDocument(self):
@@ -962,20 +962,33 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
     def OnlyEmptyCheckBox_Checked(self, sender, args):
         """Handle Only Empty checkbox checked event."""
         config_item = sender.DataContext
+        logger.debug("OnlyEmptyCheckBox_Checked called, DataContext: {}".format(config_item))
         if config_item:
+            logger.debug("Setting OnlyEmpty to True, current value: {}".format(config_item.OnlyEmpty))
             config_item.OnlyEmpty = True
+            logger.debug("After setting, OnlyEmpty is: {}".format(config_item.OnlyEmpty))
             self.save_config_from_item(config_item)
+        else:
+            logger.warning("OnlyEmptyCheckBox_Checked: No DataContext found")
     
     def OnlyEmptyCheckBox_Unchecked(self, sender, args):
         """Handle Only Empty checkbox unchecked event."""
         config_item = sender.DataContext
+        logger.debug("OnlyEmptyCheckBox_Unchecked called, DataContext: {}".format(config_item))
         if config_item:
+            logger.debug("Setting OnlyEmpty to False, current value: {}".format(config_item.OnlyEmpty))
             config_item.OnlyEmpty = False
+            logger.debug("After setting, OnlyEmpty is: {}".format(config_item.OnlyEmpty))
             self.save_config_from_item(config_item)
+        else:
+            logger.warning("OnlyEmptyCheckBox_Unchecked: No DataContext found")
     
     def OnlyEmptyCheckBox_Loaded(self, sender, args):
-        """Handle Only Empty checkbox loaded event - check IsEnabled state."""
-        pass
+        """Handle Only Empty checkbox loaded event - set IsEnabled based on WriteBeforeIfcExport."""
+        config_item = sender.DataContext
+        if config_item:
+            sender.IsEnabled = config_item.WriteBeforeIfcExport
+            logger.debug("OnlyEmptyCheckBox_Loaded: IsEnabled set to {}".format(config_item.WriteBeforeIfcExport))
     
     def MappingsTextBlock_Loaded(self, sender, args):
         """Format mappings TextBlock with styled arrows."""
@@ -1026,9 +1039,58 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
     
     def update_only_empty_checkbox_state(self, config_item):
         """Update Only Empty checkbox enabled state based on WriteBeforeIfcExport."""
-        # Find the checkbox in the ListView item
-        # This is handled by the binding in XAML, but we can force update if needed
-        pass
+        # Find the checkbox in the ListView item and update its IsEnabled state
+        try:
+            from System.Windows.Media import VisualTreeHelper
+            
+            # Find the ListViewItem for this config_item
+            for i in range(self.configsListView.Items.Count):
+                item = self.configsListView.Items[i]
+                if item == config_item:
+                    # Get the ListViewItem container
+                    container = self.configsListView.ItemContainerGenerator.ContainerFromIndex(i)
+                    if container:
+                        # Find the OnlyEmpty checkbox in this container
+                        checkbox = self._find_visual_child_by_name(container, "onlyEmptyCheckBox")
+                        if checkbox:
+                            checkbox.IsEnabled = config_item.WriteBeforeIfcExport
+                            logger.debug("Updated OnlyEmpty checkbox IsEnabled to {}".format(config_item.WriteBeforeIfcExport))
+                    break
+        except Exception as e:
+            logger.debug("Could not update OnlyEmpty checkbox state: {}".format(str(e)))
+    
+    def _find_visual_child_by_name(self, parent, name):
+        """Find a child control by name in the visual tree."""
+        from System.Windows.Media import VisualTreeHelper
+        from System.Windows import FrameworkElement
+        
+        if parent is None:
+            return None
+        
+        # Check if parent is the element we're looking for
+        if hasattr(parent, 'Name') and parent.Name == name:
+            return parent
+        
+        # Get the number of children
+        try:
+            child_count = VisualTreeHelper.GetChildrenCount(parent)
+        except:
+            return None
+        
+        # Search children recursively
+        for i in range(child_count):
+            child = VisualTreeHelper.GetChild(parent, i)
+            
+            # Check if this child is what we're looking for
+            if hasattr(child, 'Name') and child.Name == name:
+                return child
+            
+            # Recursively search in child
+            result = self._find_visual_child_by_name(child, name)
+            if result:
+                return result
+        
+        return None
     
     def save_config_from_item(self, config_item):
         """Save configuration from a ConfigItem."""

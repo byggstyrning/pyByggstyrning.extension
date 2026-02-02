@@ -127,6 +127,9 @@ class ConfigSelectorWindow(forms.WPFWindow):
         # Store selected configs (will be populated when Write is clicked)
         self.selected_configs = None
         
+        # Store active view only setting
+        self.active_view_only = False
+        
         # Create ObservableCollection and populate with ViewModels
         self.config_items = ObservableCollection[object]()
         for cfg in configs:
@@ -182,8 +185,9 @@ class ConfigSelectorWindow(forms.WPFWindow):
         # Sort by order
         selected_configs.sort(key=lambda x: x.get("order", 0))
         
-        # Store result and close window
+        # Store result and active view setting, then close window
         self.selected_configs = selected_configs
+        self.active_view_only = self.activeViewOnlyCheckBox.IsChecked
         self.Close()
     
     def cancel_button_click(self, sender, args):
@@ -285,6 +289,13 @@ if __name__ == '__main__':
     if not selected_configs:
         script.exit()
     
+    # Get view_id if active view only is checked
+    view_id = None
+    if selector_window.active_view_only:
+        active_view = doc.ActiveView
+        if active_view:
+            view_id = active_view.Id
+    
     try:
         # Execute selected configurations manually (similar to execute_all_configurations)
         summary = {
@@ -326,9 +337,10 @@ if __name__ == '__main__':
                     # Execute configuration with adapted progress reporter
                     # Use no-transaction path since we're already in a transaction
                     # Skip cache clear since we cleared it once at the start
+                    # Pass view_id if active view only is checked
                     result = core.execute_configuration(
                         doc, zone_config, adapter,
-                        view_id=None, force_transaction=False, use_subtransaction=False,
+                        view_id=view_id, force_transaction=False, use_subtransaction=False,
                         skip_cache_clear=True
                     )
                     adapter.mark_complete()

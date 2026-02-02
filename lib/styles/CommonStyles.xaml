@@ -1125,7 +1125,7 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="CheckBox">
-                    <Grid>
+                    <Grid x:Name="RootGrid" Opacity="1">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
@@ -1141,7 +1141,7 @@
                                      Margin="2,0,0,0" 
                                      Fill="White"/>
                         </Border>
-                        <TextBlock Grid.Column="1" 
+                        <TextBlock x:Name="ContentText" Grid.Column="1" 
                                    Text="{TemplateBinding Content}" 
                                    Foreground="{DynamicResource TextBrush}"
                                    VerticalAlignment="Center"/>
@@ -1151,6 +1151,10 @@
                             <Setter TargetName="SwitchBorder" Property="Background" Value="{StaticResource SuccessBrush}"/>
                             <Setter TargetName="SwitchKnob" Property="HorizontalAlignment" Value="Right"/>
                             <Setter TargetName="SwitchKnob" Property="Margin" Value="0,0,2,0"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="RootGrid" Property="Opacity" Value="0.4"/>
+                            <Setter TargetName="SwitchKnob" Property="Fill" Value="#AAAAAA"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
