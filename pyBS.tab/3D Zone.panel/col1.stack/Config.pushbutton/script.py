@@ -801,8 +801,6 @@ def get_source_element_instance_properties(doc, source_category, use_linked_docu
 # Module-level cache for styles ResourceDictionary
 _styles_dict_cache = None
 
-# ensure_styles_loaded() is now imported from lib.styles
-
 
 class Zone3DConfigEditorUI(forms.WPFWindow):
     """3D Zone Configuration Editor UI implementation."""

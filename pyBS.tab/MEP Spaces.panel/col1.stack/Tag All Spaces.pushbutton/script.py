@@ -70,13 +70,13 @@ class TagAllSpacesWindow(forms.WPFWindow):
             view_items: List of ViewItem objects
             pushbutton_dir: Path to pushbutton directory for XAML
         """
-        # Load styles before window initialization
-        from styles import ensure_styles_loaded
-        ensure_styles_loaded()
-        
         # Load XAML
         xaml_path = op.join(pushbutton_dir, "TagAllSpacesWindow.xaml")
         forms.WPFWindow.__init__(self, xaml_path)
+        
+        # Load styles AFTER window initialization (window-scoped, isolated from Revit UI)
+        from styles import load_styles_to_window
+        load_styles_to_window(self)
         
         # Store data
         self.tag_types = tag_types
