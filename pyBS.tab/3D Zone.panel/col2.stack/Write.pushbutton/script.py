@@ -27,6 +27,7 @@ from Autodesk.Revit.DB import *
 from pyrevit import script
 from pyrevit import forms
 from pyrevit import revit
+from pyrevit.userconfig import user_config
 
 # Import WPF components
 from System.Collections.ObjectModel import ObservableCollection
@@ -48,6 +49,33 @@ if lib_path not in sys.path:
 
 # Initialize logger
 logger = script.get_logger()
+
+# Configuration constants for caching settings
+CONFIG_SECTION = 'Zone3DWrite'
+CONFIG_KEY_ACTIVE_VIEW_ONLY = 'activeViewOnly'
+
+def get_active_view_only_setting():
+    """Get the cached 'active view only' setting."""
+    try:
+        if not hasattr(user_config, CONFIG_SECTION):
+            return False
+        section = getattr(user_config, CONFIG_SECTION)
+        return section.get_option(CONFIG_KEY_ACTIVE_VIEW_ONLY, default_value=False)
+    except Exception as ex:
+        logger.debug("Error reading active view only setting: {}".format(ex))
+        return False
+
+def set_active_view_only_setting(value):
+    """Save the 'active view only' setting to cache."""
+    try:
+        if not hasattr(user_config, CONFIG_SECTION):
+            user_config.add_section(CONFIG_SECTION)
+        section = getattr(user_config, CONFIG_SECTION)
+        section.set_option(CONFIG_KEY_ACTIVE_VIEW_ONLY, value)
+        user_config.save_changes()
+        logger.debug("Active view only setting saved: {}".format(value))
+    except Exception as ex:
+        logger.debug("Error saving active view only setting: {}".format(ex))
 
 # Import zone3d libraries
 try:
@@ -142,6 +170,10 @@ class ConfigSelectorWindow(forms.WPFWindow):
         # Set up event handlers
         self.writeButton.Click += self.write_button_click
         self.cancelButton.Click += self.cancel_button_click
+        
+        # Load cached "active view only" setting
+        cached_active_view_only = get_active_view_only_setting()
+        self.activeViewOnlyCheckBox.IsChecked = cached_active_view_only
     
     def load_styles(self):
         """Load the common styles ResourceDictionary."""
@@ -188,6 +220,10 @@ class ConfigSelectorWindow(forms.WPFWindow):
         # Store result and active view setting, then close window
         self.selected_configs = selected_configs
         self.active_view_only = self.activeViewOnlyCheckBox.IsChecked
+        
+        # Cache the "active view only" setting for next time
+        set_active_view_only_setting(self.active_view_only)
+        
         self.Close()
     
     def cancel_button_click(self, sender, args):

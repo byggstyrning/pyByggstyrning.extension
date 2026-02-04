@@ -9,7 +9,7 @@ from Autodesk.Revit.DB import (
     Outline, ElementIntersectsSolidFilter, Options, SpatialElement, 
     Line, SolidCurveIntersectionOptions, SolidCurveIntersectionMode, 
     Area, Level, CurveLoop, Solid, GeometryCreationUtilities, Transform,
-    BoundingBoxXYZ, BuiltInParameter, Phase, ElementId
+    BoundingBoxXYZ, BuiltInParameter, Phase, ElementId, FamilyInstance
 )
 from Autodesk.Revit.DB.Architecture import Room
 from Autodesk.Revit.DB.Mechanical import Space
@@ -33,7 +33,8 @@ logger = script.get_logger()
 DEFAULT_STOREY_HEIGHT_FEET = 10.0
 
 # Cache for geometry calculations (Mass/Generic Model)
-# Structure: element_id -> {"solid": Solid, "bbox": BoundingBox}
+# Structure: element_id -> {"solids": [Solid, ...], "bbox": BoundingBox}
+# NOTE: We store a list of solids to handle in-place families with multiple solid forms
 _geometry_cache = {}
 
 # Shared Options instance for geometry calculations (reused for performance)
@@ -96,14 +97,91 @@ def is_point_in_bbox(point, bbox):
             bbox.Min.Y <= point.Y <= bbox.Max.Y and
             bbox.Min.Z <= point.Z <= bbox.Max.Z)
 
-def get_element_representative_point(element):
+def is_inplace_family(element):
+    """Check if an element is an in-place family instance.
+    
+    In-place families are created directly in a project (not loaded from .rfa files).
+    They typically have:
+    - Location = None or Location.Point at project origin (0,0,0)
+    - Multiple solid forms in their geometry
+    - Family.IsInPlace = True
+    
+    Args:
+        element: Revit element to check
+        
+    Returns:
+        bool: True if element is an in-place family instance
+    """
+    try:
+        if not isinstance(element, FamilyInstance):
+            return False
+        # Access the Family through the Symbol (FamilySymbol)
+        family = element.Symbol.Family
+        return family.IsInPlace
+    except Exception:
+        return False
+
+def _get_inplace_family_centroid(element, doc=None):
+    """Get centroid from in-place family geometry.
+    
+    In-place families often have Location = None or Location.Point at origin.
+    This function extracts geometry and computes the centroid of the first
+    solid found, providing a more accurate representative point.
+    
+    Args:
+        element: FamilyInstance (in-place family)
+        doc: Revit document (optional, for geometry options)
+        
+    Returns:
+        XYZ: Centroid point or None if cannot be determined
+    """
+    try:
+        options = Options()
+        options.ComputeReferences = False
+        
+        geometry = element.get_Geometry(options)
+        if not geometry:
+            return None
+        
+        # Find the first solid and compute its centroid
+        for geom_obj in geometry:
+            if hasattr(geom_obj, "GetInstanceGeometry"):
+                instance_geom = geom_obj.GetInstanceGeometry()
+                if instance_geom:
+                    for inst_obj in instance_geom:
+                        if hasattr(inst_obj, "ComputeCentroid"):
+                            try:
+                                centroid = inst_obj.ComputeCentroid()
+                                if centroid:
+                                    return centroid
+                            except:
+                                pass
+            elif hasattr(geom_obj, "ComputeCentroid"):
+                try:
+                    centroid = geom_obj.ComputeCentroid()
+                    if centroid:
+                        return centroid
+                except:
+                    pass
+        
+        return None
+    except Exception:
+        return None
+
+def get_element_representative_point(element, doc=None):
     """Get a representative point from an element for containment testing.
     
     Areas are 2D planar elements and are only used as sources (not targets),
     but we handle them here for robustness.
     
+    IMPORTANT: In-place families require special handling because:
+    - Their Location property is often None
+    - Or Location.Point is at project origin (0,0,0), not the actual element location
+    For these elements, we compute the centroid from the solid geometry.
+    
     Args:
         element: Revit element
+        doc: Revit document (optional, used for in-place family geometry extraction)
         
     Returns:
         XYZ: Point location or None if cannot be determined
@@ -112,6 +190,19 @@ def get_element_representative_point(element):
         # Special handling for Areas - use bounding box center
         # Areas are 2D planar and don't have reliable LocationCurve
         if isinstance(element, Area):
+            bbox = element.get_BoundingBox(None)
+            if bbox:
+                return (bbox.Min + bbox.Max) / 2.0
+            return None
+        
+        # Special handling for in-place families
+        # These often have Location = None or Location.Point at origin
+        if is_inplace_family(element):
+            # Try to get centroid from solid geometry (most accurate)
+            centroid = _get_inplace_family_centroid(element, doc)
+            if centroid:
+                return centroid
+            # Fall back to bounding box center
             bbox = element.get_BoundingBox(None)
             if bbox:
                 return (bbox.Min + bbox.Max) / 2.0
@@ -126,8 +217,18 @@ def get_element_representative_point(element):
             return None
         
         if hasattr(loc, "Point"):
-            # LocationPoint
-            return loc.Point
+            # LocationPoint - but check if it's at origin (may be unreliable)
+            point = loc.Point
+            # If point is very close to origin (0,0,0), it may be unreliable
+            # Fall back to bounding box center in that case
+            if abs(point.X) < 0.001 and abs(point.Y) < 0.001 and abs(point.Z) < 0.001:
+                bbox = element.get_BoundingBox(None)
+                if bbox:
+                    bbox_center = (bbox.Min + bbox.Max) / 2.0
+                    # Only use bbox center if it's significantly different from origin
+                    if abs(bbox_center.X) > 0.1 or abs(bbox_center.Y) > 0.1 or abs(bbox_center.Z) > 0.1:
+                        return bbox_center
+            return point
         elif hasattr(loc, "Curve"):
             # LocationCurve - get midpoint
             # Use normalized=False for unbound curves (like Area boundaries)
@@ -155,7 +256,61 @@ def get_element_representative_point(element):
         logger.debug("Error getting element point: {}".format(str(e)))
         return None
 
-def get_element_test_points(element):
+def _get_inplace_family_test_points(element, doc=None):
+    """Get multiple test points from in-place family geometry.
+    
+    For in-place families with multiple solids, we generate test points
+    from each solid's centroid. This ensures containment is detected
+    correctly even for complex multi-form in-place families.
+    
+    Args:
+        element: FamilyInstance (in-place family)
+        doc: Revit document (optional)
+        
+    Returns:
+        list: List of XYZ points (centroids of all solids)
+    """
+    points = []
+    try:
+        options = Options()
+        options.ComputeReferences = False
+        
+        geometry = element.get_Geometry(options)
+        if not geometry:
+            return points
+        
+        # Collect centroids from ALL solids
+        for geom_obj in geometry:
+            if hasattr(geom_obj, "GetInstanceGeometry"):
+                instance_geom = geom_obj.GetInstanceGeometry()
+                if instance_geom:
+                    for inst_obj in instance_geom:
+                        if hasattr(inst_obj, "ComputeCentroid"):
+                            try:
+                                centroid = inst_obj.ComputeCentroid()
+                                if centroid:
+                                    points.append(centroid)
+                            except:
+                                pass
+            elif hasattr(geom_obj, "ComputeCentroid"):
+                try:
+                    centroid = geom_obj.ComputeCentroid()
+                    if centroid:
+                        points.append(centroid)
+                except:
+                    pass
+        
+        # Also add bounding box center as a fallback point
+        if not points:
+            bbox = element.get_BoundingBox(None)
+            if bbox:
+                points.append((bbox.Min + bbox.Max) / 2.0)
+        
+        return points
+    except Exception:
+        return points
+
+def get_element_test_points(element, doc=None):
     """Get multiple test points for an element to improve containment detection.
     
     For walls and linear elements, returns multiple points along the element.
@@ -164,8 +319,14 @@ def get_element_test_points(element):
     Areas are 2D planar elements and are only used as sources (not targets),
     but we handle them here for robustness.
     
+    IMPORTANT: In-place families require special handling because:
+    - Their Location property is often None or at project origin
+    - They may have multiple solid forms
+    For these elements, we generate test points from solid centroids.
+    
     Args:
         element: Revit element
+        doc: Revit document (optional, used for in-place family handling)
         
     Returns:
         list: List of XYZ points to test
@@ -174,6 +335,18 @@ def get_element_test_points(element):
     try:
         # Special handling for Areas - use bounding box center
         if isinstance(element, Area):
+            bbox = element.get_BoundingBox(None)
+            if bbox:
+                points.append((bbox.Min + bbox.Max) / 2.0)
+            return points
+        
+        # Special handling for in-place families
+        # These often have Location = None or unreliable Location.Point
+        if is_inplace_family(element):
+            inplace_points = _get_inplace_family_test_points(element, doc)
+            if inplace_points:
+                return inplace_points
+            # Fall back to bounding box center
             bbox = element.get_BoundingBox(None)
             if bbox:
                 points.append((bbox.Min + bbox.Max) / 2.0)
@@ -549,18 +722,55 @@ def is_point_inside_solid_optimized(point, solid):
         logger.debug("Error in optimized point-in-solid check: {}".format(str(e)))
         return False
 
+def _collect_all_solids_from_geometry(geometry):
+    """Extract ALL solids from geometry, including nested GeometryInstance objects.
+    
+    This is critical for in-place families which often have multiple solid forms.
+    Standard families may also have multiple solids that need to be checked.
+    
+    Args:
+        geometry: GeometryElement from element.get_Geometry()
+        
+    Returns:
+        list: List of Solid objects with Volume > 0
+    """
+    solids = []
+    if not geometry:
+        return solids
+    
+    for geom_obj in geometry:
+        # Check if it's a GeometryInstance (wrapper around family geometry)
+        if hasattr(geom_obj, "GetInstanceGeometry"):
+            # GetInstanceGeometry() returns geometry in project coordinates
+            # This is correct for containment testing
+            instance_geom = geom_obj.GetInstanceGeometry()
+            if instance_geom:
+                for inst_obj in instance_geom:
+                    if hasattr(inst_obj, "Volume") and inst_obj.Volume > 0:
+                        solids.append(inst_obj)
+        # Direct solid in geometry
+        elif hasattr(geom_obj, "Volume") and geom_obj.Volume > 0:
+            solids.append(geom_obj)
+    
+    return solids
+
 def is_point_in_element(element, point, doc):
     """Check if a point is inside a Mass/Generic Model element using geometry.
     
     Optimized with bounding box pre-filtering and SolidCurveIntersectionOptions pattern.
     
+    IMPORTANT: This function now collects ALL solids from the element geometry,
+    not just the first one. This is critical for in-place families which often
+    have multiple solid forms (e.g., multiple extrusions, blends, etc.).
+    The point is considered "inside" if it's inside ANY of the solids.
+    
     Args:
-        element: Mass or Generic Model element
+        element: Mass or Generic Model element (including in-place families)
         point: XYZ point
         doc: Revit document
         
     Returns:
-        bool: True if point is in element
+        bool: True if point is in element (inside any of its solids)
     """
     try:
         element_id = element.Id.IntegerValue
@@ -568,16 +778,17 @@ def is_point_in_element(element, point, doc):
         # Use cached geometry if available
         if element_id in _geometry_cache:
             cached = _geometry_cache[element_id]
-            solid = cached.get("solid")
+            solids = cached.get("solids", [])
             bbox = cached.get("bbox")
             
             # Fast bounding box rejection
             if bbox and not is_point_in_bbox(point, bbox):
                 return False
             
-            # Use optimized point-in-solid check
-            if solid:
-                return is_point_inside_solid_optimized(point, solid)
+            # Check if point is inside ANY of the cached solids
+            for solid in solids:
+                if is_point_inside_solid_optimized(point, solid):
+                    return True
             return False
         
         # Fast bounding box pre-check before expensive geometry calculation
@@ -594,27 +805,24 @@ def is_point_in_element(element, point, doc):
         if not geometry:
             return False
         
-        # Get first solid
-        solid = None
-        for geom_obj in geometry:
-            if hasattr(geom_obj, "GetInstanceGeometry"):
-                instance_geom = geom_obj.GetInstanceGeometry()
-                for inst_obj in instance_geom:
-                    if hasattr(inst_obj, "Volume") and inst_obj.Volume > 0:
-                        solid = inst_obj
-                        break
-            elif hasattr(geom_obj, "Volume") and geom_obj.Volume > 0:
-                solid = geom_obj
-                break
+        # Collect ALL solids from geometry (critical for in-place families)
+        solids = _collect_all_solids_from_geometry(geometry)
         
-        if not solid:
+        if not solids:
             return False
         
-        # Cache both solid and bounding box for future checks
-        _geometry_cache[element_id] = {"solid": solid, "bbox": bbox}
+        # Cache all solids and bounding box for future checks
+        _geometry_cache[element_id] = {"solids": solids, "bbox": bbox}
         
-        # Use optimized point-in-solid check
-        return is_point_inside_solid_optimized(point, solid)
+        # Log if this is an in-place family with multiple solids (useful for debugging)
+        if len(solids) > 1 and is_inplace_family(element):
+            logger.debug("In-place family element {} has {} solids".format(element_id, len(solids)))
+        
+        # Check if point is inside ANY of the solids
+        for solid in solids:
+            if is_point_inside_solid_optimized(point, solid):
+                return True
+        return False
         
     except Exception as e:
         logger.debug("Error checking point in element: {}".format(str(e)))
@@ -883,14 +1091,17 @@ def get_containing_room_phase_aware(element, doc, rooms_by_phase_by_level, order
         Room: Containing room from latest applicable phase, or None
     """
     try:
+        # Get element's document for in-place family handling
+        element_doc = element.Document if hasattr(element, 'Document') else doc
+        
         # Get multiple test points for better detection
-        test_points = get_element_test_points(element)
+        # Pass doc for in-place family handling (uses geometry extraction)
+        test_points = get_element_test_points(element, element_doc)
         if not test_points:
             return None
         
         # CRITICAL: Transform points if element is in different document than rooms
         # When element is in main doc and rooms are in linked doc, coordinates need transformation
-        element_doc = element.Document if hasattr(element, 'Document') else None
         if element_doc and element_doc != doc and link_instance:
             try:
                 # Get the transform from the link instance
@@ -1110,7 +1321,8 @@ def get_containing_room(element, doc, rooms_by_level=None):
     """
     try:
         # Get multiple test points for better detection
-        test_points = get_element_test_points(element)
+        # Pass doc for in-place family handling (uses geometry extraction)
+        test_points = get_element_test_points(element, doc)
         if not test_points:
             return None
         
@@ -1239,7 +1451,8 @@ def get_containing_space(element, doc, spaces_by_level=None):
     """
     try:
         # Get multiple test points for better detection
-        test_points = get_element_test_points(element)
+        # Pass doc for in-place family handling (uses geometry extraction)
+        test_points = get_element_test_points(element, doc)
         if not test_points:
             return None
         
@@ -1327,7 +1540,8 @@ def get_containing_area(element, doc, areas_by_level=None):
     """
     try:
         # Get multiple test points for better detection
-        test_points = get_element_test_points(element)
+        # Pass doc for in-place family handling (uses geometry extraction)
+        test_points = get_element_test_points(element, doc)
         if not test_points:
             # Reduced logging - only log if debug mode is very verbose
             return None
@@ -1499,7 +1713,8 @@ def get_containing_element_indexed(target_el, doc, element_index, cell_size_feet
     """
     try:
         # Get multiple test points for better detection (columns get vertical points)
-        test_points = get_element_test_points(target_el)
+        # Pass doc for in-place family handling (uses geometry extraction)
+        test_points = get_element_test_points(target_el, doc)
         if not test_points:
             return None
         
@@ -1587,7 +1802,8 @@ def get_containing_element(element, doc, source_categories):
         Element: Containing element or None
     """
     try:
-        point = get_element_representative_point(element)
+        # Pass doc for in-place family handling (uses geometry extraction)
+        point = get_element_representative_point(element, doc)
         if not point:
             return None
         
