@@ -263,9 +263,10 @@ class ApplyColorsHandler(UI.IExternalEventHandler):
     def Execute(self, uiapp):
         try:
             active_doc = uiapp.ActiveUIDocument.Document
-            # Use the active view from the UI instance
-            view = self.ui.active_view
-            if not view:
+            
+            # Get all views to apply colors to (multi-view support)
+            views_to_color = self.ui.get_target_views()
+            if not views_to_color:
                 return
                 
             # Use UI instance references to access DB and doc
@@ -295,47 +296,57 @@ class ApplyColorsHandler(UI.IExternalEventHandler):
                 # Check if we're dealing with rooms, spaces, areas that need color schemes
                 # Use the stored function from the UI
                 get_elementid_value = self.ui.get_elementid_value
-                if get_elementid_value(selected_cat.cat.Id) in (
+                is_room_space_area = get_elementid_value(selected_cat.cat.Id) in (
                     int(DB.BuiltInCategory.OST_Rooms), 
                     int(DB.BuiltInCategory.OST_MEPSpaces), 
                     int(DB.BuiltInCategory.OST_Areas)
-                ):
-                    # Handle rooms/spaces/areas that might need color schemes
-                    if self.ui.version > 2021:
-                        if str(view.GetColorFillSchemeId(selected_cat.cat.Id)) == "-1":
-                            schemes = DB.FilteredElementCollector(active_doc).OfClass(DB.BuiltInCategoryFillScheme).ToElements()
-                            for scheme in schemes:
-                                if scheme.CategoryId == selected_cat.cat.Id and len(scheme.GetEntries()) > 0:
-                                    view.SetColorFillSchemeId(selected_cat.cat.Id, scheme.Id)
-                                    break
-                    self.ui.statusText.Text = "Note: Rooms, spaces and areas may require a color scheme in the view."
-                else:
-                    self.ui.statusText.Text = ""
-                    
-                # Apply colors to elements
-                for value_item in value_items:
-                    ogs = DB.OverrideGraphicSettings()
-                    color = DB.Color(value_item.n1, value_item.n2, value_item.n3)
-                    
-                    # Set color properties based on UI settings
-                    if self.ui.overrideProjectionCheckbox.IsChecked:
-                        ogs.SetProjectionLineColor(color)
-                        ogs.SetCutLineColor(color)
-                        ogs.SetProjectionLinePatternId(DB.ElementId(-1))
-                    
-                    # Always set surface pattern color
-                    ogs.SetSurfaceForegroundPatternColor(color)
-                    ogs.SetCutForegroundPatternColor(color)
-                    
-                    if solid_fill_id is not None:
-                        ogs.SetSurfaceForegroundPatternId(solid_fill_id)
-                        ogs.SetCutForegroundPatternId(solid_fill_id)
-                    
-                    # Apply override to each element
-                    for element_id in value_item.ele_id:
-                        view.SetElementOverrides(element_id, ogs)
+                )
+                
+                # Apply colors to each selected view
+                for view in views_to_color:
+                    try:
+                        if is_room_space_area:
+                            # Handle rooms/spaces/areas that might need color schemes
+                            if self.ui.version > 2021:
+                                if str(view.GetColorFillSchemeId(selected_cat.cat.Id)) == "-1":
+                                    schemes = DB.FilteredElementCollector(active_doc).OfClass(DB.BuiltInCategoryFillScheme).ToElements()
+                                    for scheme in schemes:
+                                        if scheme.CategoryId == selected_cat.cat.Id and len(scheme.GetEntries()) > 0:
+                                            view.SetColorFillSchemeId(selected_cat.cat.Id, scheme.Id)
+                                            break
+                            
+                        # Apply colors to elements in this view
+                        for value_item in value_items:
+                            ogs = DB.OverrideGraphicSettings()
+                            color = DB.Color(value_item.n1, value_item.n2, value_item.n3)
+                            
+                            # Set color properties based on UI settings
+                            if self.ui.overrideProjectionCheckbox.IsChecked:
+                                ogs.SetProjectionLineColor(color)
+                                ogs.SetCutLineColor(color)
+                                ogs.SetProjectionLinePatternId(DB.ElementId(-1))
+                            
+                            # Always set surface pattern color
+                            ogs.SetSurfaceForegroundPatternColor(color)
+                            ogs.SetCutForegroundPatternColor(color)
+                            
+                            if solid_fill_id is not None:
+                                ogs.SetSurfaceForegroundPatternId(solid_fill_id)
+                                ogs.SetCutForegroundPatternId(solid_fill_id)
+                            
+                            # Apply override to each element in this view
+                            for element_id in value_item.ele_id:
+                                view.SetElementOverrides(element_id, ogs)
+                                
+                    except Exception as view_ex:
+                        logger.debug("Error applying colors to view {}: {}".format(view.Name, str(view_ex)))
 
-                self.ui.statusText.Text = "Colors applied successfully to elements."
+                # Update status text
+                view_count = len(views_to_color)
+                if is_room_space_area:
+                    self.ui.statusText.Text = "Colors applied to {} view(s). Note: Rooms/spaces/areas may require color schemes.".format(view_count)
+                else:
+                    self.ui.statusText.Text = "Colors applied successfully to {} view(s).".format(view_count)
                 
         except Exception as ex:
             self.ui.statusText.Text = "Error applying colors: " + str(ex)
@@ -360,6 +371,7 @@ class ResetColorsHandler(UI.IExternalEventHandler):
     def __init__(self, colorizer_ui):
         self.ui = colorizer_ui
         self.specific_view = None
+        self.specific_views = None  # For resetting multiple views at once
     
     def Execute(self, uiapp):
         try:
@@ -372,13 +384,23 @@ class ResetColorsHandler(UI.IExternalEventHandler):
                 return
                 
             active_doc = uiapp.ActiveUIDocument.Document
-            # Use the specific view if provided, otherwise use the active view
-            view = self.specific_view if self.specific_view else self.ui.active_view
             
-            # Reset the specific view reference after using it
-            self.specific_view = None
+            # Determine which views to reset
+            views_to_reset = []
             
-            if not view:
+            if self.specific_views:
+                # Multiple specific views provided (e.g., when closing window)
+                views_to_reset = self.specific_views
+                self.specific_views = None
+            elif self.specific_view:
+                # Single specific view provided (e.g., when changing views)
+                views_to_reset = [self.specific_view]
+                self.specific_view = None
+            else:
+                # Use all selected views (multi-view mode) or active view
+                views_to_reset = self.ui.get_target_views()
+            
+            if not views_to_reset:
                 return
             
             # Use UI instance references to access DB, UI, and other modules
@@ -388,20 +410,26 @@ class ResetColorsHandler(UI.IExternalEventHandler):
             logger = self.ui.logger
                 
             with revit.Transaction("Reset element colors"):
-                # Reset all element overrides in the view
+                # Reset all element overrides in each view
                 ogs = DB.OverrideGraphicSettings()
                 
-                # Get all elements in view
-                collector = DB.FilteredElementCollector(active_doc, view.Id) \
-                             .WhereElementIsNotElementType() \
-                             .WhereElementIsViewIndependent() \
-                             .ToElementIds()
-                                
-                # Reset element overrides
-                for element_id in collector:
-                    view.SetElementOverrides(element_id, ogs)
+                for view in views_to_reset:
+                    try:
+                        # Get all elements in this view
+                        collector = DB.FilteredElementCollector(active_doc, view.Id) \
+                                     .WhereElementIsNotElementType() \
+                                     .WhereElementIsViewIndependent() \
+                                     .ToElementIds()
+                                        
+                        # Reset element overrides
+                        for element_id in collector:
+                            view.SetElementOverrides(element_id, ogs)
+                            
+                    except Exception as view_ex:
+                        logger.debug("Error resetting colors in view {}: {}".format(view.Name, str(view_ex)))
                 
-                self.ui.statusText.Text = "Colors reset successfully."
+                view_count = len(views_to_reset)
+                self.ui.statusText.Text = "Colors reset in {} view(s).".format(view_count)
                 
         except Exception as ex:
             self.ui.statusText.Text = "Error resetting colors: " + str(ex)
@@ -411,6 +439,12 @@ class ResetColorsHandler(UI.IExternalEventHandler):
     def set_specific_view(self, view):
         """Set a specific view to reset colors in."""
         self.specific_view = view
+        self.specific_views = None
+    
+    def set_specific_views(self, views):
+        """Set multiple specific views to reset colors in."""
+        self.specific_views = views
+        self.specific_view = None
         
     def GetName(self):
         return "Reset Element Colors"
@@ -535,6 +569,10 @@ class RevitColorizerWindow(WPFWindow):
             # Create a custom CategoryItem class
             self.CategoryItem = self.create_custom_category_item_class()
             
+            # Multi-view support: list of views to color (auto-detected)
+            self.target_views = []  # List of View objects to color
+            self.current_sheet = None  # Sheet if we're on one, None otherwise
+            
             # Create external event handlers
             self.apply_colors_handler = ApplyColorsHandler(self)
             self.apply_colors_event = UI.ExternalEvent.Create(self.apply_colors_handler)
@@ -547,6 +585,9 @@ class RevitColorizerWindow(WPFWindow):
             if not self.active_view:
                 self.Close()
                 return
+            
+            # Auto-detect target views (sheet views or single view)
+            self.detect_target_views()
                 
             # Register for view activation events
             self.uiapp.ViewActivating += self.on_view_activating
@@ -859,16 +900,26 @@ class RevitColorizerWindow(WPFWindow):
     
 
     def get_used_categories(self, active_view, excluded_cats=None):
-        """Get all used categories and their parameters in the active view."""
+        """Get all used categories and their parameters in the selected view(s).
+        
+        When multi-view mode is enabled, this aggregates categories from all selected views.
+        """
         try:
             if excluded_cats is None:
                 excluded_cats = self.CAT_EXCLUDED
             
-            # Get all elements in view
-            collector = self.DB.FilteredElementCollector(self.doc, active_view.Id) \
-                        .WhereElementIsNotElementType() \
-                        .WhereElementIsViewIndependent()
-            elements = collector.ToElements()
+            # Get elements from all selected views (or just active view if single-view mode)
+            views_to_query = self.get_target_views()
+            
+            elements = []
+            for view in views_to_query:
+                try:
+                    collector = self.DB.FilteredElementCollector(self.doc, view.Id) \
+                                .WhereElementIsNotElementType() \
+                                .WhereElementIsViewIndependent()
+                    elements.extend(collector.ToElements())
+                except Exception as ex:
+                    self.logger.debug("Error collecting elements from view {}: {}".format(view.Name, str(ex)))
                         
             categories = []
                     
@@ -2133,6 +2184,113 @@ class RevitColorizerWindow(WPFWindow):
         except Exception as ex:
             self.logger.error("Parameter refresh error: %s", str(ex))
 
+    # ============================================================
+    # Multi-View Support Methods (Automatic - no UI)
+    # ============================================================
+    
+    def detect_target_views(self):
+        """Auto-detect target views based on context.
+        
+        If we're on a sheet, target all views on that sheet.
+        Otherwise, target just the active view.
+        """
+        try:
+            self.target_views = []
+            self.current_sheet = None
+            
+            # Check if active view is a sheet
+            if self.active_view.ViewType == self.DB.ViewType.DrawingSheet:
+                # We're on a sheet - get all views on it
+                self.current_sheet = self.active_view
+                self.target_views = self.get_views_from_sheet(self.current_sheet)
+            else:
+                # Check if active view is placed on a sheet
+                sheet = self.find_sheet_containing_view(self.active_view)
+                if sheet:
+                    self.current_sheet = sheet
+                    self.target_views = self.get_views_from_sheet(sheet)
+                else:
+                    # Regular view - just use the active view
+                    self.target_views = [self.active_view]
+            
+        except Exception as ex:
+            self.logger.error("Error detecting target views: {}".format(str(ex)))
+            # Fallback to active view
+            self.target_views = [self.active_view]
+    
+    def get_views_from_sheet(self, sheet):
+        """Get all colorable views placed on a sheet."""
+        try:
+            placed_view_ids = sheet.GetAllPlacedViews()
+            
+            views = []
+            for view_id in placed_view_ids:
+                view = self.doc.GetElement(view_id)
+                if view and self.can_color_view(view):
+                    views.append(view)
+            
+            return views if views else [self.active_view]
+            
+        except Exception as ex:
+            self.logger.error("Error getting views from sheet: {}".format(str(ex)))
+            return [self.active_view]
+    
+    def find_sheet_containing_view(self, view):
+        """Find the sheet that contains the given view."""
+        try:
+            # Get all sheets in the document
+            sheets = self.DB.FilteredElementCollector(self.doc) \
+                        .OfClass(self.DB.ViewSheet) \
+                        .ToElements()
+            
+            for sheet in sheets:
+                placed_view_ids = sheet.GetAllPlacedViews()
+                if view.Id in placed_view_ids:
+                    return sheet
+            
+            return None
+            
+        except Exception as ex:
+            self.logger.error("Error finding sheet for view: {}".format(str(ex)))
+            return None
+    
+    def can_color_view(self, view):
+        """Check if a view can have element colors applied."""
+        try:
+            # Check if view supports temporary visibility modes
+            if not view.CanUseTemporaryVisibilityModes():
+                return False
+            
+            # Exclude certain view types
+            excluded_types = [
+                self.DB.ViewType.ProjectBrowser,
+                self.DB.ViewType.SystemBrowser,
+                self.DB.ViewType.Schedule,
+                self.DB.ViewType.Legend,
+                self.DB.ViewType.Report,
+                self.DB.ViewType.DraftingView,
+                self.DB.ViewType.DrawingSheet,  # The sheet itself, not the views on it
+            ]
+            
+            if view.ViewType in excluded_types:
+                return False
+            
+            return True
+            
+        except Exception as ex:
+            self.logger.error("Error checking view compatibility: {}".format(str(ex)))
+            return False
+    
+    def get_target_views(self):
+        """Get the list of views to color (auto-detected)."""
+        if self.target_views:
+            return self.target_views
+        return [self.active_view]
+    
+    # ============================================================
+    # Category Storage Methods
+    # ============================================================
+
     def store_selected_categories(self):
         """Store the names of currently selected categories for persistence between views."""
         self.selected_category_names = []
@@ -2177,14 +2335,14 @@ class RevitColorizerWindow(WPFWindow):
             except Exception as ex:
                 self.logger.error("Error unregistering view events: %s", str(ex))
                 
-            # Only reset colors if we actually have a valid view
-            if hasattr(self, 'active_view') and self.active_view:
-                try:
-                    # Set the specific view in the handler and then raise the event
-                    self.reset_colors_handler.set_specific_view(self.active_view)
+            # Reset colors in all target views
+            try:
+                views_to_reset = self.get_target_views()
+                if views_to_reset:
+                    self.reset_colors_handler.set_specific_views(views_to_reset)
                     self.reset_colors_event.Raise()
-                except Exception as ex:
-                    self.logger.error("Error resetting colors: %s", str(ex))
+            except Exception as ex:
+                self.logger.error("Error resetting colors: %s", str(ex))
                 
         except Exception as ex:
             # Just log the error, don't show to user since window is closing
@@ -2219,14 +2377,14 @@ class RevitColorizerWindow(WPFWindow):
             except Exception as ex:
                 self.logger.error("Error unregistering view events: %s", str(ex))
                 
-            # Only reset colors if we actually have a valid view
-            if hasattr(self, 'active_view') and self.active_view:
-                try:
-                    # Set the specific view in the handler and then raise the event
-                    self.reset_colors_handler.set_specific_view(self.active_view)
+            # Reset colors in all target views
+            try:
+                views_to_reset = self.get_target_views()
+                if views_to_reset:
+                    self.reset_colors_handler.set_specific_views(views_to_reset)
                     self.reset_colors_event.Raise()
-                except Exception as ex:
-                    self.logger.error("Error resetting colors: %s", str(ex))
+            except Exception as ex:
+                self.logger.error("Error resetting colors: %s", str(ex))
                     
         except Exception as ex:
             # Just log the error, don't show to user since window is closing
@@ -2240,10 +2398,18 @@ class RevitColorizerWindow(WPFWindow):
             self.logger.error("Error in base class OnClosing: %s", str(ex))
     
     def on_view_activating(self, sender, args):
-        """Handle Revit view activating events (fires BEFORE the view changes)."""
+        """Handle Revit view activating events (fires BEFORE the view changes).
+        
+        When on a sheet with multiple views, we don't reset colors when navigating
+        between views on the same sheet.
+        """
         try:
             # Skip if window is not active or still initializing
             if not self.is_window_active or getattr(self, '_is_initializing', False):
+                return
+            
+            # If we're working with multiple views on a sheet, don't reset on view change
+            if self.current_sheet and len(self.target_views) > 1:
                 return
             
             # Store the current view before it changes
@@ -2252,7 +2418,7 @@ class RevitColorizerWindow(WPFWindow):
             # Store selected categories for persistence between views
             self.store_selected_categories()
             
-            # Set the specific view in the handler and then raise the event
+            # Reset colors in the current view
             self.reset_colors_handler.set_specific_view(current_view)
             self.reset_colors_event.Raise()
                 
@@ -2260,14 +2426,27 @@ class RevitColorizerWindow(WPFWindow):
             self.logger.error("Error handling view activation: %s", ex)
 
     def on_view_activated(self, sender, args):
-        """Handle Revit view activated events (fires AFTER the view changes)."""
+        """Handle Revit view activated events (fires AFTER the view changes).
+        
+        When on a sheet with multiple views, we don't auto-reload when navigating
+        between views on the same sheet.
+        """
         try:
             # Skip if window is not active
             if not self.is_window_active:
                 return
-                
-            # Get the freshly activated view from the document
+            
+            # Always update the active view reference
             self.active_view = self.doc.ActiveView
+            
+            # If we're working with multiple views on a sheet, don't auto-reload
+            if self.current_sheet and len(self.target_views) > 1:
+                return
+            
+            # Re-detect target views (user may have navigated to a different sheet or view)
+            self.detect_target_views()
+                
+            # Reload categories for the new context
             self.load_categories()
             self.apply_colors_event.Raise()
         except Exception as ex:
@@ -2284,12 +2463,20 @@ class RevitColorizerWindow(WPFWindow):
         return None
     
     def get_parameter_values(self, param, view):
-        """Get all values for a parameter across all selected categories."""
+        """Get all values for a parameter across all selected categories and target views.
+        
+        Aggregates elements from all target views (sheet views or single view).
+        The 'view' parameter is kept for compatibility but target_views is used.
+        """
         values = []
         used_colors = set()
+        processed_element_ids = set()  # Track processed elements to avoid duplicates across views
         
         # Get all selected categories
         selected_categories = self.get_selected_categories()
+        
+        # Get all target views (auto-detected based on sheet context)
+        views_to_query = self.get_target_views()
         
         for category in selected_categories:
             # Try to find BuiltInCategory if possible
@@ -2301,39 +2488,51 @@ class RevitColorizerWindow(WPFWindow):
             
             if not bic:
                 continue
-                
-            # Get all elements of this category in view
-            collector = DB.FilteredElementCollector(self.doc, view.Id) \
-                        .OfCategory(bic) \
-                        .WhereElementIsNotElementType() \
-                        .WhereElementIsViewIndependent() \
-                        .ToElements()
-                        
-            for element in collector:
-                # Get parameter host (instance or type)
-                param_host = element if param.param_type == 0 else self.doc.GetElement(element.GetTypeId())
-                
-                if not param_host:
+            
+            # Get elements from all selected views
+            for query_view in views_to_query:
+                try:
+                    # Get all elements of this category in this view
+                    collector = DB.FilteredElementCollector(self.doc, query_view.Id) \
+                                .OfCategory(bic) \
+                                .WhereElementIsNotElementType() \
+                                .WhereElementIsViewIndependent() \
+                                .ToElements()
+                except Exception as ex:
+                    self.logger.debug("Error collecting elements from view {}: {}".format(query_view.Name, str(ex)))
                     continue
                 
-                # Try to find the parameter
-                for parameter in param_host.Parameters:
-                    if parameter.Definition.Name == param.par.Name:
-                        value = self.get_parameter_value(parameter)
-                        
-                        # Check if this value already exists
-                        matching_items = [x for x in values if x.value == value]
-                        
-                        if matching_items:
-                            # Add element ID to existing value
-                            matching_items[0].ele_id.append(element.Id)
-                            if parameter.StorageType == DB.StorageType.Double:
-                                matching_items[0].values_double.append(parameter.AsDouble())
-                        else:
-                            # Instead of picking a random color, create a placeholder for now
-                            # We'll set proper colors after collecting all unique values
-                            values.append(self.ValuesInfo(parameter, value, element.Id, 0, 0, 0))
-                        break
+                for element in collector:
+                    # Skip if we've already processed this element (can appear in multiple views)
+                    element_int_id = self.get_elementid_value(element.Id)
+                    if element_int_id in processed_element_ids:
+                        continue
+                    processed_element_ids.add(element_int_id)
+                    
+                    # Get parameter host (instance or type)
+                    param_host = element if param.param_type == 0 else self.doc.GetElement(element.GetTypeId())
+                    
+                    if not param_host:
+                        continue
+                    
+                    # Try to find the parameter
+                    for parameter in param_host.Parameters:
+                        if parameter.Definition.Name == param.par.Name:
+                            value = self.get_parameter_value(parameter)
+                            
+                            # Check if this value already exists
+                            matching_items = [x for x in values if x.value == value]
+                            
+                            if matching_items:
+                                # Add element ID to existing value
+                                matching_items[0].ele_id.append(element.Id)
+                                if parameter.StorageType == DB.StorageType.Double:
+                                    matching_items[0].values_double.append(parameter.AsDouble())
+                            else:
+                                # Instead of picking a random color, create a placeholder for now
+                                # We'll set proper colors after collecting all unique values
+                                values.append(self.ValuesInfo(parameter, value, element.Id, 0, 0, 0))
+                            break
         
         # Sort values, with "None" at the end
         none_values = [x for x in values if x.value == "None"]

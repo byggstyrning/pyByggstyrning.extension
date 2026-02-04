@@ -1147,7 +1147,7 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
                 
                 self.update_status("Loaded {} mappings".format(len(self.configs)))
             else:
-                self.update_status("No mappings found")
+                self.update_status("Ready")
             
             self.refresh_ui()
             

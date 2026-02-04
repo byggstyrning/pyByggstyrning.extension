@@ -1,306 +1,315 @@
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Spatial Mappings" Width="1100" Height="900" WindowStartupLocation="CenterScreen"
+        Title="Spatial Mappings" Width="1200" Height="900" WindowStartupLocation="CenterScreen"
         Background="{DynamicResource WindowBackgroundBrush}">
     <!-- Styles will be loaded programmatically -->
-    <Grid Margin="10">
+    <Grid Margin="15">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <StackPanel Grid.Row="0">
-            <TextBlock Text="Spatial Mappings" Style="{DynamicResource HeaderTextBlockStyle}"/>
-            <TextBlock Text="Configure spatial parameter mappings for 3D Zones, Rooms and Areas" Style="{DynamicResource BodyTextBlockStyle}" Margin="0,0,0,15"/>
+        <!-- Header Section -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,20">
+            <TextBlock Text="Spatial Mappings" Style="{DynamicResource HeaderTextBlockStyle}" Margin="0,0,0,5"/>
+            <TextBlock Text="Configure spatial parameter mappings for 3D Zones, Rooms and Areas" 
+                       Style="{DynamicResource BodyTextBlockStyle}" 
+                       Foreground="{DynamicResource TextSecondaryBrush}"/>
         </StackPanel>
 
         <!-- Main Content with TabControl -->
-        <TabControl Grid.Row="1" x:Name="tabControl">
+        <TabControl Grid.Row="1" x:Name="tabControl" Style="{DynamicResource StandardTabControlStyle}">
             <!-- Mappings List Tab -->
-            <TabItem Header="Mappings" x:Name="configsTab">
+            <TabItem Header="Mappings" x:Name="configsTab" Style="{DynamicResource StandardTabItemStyle}">
                 <Grid Margin="10">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <ListView x:Name="configsListView" Grid.Row="0" Margin="0,0,0,10" SelectionMode="Single"
-                              Background="{DynamicResource ControlBackgroundBrush}"
-                              Foreground="{DynamicResource TextBrush}"
-                              BorderBrush="{DynamicResource BorderBrush}"
-                              BorderThickness="1">
-                        <ListView.View>
-                            <GridView>
-                                <GridViewColumn Header="Name" Width="200">
-                                    <GridViewColumn.CellTemplate>
-                                        <DataTemplate>
-                                            <TextBlock Text="{Binding Name}" VerticalAlignment="Center" Margin="5,0"
-                                                      Foreground="{DynamicResource TextBrush}"/>
-                                        </DataTemplate>
-                                    </GridViewColumn.CellTemplate>
-                                </GridViewColumn>
-                                <GridViewColumn Header="Source Categories" Width="200">
-                                    <GridViewColumn.CellTemplate>
-                                        <DataTemplate>
-                                            <TextBlock Text="{Binding SourceCategoriesDisplay}" VerticalAlignment="Center" Margin="5,0"
-                                                      Foreground="{DynamicResource TextBrush}"/>
-                                        </DataTemplate>
-                                    </GridViewColumn.CellTemplate>
-                                </GridViewColumn>
-                                <GridViewColumn Header="Mappings" Width="250">
-                                    <GridViewColumn.CellTemplate>
-                                        <DataTemplate>
-                                            <TextBlock x:Name="mappingsTextBlock" TextWrapping="Wrap" VerticalAlignment="Center" Margin="5,0"
-                                                      Foreground="{DynamicResource TextBrush}" Loaded="MappingsTextBlock_Loaded"/>
-                                        </DataTemplate>
-                                    </GridViewColumn.CellTemplate>
-                                </GridViewColumn>
-                                <GridViewColumn Header="Enabled" Width="80">
-                                    <GridViewColumn.CellTemplate>
-                                        <DataTemplate>
-                                            <CheckBox x:Name="enabledCheckBox" IsChecked="{Binding Enabled, Mode=TwoWay}" 
-                                                     HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                     Style="{DynamicResource ToggleSwitchStyle}"
-                                                     Checked="EnabledCheckBox_Checked" Unchecked="EnabledCheckBox_Unchecked"/>
-                                        </DataTemplate>
-                                    </GridViewColumn.CellTemplate>
-                                </GridViewColumn>
-                                <GridViewColumn Header="On IFC Export" Width="130">
-                                    <GridViewColumn.CellTemplate>
-                                        <DataTemplate>
-                                            <CheckBox x:Name="writeBeforeIfcCheckBox" IsChecked="{Binding WriteBeforeIfcExport, Mode=TwoWay}" 
-                                                     HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                     Style="{DynamicResource ToggleSwitchStyle}"
-                                                     Checked="WriteBeforeIfcCheckBox_Checked" Unchecked="WriteBeforeIfcCheckBox_Unchecked"/>
-                                        </DataTemplate>
-                                    </GridViewColumn.CellTemplate>
-                                </GridViewColumn>
-                                <GridViewColumn Header="Only Empty" Width="100">
-                                    <GridViewColumn.CellTemplate>
-                                        <DataTemplate>
-                                            <CheckBox x:Name="onlyEmptyCheckBox" IsChecked="{Binding OnlyEmpty, Mode=TwoWay}" 
-                                                     HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                     Style="{DynamicResource ToggleSwitchStyle}"
-                                                     Checked="OnlyEmptyCheckBox_Checked" Unchecked="OnlyEmptyCheckBox_Unchecked"
-                                                     Loaded="OnlyEmptyCheckBox_Loaded"/>
-                                        </DataTemplate>
-                                    </GridViewColumn.CellTemplate>
-                                </GridViewColumn>
-                            </GridView>
-                        </ListView.View>
-                    </ListView>
+                    <!-- Mappings List -->
+                    <Border Grid.Row="0" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" 
+                            Background="{DynamicResource ControlBackgroundBrush}" CornerRadius="3" Margin="0,0,0,15">
+                        <ListView x:Name="configsListView" Margin="5" SelectionMode="Single"
+                                  Background="Transparent"
+                                  Foreground="{DynamicResource TextBrush}"
+                                  BorderThickness="0"
+                                  Style="{DynamicResource StandardListViewStyle}">
+                            <ListView.View>
+                                <GridView>
+                                    <GridViewColumn Header="Name" Width="200">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center" Margin="5,0"
+                                                          Foreground="{DynamicResource TextBrush}" FontWeight="SemiBold"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="Source Categories" Width="200">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding SourceCategoriesDisplay}" VerticalAlignment="Center" Margin="5,0"
+                                                          Foreground="{DynamicResource TextBrush}"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="Mappings" Width="300">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock x:Name="mappingsTextBlock" TextWrapping="Wrap" VerticalAlignment="Center" Margin="5,0"
+                                                          Foreground="{DynamicResource TextBrush}" Loaded="MappingsTextBlock_Loaded"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="Enabled" Width="80">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <CheckBox x:Name="enabledCheckBox" IsChecked="{Binding Enabled, Mode=TwoWay}" 
+                                                         HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                         Style="{DynamicResource ToggleSwitchStyle}"
+                                                         Checked="EnabledCheckBox_Checked" Unchecked="EnabledCheckBox_Unchecked"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="On IFC Export" Width="130">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <CheckBox x:Name="writeBeforeIfcCheckBox" IsChecked="{Binding WriteBeforeIfcExport, Mode=TwoWay}" 
+                                                         HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                         Style="{DynamicResource ToggleSwitchStyle}"
+                                                         Checked="WriteBeforeIfcCheckBox_Checked" Unchecked="WriteBeforeIfcCheckBox_Unchecked"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="Only Empty" Width="100">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <CheckBox x:Name="onlyEmptyCheckBox" IsChecked="{Binding OnlyEmpty, Mode=TwoWay}" 
+                                                         HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                         Style="{DynamicResource ToggleSwitchStyle}"
+                                                         Checked="OnlyEmptyCheckBox_Checked" Unchecked="OnlyEmptyCheckBox_Unchecked"
+                                                         Loaded="OnlyEmptyCheckBox_Loaded"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                </GridView>
+                            </ListView.View>
+                        </ListView>
+                    </Border>
 
+                    <!-- Action Buttons -->
                     <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Left">
-                        <Button x:Name="addButton" Content="Add New" Width="120" Height="30" Margin="0,0,10,0" Style="{DynamicResource SuccessButtonStyle}"/>
-                        <Button x:Name="editButton" Content="Edit Selected" Width="120" Height="30" Margin="0,0,10,0" IsEnabled="False" Style="{DynamicResource StandardButtonStyle}"/>
-                        <Button x:Name="deleteButton" Content="Delete Selected" Width="120" Height="30" Margin="0,0,10,0" IsEnabled="False" Style="{DynamicResource DangerButtonStyle}"/>
-                        <Button x:Name="moveUpButton" Content="Move Up" Width="100" Height="30" Margin="0,0,10,0" IsEnabled="False" Style="{DynamicResource SecondaryButtonStyle}"/>
-                        <Button x:Name="moveDownButton" Content="Move Down" Width="100" Height="30" IsEnabled="False" Style="{DynamicResource SecondaryButtonStyle}"/>
+                        <Button x:Name="addButton" Content="Add New" Width="120" Height="30" Margin="0,0,10,0" 
+                                Style="{DynamicResource SuccessButtonStyle}"/>
+                        <Button x:Name="editButton" Content="Edit Selected" Width="120" Height="30" Margin="0,0,10,0" 
+                                IsEnabled="False" Style="{DynamicResource StandardButtonStyle}"/>
+                        <Button x:Name="deleteButton" Content="Delete Selected" Width="120" Height="30" Margin="0,0,10,0" 
+                                IsEnabled="False" Style="{DynamicResource DangerButtonStyle}"/>
+                        <Button x:Name="moveUpButton" Content="Move Up" Width="100" Height="30" Margin="0,0,10,0" 
+                                IsEnabled="False" Style="{DynamicResource SecondaryButtonStyle}"/>
+                        <Button x:Name="moveDownButton" Content="Move Down" Width="100" Height="30" 
+                                IsEnabled="False" Style="{DynamicResource SecondaryButtonStyle}"/>
                     </StackPanel>
                 </Grid>
             </TabItem>
 
             <!-- Add/Edit Mapping Tab -->
-            <TabItem Header="Edit Mapping" x:Name="editConfigTab" IsEnabled="False">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <Grid Margin="10">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-
-                        <!-- Row 0: Mapping Name -->
-                        <TextBlock Text="Name:" Grid.Row="0" Grid.Column="0" Margin="0,10,10,5" VerticalAlignment="Center" Style="{DynamicResource SubheaderTextBlockStyle}"/>
-                        <StackPanel Grid.Row="0" Grid.Column="1">
-                            <Border BorderBrush="#999999" BorderThickness="2" CornerRadius="3">
-                                <TextBox x:Name="nameTextBox" Tag="Enter mapping name..." BorderThickness="0">
-                                    <TextBox.Style>
-                                        <Style TargetType="TextBox">
-                                            <Setter Property="Padding" Value="10,3,0,0"/>
-                                            <Setter Property="Margin" Value="0,0,0,0"/>
-                                            <Setter Property="VerticalContentAlignment" Value="Center"/>
-                                            <Setter Property="Background" Value="{DynamicResource ControlBackgroundBrush}"/>
-                                            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
-                                            <Setter Property="Template">
-                                                <Setter.Value>
-                                                    <ControlTemplate TargetType="TextBox">
-                                                        <Border x:Name="border" 
-                                                                Background="{TemplateBinding Background}"
-                                                                BorderBrush="#CCCCCC"
-                                                                BorderThickness="0"
-                                                                CornerRadius="0">
-                                                            <Grid>
-                                                                <ScrollViewer x:Name="PART_ContentHost"
-                                                                            VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
-                                                                            Focusable="False"/>
-                                                                <TextBlock x:Name="placeholder"
-                                                                          Text="{TemplateBinding Tag}"
-                                                                          Foreground="{DynamicResource PlaceholderForegroundBrush}"
-                                                                          Margin="{TemplateBinding Padding}"
-                                                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
-                                                                          IsHitTestVisible="False"
-                                                                          Visibility="Collapsed"/>
-                                                            </Grid>
-                                                        </Border>
-                                                        <ControlTemplate.Triggers>
-                                                            <DataTrigger Binding="{Binding Text, RelativeSource={RelativeSource Self}}" Value="">
-                                                                <Setter TargetName="placeholder" Property="Visibility" Value="Visible"/>
-                                                            </DataTrigger>
-                                                            <DataTrigger Binding="{Binding Text, RelativeSource={RelativeSource Self}}" Value="{x:Null}">
-                                                                <Setter TargetName="placeholder" Property="Visibility" Value="Visible"/>
-                                                            </DataTrigger>
-                                                        </ControlTemplate.Triggers>
-                                                    </ControlTemplate>
-                                                </Setter.Value>
-                                            </Setter>
-                                        </Style>
-                                    </TextBox.Style>
-                                </TextBox>
-                            </Border>
-                            <TextBlock x:Name="nameErrorTextBlock" Text="Mapping name is required" 
-                                      Foreground="Red" FontSize="11" Margin="0,2,0,0" Visibility="Collapsed"/>
-                        </StackPanel>
-
-                        <!-- Row 1: Categories Section - 2 Column Layout -->
-                        <Grid Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,15,0,10">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="*"/>
-                                <RowDefinition Height="Auto"/>
-                            </Grid.RowDefinitions>
-                            
-                            <TextBlock Text="Source Category:" Grid.Row="0" Grid.Column="0" Style="{DynamicResource SubheaderTextBlockStyle}" Margin="0,0,0,5"/>
-                            <StackPanel Grid.Row="0" Grid.Column="1" Margin="5,0,0,5">
-                                <TextBlock Text="Target Filter Categories (optional):" Style="{DynamicResource SubheaderTextBlockStyle}"/>
-                                <TextBlock Text="Leave empty to write to ALL elements within the source geometry. Select categories to limit which element types receive the mapped parameters." 
-                                           Style="{DynamicResource SecondaryTextBlockStyle}" TextWrapping="Wrap" Margin="0,2,0,0" FontStyle="Italic"/>
-                            </StackPanel>
-                            
-                            <Grid Grid.Row="1" Grid.Column="0" Margin="0,5,5,0">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="Auto"/>
-                                </Grid.RowDefinitions>
-                                <StackPanel Grid.Row="0" Orientation="Horizontal" VerticalAlignment="Center">
-                                    <CheckBox x:Name="useLinkedDocumentCheckBox" Content="Use Linked Document" VerticalAlignment="Center" Style="{DynamicResource ToggleSwitchStyle}" Margin="0,0,10,0"/>
-                                    <TextBlock Text="Linked Document:" VerticalAlignment="Center" Margin="0,0,5,0" Style="{DynamicResource SecondaryTextBlockStyle}"/>
-                                    <ComboBox x:Name="linkedDocumentComboBox" Height="25" IsEnabled="False" Style="{DynamicResource StandardComboBoxStyle}" VerticalAlignment="Center"/>
+            <TabItem Header="Edit Mapping" x:Name="editConfigTab" IsEnabled="False" Style="{DynamicResource StandardTabItemStyle}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Style="{DynamicResource CustomScrollViewerStyle}">
+                    <StackPanel Margin="10">
+                        <StackPanel.Resources>
+                            <Style TargetType="GroupBox">
+                                <Setter Property="Margin" Value="0,0,0,20"/>
+                            </Style>
+                        </StackPanel.Resources>
+                        
+                        <!-- Step 1: Basic Information -->
+                        <GroupBox Header="Step 1: Basic Information">
+                            <StackPanel>
+                                <StackPanel Margin="0,0,0,10">
+                                    <TextBlock Text="Mapping Name" Style="{DynamicResource LabelTextBlockStyle}" Margin="0,0,0,5"/>
+                                    <TextBox x:Name="nameTextBox" Tag="Enter a descriptive name for this mapping..." 
+                                             Style="{DynamicResource PlaceholderTextBoxStyle}" Height="35"/>
+                                    <TextBlock x:Name="nameErrorTextBlock" Text="⚠️ Mapping name is required" 
+                                              Foreground="{DynamicResource ErrorBrush}" FontSize="11" Margin="5,3,0,0" 
+                                              Visibility="Collapsed" Style="{DynamicResource SecondaryTextBlockStyle}"/>
                                 </StackPanel>
-                                <TextBlock x:Name="linkedDocumentErrorTextBlock" Grid.Row="1" Text="Linked document not found or not selected" 
-                                          Foreground="Red" FontSize="11" Margin="0,2,0,0" Visibility="Collapsed"/>
-                            </Grid>
-                            
-                            <StackPanel Grid.Row="2" Grid.Column="0" Margin="0,5,5,0">
-                                <Border BorderBrush="#999999" BorderThickness="2" CornerRadius="3">
-                                    <ListBox x:Name="sourceCategoriesListBox" Height="120" SelectionMode="Single" Style="{DynamicResource StandardListBoxStyle}" BorderThickness="0"/>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- Step 2: Source Configuration -->
+                        <GroupBox Header="Step 2: Source Configuration">
+                            <StackPanel>
+                                <!-- Linked Document Option -->
+                                <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" 
+                                        Background="{DynamicResource BackgroundLightBrush}" CornerRadius="3" Padding="10" Margin="0,0,0,15">
+                                    <StackPanel>
+                                        <CheckBox x:Name="useLinkedDocumentCheckBox" Content="Use Linked Document" 
+                                                  Style="{DynamicResource ToggleSwitchStyle}" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                                        <StackPanel Orientation="Horizontal" Margin="25,0,0,0" IsEnabled="{Binding ElementName=useLinkedDocumentCheckBox, Path=IsChecked}">
+                                            <TextBlock Text="Linked Document:" VerticalAlignment="Center" Margin="0,0,10,0" 
+                                                       Style="{DynamicResource LabelTextBlockStyle}"/>
+                                            <ComboBox x:Name="linkedDocumentComboBox" Height="30" Width="300" 
+                                                     IsEnabled="False" Style="{DynamicResource StandardComboBoxStyle}"/>
+                                        </StackPanel>
+                                        <TextBlock x:Name="linkedDocumentErrorTextBlock" Text="⚠️ Linked document must be selected when enabled" 
+                                                  Foreground="{DynamicResource ErrorBrush}" FontSize="11" Margin="25,3,0,0" 
+                                                  Visibility="Collapsed" Style="{DynamicResource SecondaryTextBlockStyle}"/>
+                                    </StackPanel>
                                 </Border>
-                                <TextBlock x:Name="sourceCategoryErrorTextBlock" Text="A source category must be selected" 
-                                          Foreground="{DynamicResource ErrorBrush}" FontSize="11" Margin="0,2,0,0" Visibility="Collapsed"/>
-                            </StackPanel>
-                            <Border Grid.Row="2" Grid.Column="1" BorderBrush="#999999" BorderThickness="2" CornerRadius="3" Margin="5,5,0,0">
-                                <ListBox x:Name="targetFilterCategoriesListBox" Height="120" SelectionMode="Multiple" Style="{DynamicResource StandardListBoxStyle}" BorderThickness="0">
-                                    <ListBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <TextBlock Text="{Binding}" Foreground="{DynamicResource TextBrush}">
-                                                <TextBlock.Style>
-                                                    <Style TargetType="TextBlock">
-                                                        <Setter Property="FontWeight" Value="Normal"/>
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=ListBoxItem}, Path=IsSelected}" Value="True">
-                                                                <Setter Property="FontWeight" Value="Bold"/>
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </TextBlock.Style>
-                                            </TextBlock>
-                                        </DataTemplate>
-                                    </ListBox.ItemTemplate>
-                                </ListBox>
-                            </Border>
-                            
-                            <StackPanel Grid.Row="3" Grid.Column="0" Margin="0,10,5,0">
-                                <TextBlock Text="Sort Source Elements By (optional):" Margin="0,0,0,3" Style="{DynamicResource SecondaryTextBlockStyle}"/>
-                                <StackPanel Orientation="Horizontal">
-                                    <ComboBox x:Name="sourceSortPropertyComboBox" Style="{DynamicResource StandardComboBoxStyle}" Width="200"/>
-                                    <RadioButton x:Name="sortAscendingRadioButton" Content="Ascending" IsChecked="True" 
-                                                 GroupName="SortDirection" Style="{DynamicResource SegmentedRadioButtonFirstStyle}" Margin="15,0,0,0"/>
-                                    <RadioButton x:Name="sortDescendingRadioButton" Content="Descending" 
-                                                 GroupName="SortDirection" Style="{DynamicResource SegmentedRadioButtonLastStyle}"/>
+
+                                <!-- Source Category Selection -->
+                                <StackPanel Margin="0,0,0,15">
+                                    <TextBlock Text="Source Category" Style="{DynamicResource LabelTextBlockStyle}" Margin="0,0,0,5"/>
+                                    <TextBlock Text="Select the spatial element category to read parameters from" 
+                                               Style="{DynamicResource SecondaryTextBlockStyle}" Margin="0,0,0,8" FontStyle="Italic"/>
+                                    <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="3">
+                                        <ListBox x:Name="sourceCategoriesListBox" Height="140" SelectionMode="Single" 
+                                                Style="{DynamicResource StandardListBoxStyle}" BorderThickness="0"/>
+                                    </Border>
+                                    <TextBlock x:Name="sourceCategoryErrorTextBlock" Text="⚠️ A source category must be selected" 
+                                              Foreground="{DynamicResource ErrorBrush}" FontSize="11" Margin="5,3,0,0" 
+                                              Visibility="Collapsed" Style="{DynamicResource SecondaryTextBlockStyle}"/>
                                 </StackPanel>
-                            </StackPanel>
-                        </Grid>
 
-                        <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,10,0,5">
-                            <TextBlock Text="Parameter Mappings:" FontWeight="Bold" Margin="0,0,0,5"/>
-                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
-                                <Button x:Name="addParameterMappingButton" Content="Add" Width="80" Height="30" Margin="0,0,5,0" Style="{DynamicResource StandardButtonStyle}"/>
-                                <Button x:Name="editParameterMappingButton" Content="Edit" Width="80" Height="30" Margin="0,0,5,0" IsEnabled="False" Style="{DynamicResource StandardButtonStyle}"/>
-                                <Button x:Name="deleteParameterMappingButton" Content="Delete" Width="80" Height="30" IsEnabled="False" Style="{DynamicResource DangerButtonStyle}"/>
+                                <!-- Sort Options -->
+                                <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" 
+                                        Background="{DynamicResource BackgroundLightBrush}" CornerRadius="3" Padding="10">
+                                    <StackPanel>
+                                        <TextBlock Text="Sort Source Elements (Optional)" Style="{DynamicResource LabelTextBlockStyle}" Margin="0,0,0,8"/>
+                                        <TextBlock Text="Choose how to sort source elements before mapping" 
+                                                   Style="{DynamicResource SecondaryTextBlockStyle}" Margin="0,0,0,8" FontStyle="Italic"/>
+                                        <StackPanel Orientation="Horizontal">
+                                            <ComboBox x:Name="sourceSortPropertyComboBox" Style="{DynamicResource StandardComboBoxStyle}" 
+                                                     Width="250" Height="30" Margin="0,0,15,0"/>
+                                            <StackPanel Orientation="Horizontal">
+                                                <RadioButton x:Name="sortAscendingRadioButton" Content="Ascending" IsChecked="True" 
+                                                             GroupName="SortDirection" Style="{DynamicResource SegmentedRadioButtonFirstStyle}" Margin="0,0,5,0"/>
+                                                <RadioButton x:Name="sortDescendingRadioButton" Content="Descending" 
+                                                             GroupName="SortDirection" Style="{DynamicResource SegmentedRadioButtonLastStyle}"/>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
                             </StackPanel>
-                        </StackPanel>
-                        <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,5,0,10">
-                            <Border BorderBrush="#999999" BorderThickness="2" CornerRadius="3">
-                                <DataGrid x:Name="parameterMappingsDataGrid" Height="150"
-                                          AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" IsReadOnly="True" SelectionMode="Single"
-                                          Style="{DynamicResource EnhancedDataGridStyle}"
-                                          RowStyle="{DynamicResource EnhancedDataGridRowStyle}"
-                                          ColumnHeaderStyle="{DynamicResource EnhancedDataGridColumnHeaderStyle}"
-                                          CellStyle="{DynamicResource EnhancedDataGridCellStyle}"
-                                          BorderThickness="0">
-                                <DataGrid.Columns>
-                                    <DataGridTextColumn Header="Source Parameter" 
-                                                      Binding="{Binding SourceParameter}" 
-                                                      Width="*"/>
-                                    <DataGridTemplateColumn Header="" Width="40" CanUserResize="False">
-                                        <DataGridTemplateColumn.CellTemplate>
+                        </GroupBox>
+
+                        <!-- Step 3: Target Filter (Optional) -->
+                        <GroupBox Header="Step 3: Target Filter (Optional)">
+                            <StackPanel>
+                                <TextBlock TextWrapping="Wrap" Style="{DynamicResource BodyTextBlockStyle}" Margin="0,0,0,10">
+                                    <Run Text="By default, parameters will be written to "/>
+                                    <Run Text="ALL elements" FontWeight="SemiBold"/>
+                                    <Run Text=" within the source geometry. "/>
+                                    <LineBreak/>
+                                    <Run Text="Select specific categories below to limit which element types receive the mapped parameters."/>
+                                </TextBlock>
+                                <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="3">
+                                    <ListBox x:Name="targetFilterCategoriesListBox" Height="140" SelectionMode="Multiple" 
+                                            Style="{DynamicResource StandardListBoxStyle}" BorderThickness="0">
+                                        <ListBox.ItemTemplate>
                                             <DataTemplate>
-                                                <Image Source="{Binding ArrowImageSource}" 
-                                                       Width="20" Height="20" 
-                                                       HorizontalAlignment="Center" 
-                                                       VerticalAlignment="Center"
-                                                       Stretch="Uniform"/>
+                                                <TextBlock Text="{Binding}" Foreground="{DynamicResource TextBrush}">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="FontWeight" Value="Normal"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=ListBoxItem}, Path=IsSelected}" Value="True">
+                                                                    <Setter Property="FontWeight" Value="Bold"/>
+                                                                    <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
                                             </DataTemplate>
-                                        </DataGridTemplateColumn.CellTemplate>
-                                    </DataGridTemplateColumn>
-                                    <DataGridTextColumn Header="Target Parameter" 
-                                                      Binding="{Binding TargetParameter}" 
-                                                      Width="*"/>
-                                </DataGrid.Columns>
-                                </DataGrid>
-                            </Border>
-                            <TextBlock x:Name="mappingsErrorTextBlock" Text="At least one parameter mapping is required" 
-                                      Foreground="Red" FontSize="11" Margin="0,2,0,0" Visibility="Collapsed"/>
-                        </StackPanel>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                </Border>
+                            </StackPanel>
+                        </GroupBox>
 
-                        <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,15,0,0">
-                            <Button x:Name="backButton" Content="Back" Width="100" Height="30" Margin="0,0,10,0" Style="{DynamicResource SecondaryButtonStyle}"/>
-                            <Button x:Name="saveButton" Content="Save Mapping" Width="150" Height="30" IsEnabled="False" Style="{DynamicResource SuccessButtonStyle}"/>
+                        <!-- Step 4: Parameter Mappings -->
+                        <GroupBox Header="Step 4: Parameter Mappings">
+                            <StackPanel>
+                                <TextBlock TextWrapping="Wrap" Style="{DynamicResource BodyTextBlockStyle}" Margin="0,0,0,12">
+                                    <Run Text="Define which source parameters map to which target parameters. "/>
+                                    <Run Text="At least one mapping is required." FontWeight="SemiBold" Foreground="{DynamicResource ErrorBrush}"/>
+                                </TextBlock>
+                                
+                                <!-- Action Buttons -->
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                    <Button x:Name="addParameterMappingButton" Content="Add" Width="80" Height="30" 
+                                            Style="{DynamicResource SuccessButtonStyle}" Margin="0,0,5,0"/>
+                                    <Button x:Name="editParameterMappingButton" Content="Edit" Width="80" Height="30" 
+                                            IsEnabled="False" Style="{DynamicResource StandardButtonStyle}" Margin="0,0,5,0"/>
+                                    <Button x:Name="deleteParameterMappingButton" Content="Delete" Width="80" Height="30" 
+                                            IsEnabled="False" Style="{DynamicResource DangerButtonStyle}"/>
+                                </StackPanel>
+
+                                <!-- Mappings DataGrid -->
+                                <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="3">
+                                    <DataGrid x:Name="parameterMappingsDataGrid" Height="180" MinHeight="150"
+                                              AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" 
+                                              IsReadOnly="True" SelectionMode="Single"
+                                              Style="{DynamicResource EnhancedDataGridStyle}"
+                                              RowStyle="{DynamicResource EnhancedDataGridRowStyle}"
+                                              ColumnHeaderStyle="{DynamicResource EnhancedDataGridColumnHeaderStyle}"
+                                              CellStyle="{DynamicResource EnhancedDataGridCellStyle}"
+                                              BorderThickness="0"
+                                              Background="{DynamicResource ControlBackgroundBrush}">
+                                        <DataGrid.Resources>
+                                            <Style TargetType="TextBlock">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=DataGrid}, Path=Items.Count}" Value="0">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </DataGrid.Resources>
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Source Parameter" 
+                                                              Binding="{Binding SourceParameter}" 
+                                                              Width="*"/>
+                                            <DataGridTemplateColumn Header="" Width="50" CanUserResize="False">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="→" FontSize="16" FontWeight="Bold"
+                                                                   Foreground="{DynamicResource AccentBrush}"
+                                                                   HorizontalAlignment="Center" 
+                                                                   VerticalAlignment="Center"/>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTextColumn Header="Target Parameter" 
+                                                              Binding="{Binding TargetParameter}" 
+                                                              Width="*"/>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </Border>
+                                <TextBlock x:Name="mappingsErrorTextBlock" Text="⚠️ At least one parameter mapping is required" 
+                                          Foreground="{DynamicResource ErrorBrush}" FontSize="11" Margin="5,3,0,0" 
+                                          Visibility="Collapsed" Style="{DynamicResource SecondaryTextBlockStyle}"/>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- Action Buttons -->
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+                            <Button x:Name="backButton" Content="Back" Width="100" Height="30" 
+                                    Style="{DynamicResource SecondaryButtonStyle}" Margin="0,0,10,0"/>
+                            <Button x:Name="saveButton" Content="Save Mapping" Width="150" Height="30" 
+                                    IsEnabled="False" Style="{DynamicResource SuccessButtonStyle}"/>
                         </StackPanel>
-                    </Grid>
+                    </StackPanel>
                 </ScrollViewer>
             </TabItem>
         </TabControl>
 
         <!-- Status Bar -->
-        <StatusBar Grid.Row="2">
-            <StatusBarItem>
-                <TextBlock x:Name="statusTextBlock" Text="Ready" />
-            </StatusBarItem>
-        </StatusBar>
+        <Border Grid.Row="2" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0" 
+                Background="{DynamicResource BackgroundLightBrush}" Margin="0,10,0,0" Padding="10,5">
+            <TextBlock x:Name="statusTextBlock" Text="Ready" Style="{DynamicResource StatusTextBlockStyle}"/>
+        </Border>
     </Grid>
 </Window>
-

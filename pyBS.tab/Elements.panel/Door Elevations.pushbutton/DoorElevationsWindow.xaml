@@ -1,0 +1,238 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Create Door Elevations" Width="900" Height="750" WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource WindowBackgroundBrush}">
+    <!-- Styles will be loaded programmatically -->
+    <Grid Margin="15">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Header -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,15">
+            <TextBlock Text="Create Door Elevations" Style="{DynamicResource HeaderTextBlockStyle}" Margin="0,0,0,5"/>
+            <TextBlock Text="Create elevation views for door instances and place them on sheets in a grid layout."
+                       Style="{DynamicResource BodyTextBlockStyle}" 
+                       Foreground="{DynamicResource TextSecondaryBrush}"/>
+        </StackPanel>
+
+        <!-- Elevation Settings -->
+        <GroupBox Grid.Row="1" Header="Elevation Settings" Margin="0,0,0,15">
+            <Grid Margin="10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="20"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="20"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- Row 1: Scale, Template, Type -->
+                <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,0,10">
+                    <TextBlock Text="View Scale" Style="{DynamicResource LabelTextBlockStyle}" Margin="0,0,0,5"/>
+                    <ComboBox x:Name="scaleComboBox" Style="{DynamicResource StandardComboBoxStyle}" Height="30"/>
+                </StackPanel>
+
+                <StackPanel Grid.Row="0" Grid.Column="2" Margin="0,0,0,10">
+                    <TextBlock Text="View Template" Style="{DynamicResource LabelTextBlockStyle}" Margin="0,0,0,5"/>
+                    <ComboBox x:Name="templateComboBox" Style="{DynamicResource StandardComboBoxStyle}" Height="30" MaxDropDownHeight="250"/>
+                </StackPanel>
+
+                <StackPanel Grid.Row="0" Grid.Column="4" Margin="0,0,0,10">
+                    <TextBlock Text="Elevation Type" Style="{DynamicResource LabelTextBlockStyle}" Margin="0,0,0,5"/>
+                    <ComboBox x:Name="elevationTypeComboBox" Style="{DynamicResource StandardComboBoxStyle}" Height="30">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding Name}" Foreground="{DynamicResource TextBrush}"/>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                </StackPanel>
+
+                <!-- Row 2: Name Prefix, Crop Offset, Crop Checkbox -->
+                <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,0,10">
+                    <TextBlock Text="Name Prefix" Style="{DynamicResource LabelTextBlockStyle}" Margin="0,0,0,5"/>
+                    <TextBox x:Name="namePrefixTextBox" Style="{DynamicResource PlaceholderTextBoxStyle}" 
+                             Tag="Enter view name prefix..." Height="30" Text="Door Elev - "/>
+                </StackPanel>
+
+                <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,0,0,10">
+                    <TextBlock Text="Crop Offset (mm)" Style="{DynamicResource LabelTextBlockStyle}" Margin="0,0,0,5"/>
+                    <TextBox x:Name="cropOffsetTextBox" Style="{DynamicResource PlaceholderTextBoxStyle}" 
+                             Tag="Offset around door..." Height="30" Text="300"/>
+                </StackPanel>
+
+                <StackPanel Grid.Row="1" Grid.Column="4" Margin="0,0,0,10" VerticalAlignment="Bottom">
+                    <CheckBox x:Name="cropToDoorCheckBox" Content="Crop to door bounding box" IsChecked="True"
+                              Style="{DynamicResource StandardCheckBoxStyle}" Margin="0,0,0,5"/>
+                </StackPanel>
+            </Grid>
+        </GroupBox>
+
+        <!-- Sheet Placement Settings -->
+        <GroupBox Grid.Row="2" Header="Sheet Placement" Margin="0,0,0,15">
+            <Grid Margin="10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="20"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="20"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- Row 1: Sheet Prefix, Group By, Sort By -->
+                <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,0,10">
+                    <TextBlock Text="Sheet Number Prefix" Style="{DynamicResource LabelTextBlockStyle}" Margin="0,0,0,5"/>
+                    <TextBox x:Name="sheetPrefixTextBox" Style="{DynamicResource PlaceholderTextBoxStyle}" 
+                             Tag="e.g. DE-" Height="30" Text="DE-"/>
+                </StackPanel>
+
+                <StackPanel Grid.Row="0" Grid.Column="2" Margin="0,0,0,10">
+                    <TextBlock Text="Group By" Style="{DynamicResource LabelTextBlockStyle}" Margin="0,0,0,5"/>
+                    <ComboBox x:Name="groupByComboBox" Style="{DynamicResource StandardComboBoxStyle}" Height="30"/>
+                </StackPanel>
+
+                <StackPanel Grid.Row="0" Grid.Column="4" Margin="0,0,0,10">
+                    <TextBlock Text="Sort By" Style="{DynamicResource LabelTextBlockStyle}" Margin="0,0,0,5"/>
+                    <ComboBox x:Name="sortByComboBox" Style="{DynamicResource StandardComboBoxStyle}" Height="30"/>
+                </StackPanel>
+
+                <!-- Row 2: Info text -->
+                <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="5" 
+                           Text="Grid layout: 20 doors wide, groups separated by 2 rows. Sheets created without titleblock."
+                           Style="{DynamicResource SecondaryTextBlockStyle}" FontStyle="Italic"/>
+            </Grid>
+        </GroupBox>
+
+        <!-- Door Selection -->
+        <GroupBox Grid.Row="3" Header="Door Selection" Margin="0,0,0,10">
+            <Grid Margin="10">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <!-- Search Box -->
+                <StackPanel Grid.Row="0" Margin="0,0,0,10">
+                    <TextBlock Text="Search Doors" Style="{DynamicResource LabelTextBlockStyle}" Margin="0,0,0,5"/>
+                    <TextBox x:Name="doorSearchTextBox" Style="{DynamicResource PlaceholderTextBoxStyle}" 
+                             Tag="Search by mark, family, type, level, room..." Height="30"
+                             TextChanged="doorSearchTextBox_TextChanged"/>
+                </StackPanel>
+
+                <!-- Select All and Count -->
+                <Grid Grid.Row="1" Margin="0,0,0,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    
+                    <CheckBox x:Name="selectAllCheckBox" Grid.Column="0" Content="Select All Filtered" IsChecked="True"
+                              Checked="selectAllCheckBox_Checked" Unchecked="selectAllCheckBox_Unchecked"
+                              Style="{DynamicResource StandardCheckBoxStyle}"/>
+                    
+                    <TextBlock x:Name="selectionCountText" Grid.Column="2" Text="0 doors selected"
+                               Style="{DynamicResource SecondaryTextBlockStyle}" VerticalAlignment="Center"/>
+                </Grid>
+
+                <!-- DataGrid -->
+                <Border Grid.Row="2" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="3">
+                    <DataGrid x:Name="doorsDataGrid"
+                              SelectionMode="Extended"
+                              CanUserAddRows="False"
+                              CanUserDeleteRows="False"
+                              CanUserSortColumns="True"
+                              AutoGenerateColumns="False"
+                              IsReadOnly="False"
+                              GridLinesVisibility="None"
+                              HeadersVisibility="Column"
+                              BorderThickness="0"
+                              Background="{DynamicResource ControlBackgroundBrush}"
+                              RowBackground="{DynamicResource DataGridRowBackgroundBrush}"
+                              HorizontalGridLinesBrush="{DynamicResource BorderBrush}"
+                              VerticalGridLinesBrush="Transparent"
+                              RowHeight="24"
+                              FontSize="12"
+                              SelectionUnit="FullRow"
+                              CanUserResizeRows="False"
+                              AlternatingRowBackground="{DynamicResource BackgroundLightBrush}"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Auto">
+                        <DataGrid.Columns>
+                            <!-- Selection Column -->
+                            <DataGridTemplateColumn Header="Sel" Width="40">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}"
+                                                  HorizontalAlignment="Center"
+                                                  Checked="doorCheckBox_Changed" Unchecked="doorCheckBox_Changed"
+                                                  Style="{DynamicResource StandardCheckBoxStyle}"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            
+                            <!-- Mark Column -->
+                            <DataGridTextColumn Header="Mark" Binding="{Binding Mark}" Width="80"
+                                                SortMemberPath="Mark" CanUserSort="True"/>
+                            
+                            <!-- Family Column -->
+                            <DataGridTextColumn Header="Family" Binding="{Binding FamilyName}" Width="150"
+                                                SortMemberPath="FamilyName" CanUserSort="True"/>
+                            
+                            <!-- Type Column -->
+                            <DataGridTextColumn Header="Type" Binding="{Binding TypeName}" Width="120"
+                                                SortMemberPath="TypeName" CanUserSort="True"/>
+                            
+                            <!-- Level Column -->
+                            <DataGridTextColumn Header="Level" Binding="{Binding LevelName}" Width="100"
+                                                SortMemberPath="LevelName" CanUserSort="True"/>
+                            
+                            <!-- From Room Column -->
+                            <DataGridTextColumn Header="From Room" Binding="{Binding FromRoom}" Width="*"
+                                                SortMemberPath="FromRoom" CanUserSort="True"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Border>
+            </Grid>
+        </GroupBox>
+
+        <!-- Status and Buttons -->
+        <Border Grid.Row="4" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0" 
+                Background="{DynamicResource BackgroundLightBrush}" Margin="-15,10,-15,-15" Padding="15,10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                
+                <TextBlock x:Name="statusText" Grid.Column="0" VerticalAlignment="Center"
+                           Style="{DynamicResource StatusTextBlockStyle}"
+                           Text="Ready to create door elevations"/>
+                
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button x:Name="createButton" Content="Create Elevations" Width="140" Height="30" IsDefault="True" 
+                            Style="{DynamicResource StandardButtonStyle}" Margin="0,0,10,0"
+                            Click="createButton_Click"/>
+                    <Button x:Name="cancelButton" Content="Cancel" Width="100" Height="30" IsCancel="True" 
+                            Style="{DynamicResource SecondaryButtonStyle}"
+                            Click="cancelButton_Click"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>
