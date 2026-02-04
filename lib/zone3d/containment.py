@@ -3,13 +3,14 @@
 
 from collections import defaultdict
 from Autodesk.Revit.DB import (
-    FilteredElementCollector, BuiltInCategory, XYZ, 
+    FilteredElementCollector, BuiltInCategory, XYZ, UV,
     SpatialElementBoundaryOptions, SpatialElementBoundaryLocation,
     BoundingBoxIntersectsFilter, BoundingBoxContainsPointFilter, 
     Outline, ElementIntersectsSolidFilter, Options, SpatialElement, 
     Line, SolidCurveIntersectionOptions, SolidCurveIntersectionMode, 
     Area, Level, CurveLoop, Solid, GeometryCreationUtilities, Transform,
-    BoundingBoxXYZ, BuiltInParameter, Phase, ElementId, FamilyInstance
+    BoundingBoxXYZ, BuiltInParameter, Phase, ElementId, FamilyInstance,
+    HostObject, HostObjectUtils, ShellLayerType, PlanarFace
 )
 from Autodesk.Revit.DB.Architecture import Room
 from Autodesk.Revit.DB.Mechanical import Space
@@ -17,6 +18,40 @@ from pyrevit import script
 
 # Initialize logger
 logger = script.get_logger()
+
+
+def get_phase_map_for_link(host_doc, link_instance):
+    """Get phase mapping from host document to linked document using Revit's API.
+    
+    Uses RevitLinkType.GetPhaseMap() which respects user-configured phase mappings
+    set in Revit UI (Type Properties > Phase Mapping > Edit).
+    
+    Args:
+        host_doc: The host Revit document
+        link_instance: RevitLinkInstance object
+        
+    Returns:
+        dict: Maps host phase ElementId -> linked phase ElementId, or None if unavailable
+    """
+    if not link_instance:
+        return None
+    
+    try:
+        link_type_id = link_instance.GetTypeId()
+        if not link_type_id or link_type_id.IntegerValue < 0:
+            return None
+            
+        link_type = host_doc.GetElement(link_type_id)
+        if link_type and hasattr(link_type, 'GetPhaseMap'):
+            phase_map = link_type.GetPhaseMap()
+            logger.debug("Got phase map from RevitLinkType with {} mappings".format(
+                len(phase_map) if phase_map else 0))
+            return phase_map
+    except Exception as e:
+        logger.debug("Error getting phase map for link: {}".format(str(e)))
+    
+    return None
+
 
 # IMPORTANT: Revit Unit System
 # Revit's internal units for length are ALWAYS feet, regardless of project display units.
@@ -310,6 +345,130 @@ def _get_inplace_family_test_points(element, doc=None):
     except Exception:
         return points
 
+def _generate_grid_points_on_face(face, grid_size=5):
+    """Generate a grid of test points on a planar face.
+    
+    Uses UV parameterization to create evenly distributed points across the face.
+    Only includes points that are actually inside the face boundary (handles
+    irregular face shapes like L-shaped floors).
+    
+    Args:
+        face: PlanarFace object from Revit geometry
+        grid_size: Number of points per axis (default 5 = 25 points total)
+        
+    Returns:
+        list: List of XYZ points on the face surface
+    """
+    points = []
+    try:
+        bbox = face.GetBoundingBox()
+        if not bbox:
+            return points
+        
+        u_min, u_max = bbox.Min.U, bbox.Max.U
+        v_min, v_max = bbox.Min.V, bbox.Max.V
+        
+        # Generate grid points using UV parameterization
+        for i in range(grid_size):
+            for j in range(grid_size):
+                # Calculate UV coordinates at cell centers (offset by 0.5)
+                u = u_min + (u_max - u_min) * (i + 0.5) / grid_size
+                v = v_min + (v_max - v_min) * (j + 0.5) / grid_size
+                uv = UV(u, v)
+                
+                # Only include points that are inside the face boundary
+                # This handles irregular face shapes (L-shaped, with holes, etc.)
+                try:
+                    # IsInside returns IntersectionResult, check if point is inside
+                    result = face.IsInside(uv)
+                    # In IronPython, IsInside returns a tuple (bool, IntersectionResult)
+                    # or just bool depending on overload
+                    is_inside = result[0] if isinstance(result, tuple) else result
+                    if is_inside:
+                        xyz = face.Evaluate(uv)
+                        if xyz:
+                            points.append(xyz)
+                except:
+                    # Fallback: try to evaluate anyway
+                    try:
+                        xyz = face.Evaluate(uv)
+                        if xyz:
+                            points.append(xyz)
+                    except:
+                        pass
+        
+        return points
+    except Exception as e:
+        logger.debug("Error generating grid points on face: {}".format(str(e)))
+        return points
+
+def _get_host_object_test_points(element, doc=None, grid_size=5):
+    """Get grid-based test points for HostObject elements (floors, ceilings, roofs, walls).
+    
+    Uses HostObjectUtils to extract actual face geometry:
+    - Floors/Ceilings/Roofs: Uses GetTopFaces() to get horizontal surfaces
+    - Walls: Uses GetSideFaces() for both exterior and interior faces
+    
+    This provides much better containment detection than bounding box center,
+    especially for large elements that span multiple zones.
+    
+    Args:
+        element: HostObject (Floor, Ceiling, Roof, or Wall)
+        doc: Revit document (optional)
+        grid_size: Number of points per axis for grid (default 5 = 25 points per face)
+        
+    Returns:
+        list: List of XYZ points distributed across the element's faces
+    """
+    points = []
+    
+    if not isinstance(element, HostObject):
+        return points
+    
+    try:
+        # Check if element is a wall (has WallType property)
+        is_wall = hasattr(element, 'WallType')
+        
+        if is_wall:
+            # For walls: get both exterior and interior side faces
+            for side in [ShellLayerType.Exterior, ShellLayerType.Interior]:
+                try:
+                    face_refs = HostObjectUtils.GetSideFaces(element, side)
+                    if face_refs:
+                        for ref in face_refs:
+                            try:
+                                face = element.GetGeometryObjectFromReference(ref)
+                                if face and isinstance(face, PlanarFace):
+                                    face_points = _generate_grid_points_on_face(face, grid_size)
+                                    points.extend(face_points)
+                            except Exception as face_error:
+                                logger.debug("Error getting wall face geometry: {}".format(str(face_error)))
+                                continue
+                except Exception as side_error:
+                    logger.debug("Error getting wall side faces: {}".format(str(side_error)))
+                    continue
+        else:
+            # For floors/ceilings/roofs: get top faces
+            try:
+                face_refs = HostObjectUtils.GetTopFaces(element)
+                if face_refs:
+                    for ref in face_refs:
+                        try:
+                            face = element.GetGeometryObjectFromReference(ref)
+                            if face and isinstance(face, PlanarFace):
+                                face_points = _generate_grid_points_on_face(face, grid_size)
+                                points.extend(face_points)
+                        except Exception as face_error:
+                            logger.debug("Error getting top face geometry: {}".format(str(face_error)))
+                            continue
+            except Exception as top_error:
+                logger.debug("Error getting top faces: {}".format(str(top_error)))
+        
+        return points
+    except Exception as e:
+        logger.debug("Error getting host object test points: {}".format(str(e)))
+        return points
+
 def get_element_test_points(element, doc=None):
     """Get multiple test points for an element to improve containment detection.
     
@@ -351,6 +510,15 @@ def get_element_test_points(element, doc=None):
             if bbox:
                 points.append((bbox.Min + bbox.Max) / 2.0)
             return points
+        
+        # Special handling for HostObjects (floors, ceilings, roofs, walls)
+        # These elements benefit from grid-based sampling across their faces
+        # for better containment detection when spanning multiple zones
+        if isinstance(element, HostObject):
+            host_points = _get_host_object_test_points(element, doc)
+            if host_points:
+                return host_points
+            # Fall through to Location/bbox fallback if face extraction fails
         
         loc = element.Location
         if loc is None:
@@ -1072,7 +1240,7 @@ def element_exists_in_phase(element, phase_id):
         logger.debug("Error checking element existence in phase: {}".format(str(e)))
         return True  # Fallback: assume exists
 
-def get_containing_room_phase_aware(element, doc, rooms_by_phase_by_level, ordered_phases, element_phases_for_checking=None, link_instance=None):
+def get_containing_room_phase_aware(element, doc, rooms_by_phase_by_level, ordered_phases, element_phases_for_checking=None, link_instance=None, host_doc=None, phase_map=None):
     """Find the room containing an element, considering phase relationships.
     
     Iterates through phases where the element exists, finding the latest phase
@@ -1086,6 +1254,9 @@ def get_containing_room_phase_aware(element, doc, rooms_by_phase_by_level, order
         ordered_phases: List of (phase, order_index) tuples from get_ordered_phases() for source doc
         element_phases_for_checking: Optional list of (phase, order_index) tuples for element's document
                                     (needed when element is in different doc than rooms)
+        link_instance: Optional RevitLinkInstance for coordinate transformation
+        host_doc: Optional host document (needed for phase map lookup)
+        phase_map: Optional phase map from RevitLinkType.GetPhaseMap() - maps host phase IDs to linked phase IDs
         
     Returns:
         Room: Containing room from latest applicable phase, or None
@@ -1132,33 +1303,59 @@ def get_containing_room_phase_aware(element, doc, rooms_by_phase_by_level, order
         phases_for_element_check = element_phases_for_checking if element_phases_for_checking is not None else ordered_phases
         elem_start_idx, elem_end_idx = get_element_phase_range(element, phases_for_element_check)
         
-        # Map element phase indices to source phase indices by matching phase names/sequences
+        # Map element phase indices to source phase indices
         if element_phases_for_checking is not None and elem_start_idx < elem_end_idx:
             # Create mapping: element phase index -> source phase index
-            # Try matching by name first, then by sequence number as fallback
             element_phase_map = {}
-            for elem_idx, (elem_phase, _) in enumerate(element_phases_for_checking):
-                # First try matching by name
-                matched = False
+            
+            # PREFERRED: Use Revit's phase map from RevitLinkType.GetPhaseMap() if available
+            # This respects user-configured phase mappings set in Revit UI
+            if phase_map:
+                # Build lookup from source phase ElementId to index
+                src_phase_id_to_idx = {}
                 for src_idx, (src_phase, _) in enumerate(ordered_phases):
-                    if elem_phase.Name == src_phase.Name:
-                        element_phase_map[elem_idx] = src_idx
-                        matched = True
-                        break
+                    src_phase_id_to_idx[src_phase.Id.IntegerValue] = src_idx
                 
-                # If no name match, try matching by sequence number
-                if not matched:
-                    try:
-                        elem_seq = elem_phase.SequenceNumber if hasattr(elem_phase, 'SequenceNumber') else None
-                        if elem_seq is not None:
-                            for src_idx, (src_phase, _) in enumerate(ordered_phases):
-                                src_seq = src_phase.SequenceNumber if hasattr(src_phase, 'SequenceNumber') else None
-                                if src_seq == elem_seq:
-                                    element_phase_map[elem_idx] = src_idx
-                                    matched = True
-                                    break
-                    except:
-                        pass
+                # Map each element phase to source phase using Revit's phase map
+                for elem_idx, (elem_phase, _) in enumerate(element_phases_for_checking):
+                    host_phase_id = elem_phase.Id
+                    # phase_map maps host phase ID -> linked (source) phase ID
+                    if host_phase_id in phase_map:
+                        linked_phase_id = phase_map[host_phase_id]
+                        linked_phase_int = linked_phase_id.IntegerValue
+                        if linked_phase_int in src_phase_id_to_idx:
+                            element_phase_map[elem_idx] = src_phase_id_to_idx[linked_phase_int]
+                
+                if element_phase_map:
+                    logger.debug("Phase mapping via RevitLinkType.GetPhaseMap(): {} mappings".format(len(element_phase_map)))
+            
+            # FALLBACK: Try matching by name if phase_map is not available or didn't produce mappings
+            if not element_phase_map:
+                for elem_idx, (elem_phase, _) in enumerate(element_phases_for_checking):
+                    # First try matching by name
+                    matched = False
+                    for src_idx, (src_phase, _) in enumerate(ordered_phases):
+                        if elem_phase.Name == src_phase.Name:
+                            element_phase_map[elem_idx] = src_idx
+                            matched = True
+                            break
+                    
+                    # If no name match, try matching by sequence number
+                    if not matched:
+                        try:
+                            elem_seq = elem_phase.SequenceNumber if hasattr(elem_phase, 'SequenceNumber') else None
+                            if elem_seq is not None:
+                                for src_idx, (src_phase, _) in enumerate(ordered_phases):
+                                    src_seq = src_phase.SequenceNumber if hasattr(src_phase, 'SequenceNumber') else None
+                                    if src_seq == elem_seq:
+                                        element_phase_map[elem_idx] = src_idx
+                                        matched = True
+                                        break
+                        except:
+                            pass
+                
+                if element_phase_map:
+                    logger.debug("Phase mapping via name/sequence fallback: {} mappings".format(len(element_phase_map)))
             
             # Adjust indices to source phase space
             is_fallback_mode = False
@@ -1173,11 +1370,13 @@ def get_containing_room_phase_aware(element, doc, rooms_by_phase_by_level, order
                     # FALLBACK: Check all source phases (element exists but phases don't match)
                     start_idx, end_idx = 0, len(ordered_phases)
                     is_fallback_mode = True
+                    logger.debug("Phase mapping fallback: checking all {} source phases".format(len(ordered_phases)))
             else:
                 # No mapping possible - phases don't match at all
                 # FALLBACK: Check all source phases (element exists but phases don't match)
                 start_idx, end_idx = 0, len(ordered_phases)
                 is_fallback_mode = True
+                logger.debug("No phase mapping possible: checking all {} source phases".format(len(ordered_phases)))
         else:
             # Same document case - use indices directly
             start_idx, end_idx = elem_start_idx, elem_end_idx

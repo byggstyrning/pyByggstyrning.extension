@@ -916,6 +916,7 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
         # Phase-aware room containment: build phase index for room strategy
         ordered_phases = None
         rooms_by_phase_by_level = None
+        phase_map = None  # Phase map from RevitLinkType.GetPhaseMap() for linked documents
         
         if strategy == "room":
             # Build ordered phases once (needed for phase-aware containment)
@@ -939,6 +940,10 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
             # Store both phase lists for phase-aware containment
             ordered_phases = source_ordered_phases  # For room organization
             main_doc_ordered_phases = main_ordered_phases  # For target element phase checking
+            
+            # Get phase map from RevitLinkType (uses user-configured phase mappings)
+            # This provides reliable phase mapping that respects Revit UI settings
+            phase_map = containment.get_phase_map_for_link(doc, link_instance) if link_instance else None
         elif strategy == "space":
             spaces_by_level = defaultdict(list)
             for source_el in source_elements:
@@ -1045,7 +1050,9 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
                     element_phases_for_checking = main_doc_ordered_phases if link_instance else ordered_phases
                     
                     containing_el = containment.get_containing_room_phase_aware(
-                        target_el, source_doc, rooms_by_phase_by_level, ordered_phases, element_phases_for_checking, link_instance  # Pass link_instance for coordinate transform
+                        target_el, source_doc, rooms_by_phase_by_level, ordered_phases,
+                        element_phases_for_checking, link_instance,
+                        host_doc=doc, phase_map=phase_map  # Use Revit's phase map for reliable cross-doc mapping
                     )
                 else:
                     # Convert special marker to BuiltInCategory for containment check
