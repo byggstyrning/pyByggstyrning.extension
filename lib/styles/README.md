@@ -25,24 +25,26 @@ The styles automatically detect and adapt to Revit's dark/light theme setting (R
 ### Quick Start
 
 ```python
-from lib.styles import ensure_styles_loaded
+from lib.styles import load_styles_to_window
 
 class MyWindow(WPFWindow):
     def __init__(self):
-        # Load styles with automatic theme detection BEFORE WPFWindow.__init__
-        ensure_styles_loaded()
-        
+        # Initialize window first
         WPFWindow.__init__(self, xaml_file)
+        
+        # Load styles with automatic theme detection AFTER WPFWindow.__init__
+        # Styles are window-scoped and will NOT affect Revit's UI
+        load_styles_to_window(self)
 ```
 
 ### Force a Specific Theme
 
 ```python
 # Force dark mode regardless of Revit setting
-ensure_styles_loaded(force_theme='dark')
+load_styles_to_window(self, force_theme='dark')
 
 # Force light mode
-ensure_styles_loaded(force_theme='light')
+load_styles_to_window(self, force_theme='light')
 ```
 
 ### Theme Detection API
@@ -64,41 +66,35 @@ if is_dark_theme():
 ### In XAML Files
 
 1. **Remove inline styles** - Don't define styles directly in XAML
-2. **Reference common styles** - Use `Style="{StaticResource StyleName}"` on controls
+2. **Reference common styles** - Use `Style="{DynamicResource StyleName}"` on controls (must use DynamicResource since styles load after XAML parsing)
 3. **Load styles programmatically** - Styles are loaded in Python code (see below)
 
 ### In Python Scripts
 
-Add these methods to your WPFWindow class:
+Use the `load_styles_to_window()` function from `lib.styles`:
 
 ```python
-def load_styles(self):
-    """Load the common styles ResourceDictionary."""
-    try:
-        import os.path as op
-        script_dir = op.dirname(__file__)
-        # ... navigate to extension root ...
-        styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
-        
-        if op.exists(styles_path):
-            from System.Windows.Markup import XamlReader
-            from System.IO import File
-            
-            xaml_content = File.ReadAllText(styles_path)
-            styles_dict = XamlReader.Parse(xaml_content)
-            
-            if self.Resources is None:
-                from System.Windows import ResourceDictionary
-                self.Resources = ResourceDictionary()
-            
-            if hasattr(styles_dict, 'Keys'):
-                for key in styles_dict.Keys:
-                    self.Resources[key] = styles_dict[key]
-            else:
-                self.Resources.MergedDictionaries.Add(styles_dict)
-    except Exception as e:
-        logger.warning("Could not load styles: {}".format(str(e)))
+from lib.styles import load_styles_to_window
 
+class MyWindow(WPFWindow):
+    def __init__(self):
+        # Initialize window first
+        WPFWindow.__init__(self, xaml_file)
+        
+        # Load styles into window Resources (window-scoped, isolated from Revit UI)
+        load_styles_to_window(self)
+```
+
+**Important Notes:**
+- Styles must be loaded AFTER `WPFWindow.__init__()` because the window must exist first
+- Styles are window-scoped and will NOT affect Revit's UI
+- Use `DynamicResource` (not `StaticResource`) in XAML since styles load after parsing
+
+### Busy Indicator Helper Method
+
+Add this helper method to your window class:
+
+```python
 def set_busy(self, is_busy, message="Loading..."):
     """Show or hide the busy overlay indicator."""
     try:
@@ -110,8 +106,6 @@ def set_busy(self, is_busy, message="Loading..."):
     except Exception as e:
         logger.debug("Error setting busy indicator: {}".format(str(e)))
 ```
-
-Call `self.load_styles()` in your `__init__` method after `WPFWindow.__init__()`.
 
 ## Available Styles
 
@@ -238,9 +232,9 @@ When updating existing XAML files:
 - [ ] Apply button styles (StandardButtonStyle, SecondaryButtonStyle, etc.)
 - [ ] Apply text block styles (HeaderTextBlockStyle, LabelTextBlockStyle, etc.)
 - [ ] Add busy overlay to Grid if needed
-- [ ] Add `load_styles()` method to Python script
+- [ ] Import `load_styles_to_window` from `lib.styles`
+- [ ] Call `load_styles_to_window(self)` in `__init__` AFTER WPFWindow initialization
 - [ ] Add `set_busy()` method if using busy indicator
-- [ ] Call `self.load_styles()` in `__init__` after WPFWindow initialization
 
 ## Files Using Common Styles
 

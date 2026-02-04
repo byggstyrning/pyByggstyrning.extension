@@ -154,12 +154,12 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         """Initialize the window."""
         logger.debug("Initializing Generate 3D View References window")
         
-        # Load styles BEFORE window initialization
-        from styles import ensure_styles_loaded
-        ensure_styles_loaded()
-        
         xaml_file = os.path.join(script_dir, "Generate3DViewReferencesWindow.xaml")
         forms.WPFWindow.__init__(self, xaml_file)
+        
+        # Load styles AFTER window initialization (window-scoped, does not affect Revit UI)
+        from styles import load_styles_to_window
+        load_styles_to_window(self)
         
         # Store created elements for isolation
         self.created_elements = []

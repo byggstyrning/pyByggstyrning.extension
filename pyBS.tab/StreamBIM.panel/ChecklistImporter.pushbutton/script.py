@@ -191,12 +191,12 @@ class StreamBIMImporterUI(forms.WPFWindow):
     
     def __init__(self):
         """Initialize the StreamBIM Importer UI."""
-        # Load styles BEFORE window initialization
-        from styles import ensure_styles_loaded
-        result = ensure_styles_loaded()
-        
         # Initialize WPF window
         forms.WPFWindow.__init__(self, 'ChecklistImporter.xaml')
+        
+        # Load styles AFTER window initialization (window-scoped, does not affect Revit UI)
+        from styles import load_styles_to_window
+        load_styles_to_window(self)
         
         # Initialize StreamBIM API client
         self.streambim_client = streambim_api.StreamBIMClient()

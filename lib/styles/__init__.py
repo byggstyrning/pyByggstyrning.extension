@@ -4,10 +4,13 @@ This module provides reusable WPF styles for PyRevit extensions.
 Supports automatic dark mode detection based on Revit's UI theme.
 
 Usage in Python:
-    from lib.styles import ensure_styles_loaded, get_revit_theme, is_dark_theme
+    from lib.styles import load_styles_to_window, get_revit_theme, is_dark_theme
     
-    # Load styles with automatic theme detection
-    ensure_styles_loaded()
+    # Load styles into window (window-scoped, does not affect Revit UI)
+    class MyWindow(WPFWindow):
+        def __init__(self):
+            WPFWindow.__init__(self, xaml_file)
+            load_styles_to_window(self)  # Load styles AFTER window creation
 """
 
 import os
@@ -248,122 +251,29 @@ def apply_theme_to_resources(resources, theme=None):
         return False
 
 
-def ensure_styles_loaded(force_theme=None):
-    """
-    Ensure CommonStyles are loaded into Application.Resources with theme support.
-    
-    This function loads the CommonStyles.xaml and applies the appropriate
-    theme colors based on Revit's current UI theme setting.
-    
-    Args:
-        force_theme: Optional. Force 'dark' or 'light' theme instead of auto-detecting.
-    
-    Usage:
-        # In your script, call before creating WPFWindow:
-        from lib.styles import ensure_styles_loaded
-        ensure_styles_loaded()
-        
-        # Or force a specific theme:
-        ensure_styles_loaded(force_theme='dark')
-    """
-    try:
-        from System.Windows import Application, ResourceDictionary
-        from System.Windows.Markup import XamlReader
-        from System.IO import File
-        
-        styles_path = get_common_styles_path()
-        
-        if not op.exists(styles_path):
-            return False
-        
-        # Check if styles are already loaded
-        # NOTE: We always reload styles to ensure Background setters and other changes are applied
-        # The early return was preventing new style definitions from being loaded
-        styles_already_loaded = False
-        if Application.Current is not None and Application.Current.Resources is not None:
-            try:
-                test_resource = Application.Current.Resources['BusyOverlayStyle']
-                if test_resource is not None:
-                    styles_already_loaded = True
-            except:
-                pass
-        
-        # Always reload styles to ensure latest changes (Background setters, etc.) are applied
-        # Remove old merged dictionaries first
-        if styles_already_loaded and Application.Current is not None and Application.Current.Resources is not None:
-            try:
-                # Remove existing CommonStyles dictionary if present
-                merged_dicts_to_remove = []
-                for i in range(Application.Current.Resources.MergedDictionaries.Count):
-                    merged_dict = Application.Current.Resources.MergedDictionaries[i]
-                    # Check if this dictionary contains our styles
-                    if 'BusyOverlayStyle' in merged_dict.Keys:
-                        merged_dicts_to_remove.append(i)
-                # Remove in reverse order to maintain indices
-                for i in reversed(merged_dicts_to_remove):
-                    Application.Current.Resources.MergedDictionaries.RemoveAt(i)
-            except:
-                pass
-        
-        # Load the XAML
-        xaml_content = File.ReadAllText(styles_path)
-        styles_dict = XamlReader.Parse(xaml_content)
-        
-        # Apply theme colors to the loaded dictionary
-        apply_theme_to_resources(styles_dict, force_theme)
-        
-        # Ensure Application.Current exists
-        if Application.Current is None:
-            return False
-        
-        # Merge into Application.Resources
-        if Application.Current.Resources is None:
-            Application.Current.Resources = ResourceDictionary()
-        
-        # Try to merge
-        try:
-            Application.Current.Resources.MergedDictionaries.Add(styles_dict)
-            
-            # CRITICAL: Apply theme to the merged dictionary AND Application.Resources
-            # This ensures brushes are available in both places for DynamicResource resolution
-            apply_theme_to_resources(styles_dict, force_theme)
-            apply_theme_to_resources(Application.Current.Resources, force_theme)
-            
-            # CRITICAL: Also ensure ColoredButtonTextBrush is directly in Application.Resources
-            # This ensures DynamicResource can find it even if MergedDictionaries lookup fails
-            try:
-                if 'ColoredButtonTextBrush' in styles_dict.Keys:
-                    brush = styles_dict['ColoredButtonTextBrush']
-                    Application.Current.Resources['ColoredButtonTextBrush'] = brush
-            except: pass
-        except Exception as e:
-            # Fallback: copy resources manually
-            for key in styles_dict.Keys:
-                try:
-                    Application.Current.Resources[key] = styles_dict[key]
-                except:
-                    pass
-            # Apply theme to fallback resources
-            apply_theme_to_resources(Application.Current.Resources, force_theme)
-        
-        return True
-        
-    except Exception as e:
-        return False
-
-
 def load_styles_to_window(window, force_theme=None):
     """
     Load styles directly into a window's Resources with theme support.
     
-    This is useful when Application.Resources is not available.
+    This is the PRIMARY method for loading styles. It loads styles into the window's
+    Resources collection, ensuring complete isolation from Revit's UI. Styles loaded
+    this way will NOT affect Revit's own UI elements.
+    
+    IMPORTANT: This function must be called AFTER WPFWindow.__init__() because
+    the window must exist before its Resources can be accessed.
     
     Args:
-        window: A WPF Window instance
-        force_theme: Optional. Force 'dark' or 'light' theme.
+        window: A WPF Window instance (must be initialized)
+        force_theme: Optional. Force 'dark' or 'light' theme instead of auto-detecting.
     
     Returns:
         bool: True if styles were loaded successfully
+    
+    Usage:
+        class MyWindow(WPFWindow):
+            def __init__(self):
+                WPFWindow.__init__(self, xaml_file)
+                load_styles_to_window(self)  # Load styles AFTER window creation
     """
     try:
         from System.Windows import ResourceDictionary

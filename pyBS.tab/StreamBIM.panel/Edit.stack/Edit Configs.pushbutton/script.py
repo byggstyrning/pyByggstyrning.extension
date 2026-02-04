@@ -146,19 +146,17 @@ class MappingEntry(object):
     def RevitValue(self, value):
         self._revit_value = value
 
-# ensure_styles_loaded() is now imported from lib.styles
-
 class ConfigEditorUI(forms.WPFWindow):
     """Configuration Editor UI implementation."""
     
     def __init__(self):
         """Initialize the Configuration Editor UI."""
-        # Load styles into Application.Resources BEFORE creating window
-        from styles import ensure_styles_loaded
-        ensure_styles_loaded()
-        
         # Initialize WPF window
         forms.WPFWindow.__init__(self, 'ConfigEditor.xaml')
+        
+        # Load styles AFTER window initialization (window-scoped, does not affect Revit UI)
+        from styles import load_styles_to_window
+        load_styles_to_window(self)
         
         # Initialize StreamBIM API client
         self.streambim_client = streambim_api.StreamBIMClient()

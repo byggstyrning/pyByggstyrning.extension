@@ -42,7 +42,7 @@ if lib_path not in sys.path:
     sys.path.append(lib_path)
 
 # Import styles for theme support
-from styles import ensure_styles_loaded
+from styles import load_styles_to_window
 
 # Try direct import from current directory's parent path
 sys.path.append(op.dirname(op.dirname(panel_dir)))
@@ -572,10 +572,10 @@ def create_and_apply_mmi_filters():
                 
                 class FilterSelectionDialog(forms.WPFWindow):
                     def __init__(self, xaml_file, view_name, template_name, filter_count):
-                        # Load styles into Application.Resources BEFORE creating window (like MMISettingsWindow)
-                        ensure_styles_loaded()
-                        
                         forms.WPFWindow.__init__(self, xaml_file)
+                        
+                        # Load styles AFTER window initialization (window-scoped, does not affect Revit UI)
+                        load_styles_to_window(self)
                         
                         # Ensure window Resources has the styles merged (for dark mode support)
                         try:

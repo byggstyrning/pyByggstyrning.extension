@@ -426,23 +426,6 @@ class ResetColorsHandler(UI.IExternalEventHandler):
 
 
 
-# Use the proper theme-aware styles loader from lib.styles
-def ensure_styles_loaded():
-    """Ensure CommonStyles are loaded into Application.Resources before XAML parsing."""
-    try:
-        # Use the proper theme-aware function from styles (lib is in sys.path)
-        from styles import ensure_styles_loaded as lib_ensure_styles_loaded
-        result = lib_ensure_styles_loaded()
-        
-        return result
-    except ImportError as e:
-        logger.error("Failed to import styles: {}".format(str(e)))
-        logger.error("lib_path: {}, in sys.path: {}".format(lib_path, lib_path in sys.path))
-        raise
-    except Exception as e:
-        logger.error("Error in ensure_styles_loaded: {}".format(str(e)))
-        raise
-
 # Main UI Class
 class RevitColorizerWindow(WPFWindow):
     """Main WPF window for the Revit Colorizer tool."""
@@ -451,9 +434,6 @@ class RevitColorizerWindow(WPFWindow):
         # Initialize active_view to None to prevent AttributeError in OnClosing
         self.active_view = None
         try:
-# Load styles into Application.Resources BEFORE creating window
-            ensure_styles_loaded()
-            
 # Create XAML file path
             xaml_file = os.path.join(
                 os.path.dirname(__file__), 
@@ -464,6 +444,10 @@ class RevitColorizerWindow(WPFWindow):
             # Load XAML
             try:
                 WPFWindow.__init__(self, xaml_file)
+                
+                # Load styles AFTER window initialization (window-scoped, does not affect Revit UI)
+                from styles import load_styles_to_window
+                load_styles_to_window(self)
 # Create dummy statusText object since status bar was removed from XAML
                 # This prevents errors when code tries to set statusText.Text
                 class DummyStatusText(object):

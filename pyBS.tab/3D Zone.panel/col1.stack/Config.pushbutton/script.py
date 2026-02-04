@@ -329,12 +329,12 @@ class ParameterSelectorDialog(forms.WPFWindow):
             initial_source: Optional initial source parameter name to preselect
             initial_target: Optional initial target parameter name to preselect
         """
-        # Load styles BEFORE window initialization
-        from styles import ensure_styles_loaded
-        ensure_styles_loaded()
-        
         xaml_path = op.join(pushbutton_dir, 'ParameterSelector.xaml')
         forms.WPFWindow.__init__(self, xaml_path)
+        
+        # Load styles AFTER window initialization (window-scoped, does not affect Revit UI)
+        from styles import load_styles_to_window
+        load_styles_to_window(self)
         
         self.selected_source = None
         self.selected_target = None
@@ -809,13 +809,13 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
     
     def __init__(self):
         """Initialize the Configuration Editor UI."""
-        # Load styles BEFORE window initialization
-        from styles import ensure_styles_loaded
-        ensure_styles_loaded()
-        
         # Initialize WPF window
         xaml_path = op.join(pushbutton_dir, 'Zone3DConfigEditor.xaml')
         forms.WPFWindow.__init__(self, xaml_path)
+        
+        # Load styles AFTER window initialization (window-scoped, does not affect Revit UI)
+        from styles import load_styles_to_window
+        load_styles_to_window(self)
         
         # Initialize data collections
         self.configs = ObservableCollection[object]()

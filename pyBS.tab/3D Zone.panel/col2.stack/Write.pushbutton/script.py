@@ -116,13 +116,13 @@ class ConfigSelectorWindow(forms.WPFWindow):
         Args:
             configs: List of configuration dictionaries
         """
-        # Load styles BEFORE window initialization
-        from styles import ensure_styles_loaded
-        ensure_styles_loaded()
-        
         # Load XAML file
         xaml_path = op.join(pushbutton_dir, 'ConfigSelector.xaml')
         forms.WPFWindow.__init__(self, xaml_path)
+        
+        # Load styles AFTER window initialization (window-scoped, does not affect Revit UI)
+        from styles import load_styles_to_window
+        load_styles_to_window(self)
         
         # Store selected configs (will be populated when Write is clicked)
         self.selected_configs = None

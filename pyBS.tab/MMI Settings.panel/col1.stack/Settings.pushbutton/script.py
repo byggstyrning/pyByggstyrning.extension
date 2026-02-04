@@ -55,7 +55,7 @@ from mmi.core import get_mmi_parameter_name, save_mmi_parameter, save_monitor_co
 from revit.revit_utils import get_available_parameters
 
 # Import styles for theme support
-from styles import ensure_styles_loaded
+from styles import load_styles_to_window
 
 
 class MMISettingsWindow(forms.WPFWindow):
@@ -64,12 +64,12 @@ class MMISettingsWindow(forms.WPFWindow):
     def __init__(self):
         """Initialize the MMI Settings window."""
         try:
-            # Load styles into Application.Resources BEFORE creating window
-            ensure_styles_loaded()
-            
             # Load XAML file
             xaml_file = op.join(op.dirname(__file__), 'MMISettingsWindow.xaml')
             forms.WPFWindow.__init__(self, xaml_file)
+            
+            # Load styles AFTER window initialization (window-scoped, does not affect Revit UI)
+            load_styles_to_window(self)
             
             # Set up ComboBox
             self.parameterComboBox.DisplayMemberPath = "display_name"
