@@ -1,0 +1,24 @@
+tooltip:
+  en_us: >
+    Set NestedParentId on nested shared family instances for IFC export.
+    
+    This tool identifies nested shared families (like door handles inside doors)
+    and sets a shared parameter with the parent's Element ID.
+    
+    Export to IFC with "Export Revit property sets" enabled to include the parameter.
+    
+    Solves: GitHub Autodesk/revit-ifc#374
+  sv_se: >
+    Ange NestedParentId på nästlade delade familjeinstanser för IFC-export.
+    
+    Detta verktyg identifierar nästlade delade familjer (som dörrhandtag i dörrar)
+    och anger en delad parameter med förälderns Element-ID.
+    
+    Exportera till IFC med "Export Revit property sets" aktiverat.
+    
+    Löser: GitHub Autodesk/revit-ifc#374
+title:
+  en_us: "Nested\nParent ID"
+  sv_se: "Nästlat\nFörälder-ID"
+engine:
+  clean: true

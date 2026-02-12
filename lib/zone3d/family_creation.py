@@ -164,14 +164,16 @@ def inspect_template_family(family_doc):
     return result
 
 
-def extract_boundary_loops(spatial_element, doc, adapter, levels_cache=None):
+def extract_boundary_loops(spatial_element, doc, adapter, levels_cache=None, link_transform=None):
     """Extract boundary loops from a spatial element.
     
     Args:
         spatial_element: Area or Room element
-        doc: Revit document
+        doc: Source document containing the element (for level lookups/height calc)
         adapter: SpatialElementAdapter instance
         levels_cache: Optional pre-collected and sorted list of Level elements
+        link_transform: Optional Transform from linked model to host coordinates.
+                       If provided, all boundary curves are transformed to host coords.
         
     Returns:
         tuple: (loops: list of CurveLoop, insertion_point: XYZ, height: float or None)
@@ -198,6 +200,10 @@ def extract_boundary_loops(spatial_element, doc, adapter, levels_cache=None):
                 curve = segment.GetCurve()
                 if curve:
                     try:
+                        # Transform curve to host coordinates if link_transform provided
+                        if link_transform is not None:
+                            curve = curve.CreateTransformed(link_transform)
+                        
                         start_pt = curve.GetEndPoint(0)
                         end_pt = curve.GetEndPoint(1)
                         loop_points.append(start_pt)
@@ -220,6 +226,7 @@ def extract_boundary_loops(spatial_element, doc, adapter, levels_cache=None):
                 pass
         
         # Calculate insertion point (centroid of footprint)
+        # Points are already in host coordinates if link_transform was applied
         if all_points:
             min_x = min(pt.X for pt in all_points)
             max_x = max(pt.X for pt in all_points)
@@ -233,7 +240,7 @@ def extract_boundary_loops(spatial_element, doc, adapter, levels_cache=None):
                 min_z
             )
         
-        # Calculate height using adapter
+        # Calculate height using adapter (uses source doc's levels)
         height = adapter.calculate_height(spatial_element, doc, levels_cache)
         
     except Exception as e:
@@ -245,7 +252,8 @@ def extract_boundary_loops(spatial_element, doc, adapter, levels_cache=None):
 
 
 def create_zone_family(spatial_element, adapter, template_info, template_path, output_path, 
-                       temp_dir, doc, app, element_number_str, element_name_str):
+                       temp_dir, doc, app, element_number_str, element_name_str,
+                       source_doc=None, link_transform=None):
     """Create a zone family from a spatial element.
     
     Args:
@@ -255,14 +263,19 @@ def create_zone_family(spatial_element, adapter, template_info, template_path, o
         template_path: Path to template family file
         output_path: Path to save output family file
         temp_dir: Temporary directory path
-        doc: Revit document
+        doc: Host Revit document
         app: Revit application
         element_number_str: Element number string (for logging)
         element_name_str: Element name string (for logging)
+        source_doc: Source document containing the element (defaults to doc)
+        link_transform: Transform from linked model to host coordinates (None for active model)
         
     Returns:
         tuple: (success: bool, family_doc: Document or None, error_reason: str or None)
     """
+    # Default source_doc to host doc if not provided
+    if source_doc is None:
+        source_doc = doc
     family_doc = None
     
     try:
@@ -286,8 +299,9 @@ def create_zone_family(spatial_element, adapter, template_info, template_path, o
         # Get family manager
         fm = family_doc.FamilyManager
         
-        # Extract boundary loops
-        loops, insertion_point, height = extract_boundary_loops(spatial_element, doc, adapter)
+        # Extract boundary loops (use source_doc for level lookups, link_transform for coords)
+        loops, insertion_point, height = extract_boundary_loops(
+            spatial_element, source_doc, adapter, link_transform=link_transform)
         
         if not loops or not insertion_point:
             return False, family_doc, "Invalid boundary data (no loops or invalid insertion point)"

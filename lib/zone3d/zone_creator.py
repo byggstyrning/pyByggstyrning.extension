@@ -68,23 +68,30 @@ def create_zones_from_spatial_elements(
     pushbutton_dir,
     show_filter_dialog_func,
     element_type_name,
-    template_family_name="3DZone.rfa"
+    template_family_name="3DZone.rfa",
+    source_doc=None,
+    link_transform=None
 ):
     """Main orchestration function for creating 3D Zones.
     
     Args:
         spatial_elements: List of Area or Room elements
-        doc: Revit document
+        doc: Host Revit document (for family loading, instance placement)
         adapter: SpatialElementAdapter instance
         extension_dir: Extension root directory
         pushbutton_dir: Pushbutton directory (for XAML files)
-        show_filter_dialog_func: Function to show filter dialog
+        show_filter_dialog_func: Function to show filter dialog, or None to skip
         element_type_name: String for progress/error messages (e.g., "Areas" or "Rooms")
         template_family_name: Name of template family file
+        source_doc: Source document containing the spatial elements (defaults to doc)
+        link_transform: Transform from linked model to host coordinates (None for active model)
         
     Returns:
-        tuple: (success_count, fail_count, failed_elements)
+        tuple: (success_count, fail_count, failed_elements, created_instance_ids)
     """
+    # Default source_doc to host doc if not provided
+    if source_doc is None:
+        source_doc = doc
     app = doc.Application
     
     # Check if document supports families (must be a project document)
@@ -107,15 +114,19 @@ def create_zones_from_spatial_elements(
     temp_dir = tempfile.mkdtemp(prefix="pyBS_3DZone_")
     logger.debug("Created temporary directory: {}".format(temp_dir))
     
-    # Show filter dialog
-    selected_elements = show_filter_dialog_func(spatial_elements, doc)
-    
-    # Check if user cancelled or selected no elements
-    if not selected_elements:
-        logger.debug("No {} selected, exiting.".format(element_type_name.lower()))
-        script.exit()
-    
-    logger.debug("User selected {} {} for 3D Zone creation".format(len(selected_elements), element_type_name.lower()))
+    # Show filter dialog (or use spatial_elements directly if no dialog func)
+    if show_filter_dialog_func is not None:
+        selected_elements = show_filter_dialog_func(spatial_elements, doc)
+        
+        # Check if user cancelled or selected no elements
+        if not selected_elements:
+            logger.debug("No {} selected, exiting.".format(element_type_name.lower()))
+            script.exit()
+        
+        logger.debug("User selected {} {} for 3D Zone creation".format(len(selected_elements), element_type_name.lower()))
+    else:
+        # Elements were already selected by the caller (e.g., dialog shown externally)
+        selected_elements = spatial_elements
     
     # Check if template family exists in project first
     template_family_name_in_project = "3DZone"  # Name without .rfa extension
@@ -241,8 +252,9 @@ def create_zones_from_spatial_elements(
     
     logger.debug("Starting to process {} {}...".format(len(selected_elements), element_type_name.lower()))
     
-    # Cache levels collection (sorted by elevation for height calculations)
-    levels_cache = FilteredElementCollector(doc).OfClass(Level).ToElements()
+    # Cache levels collection from source document (sorted by elevation for height calculations)
+    # Use source_doc because height calculations need the source model's levels
+    levels_cache = FilteredElementCollector(source_doc).OfClass(Level).ToElements()
     levels_cache_sorted = sorted(levels_cache, key=lambda l: l.Elevation)
     
     # Cache families collection
@@ -292,8 +304,10 @@ def create_zones_from_spatial_elements(
                 pb.update_progress(phase1_progress, 100)
                 
                 # Extract boundary loops using shared function
+                # Use source_doc for level lookups and link_transform for coordinate mapping
                 loops, insertion_point, height = fc_module.extract_boundary_loops(
-                    spatial_element, doc, adapter, levels_cache_sorted)
+                    spatial_element, source_doc, adapter, levels_cache_sorted,
+                    link_transform=link_transform)
                 
                 # Check for valid boundary data
                 if not loops or not insertion_point:
@@ -369,6 +383,7 @@ def create_zones_from_spatial_elements(
                 # Create family if it doesn't exist (or was just deleted)
                 if not existing_family:
                     # Create family using shared function
+                    # Pass source_doc for height calculation and link_transform for coord mapping
                     success, family_doc, error_reason = fc_module.create_zone_family(
                         spatial_element,
                         adapter,
@@ -379,7 +394,9 @@ def create_zones_from_spatial_elements(
                         doc,
                         app,
                         element_number_str,
-                        element_name_str
+                        element_name_str,
+                        source_doc=source_doc,
+                        link_transform=link_transform
                     )
                     
                     if not success:

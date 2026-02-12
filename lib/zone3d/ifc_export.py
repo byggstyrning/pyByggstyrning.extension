@@ -66,11 +66,6 @@ class PostExportWriteHandler(IExternalEventHandler):
             return
         
         try:
-            logger.info("=" * 60)
-            logger.info("IFC Export Complete: Writing parameters after export (via ExternalEvent)")
-            logger.info("NOTE: These parameters will NOT affect the current export")
-            logger.info("=" * 60)
-            
             summary = {
                 "total_configs": len(self.configs_to_execute),
                 "config_results": [],
@@ -120,22 +115,6 @@ class PostExportWriteHandler(IExternalEventHandler):
                     summary["total_parameters_copied"] += result.get("parameters_copied", 0)
                     summary["total_parameters_already_correct"] += result.get("parameters_already_correct", 0)
                     
-                    elements_updated = result.get("elements_updated", 0)
-                    elements_already_correct = result.get("elements_already_correct", 0)
-                    params_copied = result.get("parameters_copied", 0)
-                    params_already_correct = result.get("parameters_already_correct", 0)
-                    
-                    if elements_updated > 0 or elements_already_correct > 0:
-                        logger.info("Configuration '{}': Updated {} elements ({} params), {} elements already correct ({} params)".format(
-                            config_name,
-                            elements_updated,
-                            params_copied,
-                            elements_already_correct,
-                            params_already_correct
-                        ))
-                    else:
-                        logger.info("Configuration '{}': No elements updated or already correct.".format(config_name))
-                        
                 except Exception as e:
                     error_msg = str(e)
                     logger.error("Error executing configuration '{}': {}".format(config_name, error_msg))
@@ -146,20 +125,6 @@ class PostExportWriteHandler(IExternalEventHandler):
                         "parameters_copied": 0,
                         "errors": [str(e)]
                     })
-            
-            logger.info("=" * 60)
-            logger.info("IFC post-export write complete:")
-            logger.info("  Configurations executed: {}".format(summary["total_configs"]))
-            logger.info("  Elements updated: {} ({} parameters)".format(
-                summary["total_elements_updated"],
-                summary["total_parameters_copied"]
-            ))
-            if summary["total_elements_already_correct"] > 0:
-                logger.info("  Elements already correct: {} ({} parameters)".format(
-                    summary["total_elements_already_correct"],
-                    summary["total_parameters_already_correct"]
-                ))
-            logger.info("=" * 60)
 
         except Exception as ex:
 
@@ -232,13 +197,9 @@ class ExportReexecuteHandler:
             # Re-trigger the export
 
             doc.Export(folder_path, file_name, ifc_options)
-            
-            logger.info("IFC export re-triggered successfully after parameter write.")
 
         except Exception as export_err:
-
             logger.error("Error re-triggering IFC export: {}".format(str(export_err)))
-            logger.info("Please manually start the IFC export again.")
         finally:
             # Clear pending settings
             _pending_export_settings = None
@@ -371,11 +332,6 @@ def file_exporting_handler(sender, args):
         # because we're inside Revit's export pipeline. The command hook approach (writing
         # when dialog opens via ExternalEvent) is preferred, but this serves as a fallback.
 
-        logger.info("=" * 60)
-        logger.info("IFC Export: Writing parameters before export")
-        logger.info("Found {} configuration(s) to execute".format(len(ifc_configs)))
-        logger.info("=" * 60)
-        
         # Execute configurations
         # Create a summary results dict
         summary = {
@@ -394,8 +350,6 @@ def file_exporting_handler(sender, args):
         for config_idx, zone_config in enumerate(ifc_configs):
             config_name = zone_config.get("name", "Unknown")
             config_order = zone_config.get("order", 0)
-            
-            logger.info("Executing configuration '{}' ({} of {})...".format(config_name, config_idx + 1, len(ifc_configs)))
 
             # Create cache dict for this configuration
             config_cache = {}
@@ -442,27 +396,6 @@ def file_exporting_handler(sender, args):
                 summary["total_parameters_copied"] += result.get("parameters_copied", 0)
                 summary["total_parameters_already_correct"] += result.get("parameters_already_correct", 0)
                 
-                elements_updated = result.get("elements_updated", 0)
-                elements_already_correct = result.get("elements_already_correct", 0)
-                params_copied = result.get("parameters_copied", 0)
-                params_already_correct = result.get("parameters_already_correct", 0)
-                
-                # Only show success messages if there were no errors
-                if not errors:
-                    if elements_already_correct > 0 or params_already_correct > 0:
-                        logger.info("Configuration '{}': Updated {} elements ({} params), {} elements already correct ({} params)".format(
-                            config_name,
-                            elements_updated,
-                            params_copied,
-                            elements_already_correct,
-                            params_already_correct
-                        ))
-                    else:
-                        logger.info("Configuration '{}': Updated {} elements, copied {} parameters".format(
-                            config_name,
-                            elements_updated,
-                            params_copied
-                        ))
             except Exception as e:
 
                 # Check if this is a transaction error (document read-only during export)
@@ -486,21 +419,6 @@ def file_exporting_handler(sender, args):
                     "errors": [error_msg]
                 })
 
-        # Log completion summary for user visibility
-        logger.info("=" * 60)
-        logger.info("IFC pre-export write complete:")
-        logger.info("  Configurations executed: {}".format(summary["total_configs"]))
-        logger.info("  Elements updated: {} ({} parameters)".format(
-            summary["total_elements_updated"],
-            summary["total_parameters_copied"]
-        ))
-        if summary["total_elements_already_correct"] > 0:
-            logger.info("  Elements already correct: {} ({} parameters)".format(
-                summary["total_elements_already_correct"],
-                summary["total_parameters_already_correct"]
-            ))
-        logger.info("=" * 60)
-        
         # Store export info for FileExported event verification
         # We'll verify if parameters persisted after export completes
         global _pending_export_settings
@@ -547,12 +465,7 @@ def file_exported_handler(sender, args):
         if not export_format or "IFC" not in str(export_format).upper():
 
             return
-        
-        logger.info("=" * 60)
-        logger.info("IFC Export Complete: Writing parameters after export")
-        logger.info("NOTE: These parameters will NOT affect the current export")
-        logger.info("=" * 60)
-        
+
         # Load all configurations
         all_configs = config.load_configs(doc)
 
@@ -569,9 +482,7 @@ def file_exported_handler(sender, args):
         if not ifc_configs:
             logger.debug("No IFC pre-export configurations enabled.")
             return
-        
-        logger.info("Found {} configuration(s) to execute after IFC export".format(len(ifc_configs)))
-        
+
         # Execute configurations with normal transactions (FileExported should allow this)
         summary = {
             "total_configs": len(ifc_configs),
@@ -604,8 +515,6 @@ def file_exported_handler(sender, args):
             # Schedule the write via ExternalEvent (executes after transaction completes)
             try:
                 _post_export_write_event.Raise()
-
-                logger.info("Scheduled parameter write via ExternalEvent (will execute after export transaction completes)")
             except Exception as event_err:
 
                 logger.error("Failed to schedule post-export write: {}".format(str(event_err)))
@@ -631,10 +540,6 @@ def file_exported_handler(sender, args):
                             if target_params:
                                 verify_param_name = target_params[0]
                                 verify_param = sample_element.LookupParameter(verify_param_name)
-                                if verify_param and verify_param.HasValue:
-                                    param_value = verify_param.AsString() if verify_param.StorageType == StorageType.String else str(verify_param.AsValueString())
-
-                                    logger.info("Post-write verification: Element {} parameter '{}' value is '{}'".format(sample_element_id, verify_param_name, param_value))
                 except Exception as verify_err:
                     pass
         
