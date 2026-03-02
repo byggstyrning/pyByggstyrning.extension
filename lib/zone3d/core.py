@@ -1068,7 +1068,8 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
                         target_el, source_doc, strategy, categories_for_containment,  # Use source_doc, not doc
                         rooms_by_level, spaces_by_level, areas_by_level,
                         element_index, element_index_cell_size,
-                        sort_property=sort_property, sort_descending=sort_descending
+                        sort_property=sort_property, sort_descending=sort_descending,
+                        link_instance=link_instance  # For element strategy: transform target points to link coords
                     )
                 
                 # Additional check: if using 3D Zone marker, verify family name matches

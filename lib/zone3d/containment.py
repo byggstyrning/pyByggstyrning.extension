@@ -20,6 +20,8 @@ from pyrevit import script
 logger = script.get_logger()
 
 
+
+
 def get_phase_map_for_link(host_doc, link_instance):
     """Get phase mapping from host document to linked document using Revit's API.
     
@@ -448,21 +450,26 @@ def _get_host_object_test_points(element, doc=None, grid_size=5):
                     logger.debug("Error getting wall side faces: {}".format(str(side_error)))
                     continue
         else:
-            # For floors/ceilings/roofs: get top faces
-            try:
-                face_refs = HostObjectUtils.GetTopFaces(element)
-                if face_refs:
-                    for ref in face_refs:
-                        try:
-                            face = element.GetGeometryObjectFromReference(ref)
-                            if face and isinstance(face, PlanarFace):
-                                face_points = _generate_grid_points_on_face(face, grid_size)
-                                points.extend(face_points)
-                        except Exception as face_error:
-                            logger.debug("Error getting top face geometry: {}".format(str(face_error)))
-                            continue
-            except Exception as top_error:
-                logger.debug("Error getting top faces: {}".format(str(top_error)))
+            # GetTopFaces is only supported for Floor, Ceiling, Roof; other HostObjects (e.g. foundation) throw
+            cat = element.Category
+            supports_top_faces = (cat is not None and cat.Id is not None and
+                cat.Id.IntegerValue in (int(BuiltInCategory.OST_Floors), int(BuiltInCategory.OST_Ceilings), int(BuiltInCategory.OST_Roofs)))
+            if supports_top_faces:
+                try:
+                    face_refs = HostObjectUtils.GetTopFaces(element)
+                    if face_refs:
+                        for ref in face_refs:
+                            try:
+                                face = element.GetGeometryObjectFromReference(ref)
+                                if face and isinstance(face, PlanarFace):
+                                    face_points = _generate_grid_points_on_face(face, grid_size)
+                                    points.extend(face_points)
+                            except Exception as face_error:
+                                logger.debug("Error getting top face geometry: {}".format(str(face_error)))
+                                continue
+                except Exception as top_error:
+                    logger.debug("Error getting top faces: {}".format(str(top_error)))
+            # If not supported or no points from faces, caller will fall back to Location/bbox in get_element_test_points
         
         return points
     except Exception as e:
@@ -844,11 +851,11 @@ def is_point_in_area(area, point, doc):
         solid = _create_solid_from_area(area, doc)
         if not solid:
             # Cache failure to avoid retrying for every target element
-            _geometry_cache[element_id] = {"solid": None, "bbox": bbox, "failed": True}
+            _geometry_cache[element_id] = {"solids": [], "bbox": bbox, "failed": True}
             return False
         
-        # Cache both solid and bounding box for future checks
-        _geometry_cache[element_id] = {"solid": solid, "bbox": bbox}
+        # Cache as list keyed "solids" to match is_point_in_element's expected format
+        _geometry_cache[element_id] = {"solids": [solid], "bbox": bbox}
         
         # Use optimized point-in-solid check
         return is_point_inside_solid_optimized(point, solid)
@@ -1894,28 +1901,48 @@ def build_source_element_spatial_index(source_elements, doc, cell_size_feet=50.0
     
     return spatial_index
 
-def get_containing_element_indexed(target_el, doc, element_index, cell_size_feet=50.0, sort_property="ElementId", sort_descending=False):
+def get_containing_element_indexed(target_el, doc, element_index, cell_size_feet=50.0, sort_property="ElementId", sort_descending=False, link_instance=None):
     """Find containing element using pre-built spatial index (fast path).
     
     Uses spatial hash lookup instead of database queries. Checks a 3x3 cell
     neighborhood around the target point to handle boundary cases.
     Uses multiple test points for elements with vertical extent (columns).
     
+    When source elements are in a linked document (link_instance is not None),
+    target test points are transformed from host to link coordinates so
+    containment checks use the same coordinate system as the source geometry.
+    
     Args:
-        target_el: Target element
-        doc: Revit document
+        target_el: Target element (in host document)
+        doc: Source document (link doc when link_instance is set)
         element_index: Spatial index dict from build_source_element_spatial_index
         cell_size_feet: Size of each grid cell (must match index cell size)
+        link_instance: Optional RevitLinkInstance when source is linked (for coord transform)
         
     Returns:
         Element: First containing element matching user's sort order, or None
     """
     try:
-        # Get multiple test points for better detection (columns get vertical points)
-        # Pass doc for in-place family handling (uses geometry extraction)
-        test_points = get_element_test_points(target_el, doc)
+        # Get test points in target element's document (host when using link)
+        target_doc = target_el.Document
+        test_points = get_element_test_points(target_el, target_doc)
         if not test_points:
             return None
+        
+        # When source is in linked doc, transform target points from host to link coordinates
+        if link_instance is not None:
+            try:
+                link_transform = link_instance.GetTotalTransform()
+                is_identity = (link_transform.Origin.X == 0 and link_transform.Origin.Y == 0 and link_transform.Origin.Z == 0 and
+                              link_transform.BasisX.X == 1 and link_transform.BasisX.Y == 0 and link_transform.BasisX.Z == 0 and
+                              link_transform.BasisY.X == 0 and link_transform.BasisY.Y == 1 and link_transform.BasisY.Z == 0 and
+                              link_transform.BasisZ.X == 0 and link_transform.BasisZ.Y == 0 and link_transform.BasisZ.Z == 1)
+                if is_identity:
+                    pass  # test_points already correct
+                else:
+                    test_points = [link_transform.Inverse.OfPoint(p) for p in test_points]
+            except Exception as tx_err:
+                logger.debug("Error transforming target points to link coordinates: {}".format(str(tx_err)))
         
         # Use first point for spatial index lookup (X/Y position)
         primary_point = test_points[0]
@@ -2054,12 +2081,12 @@ def get_containing_element(element, doc, source_categories):
 def get_containing_element_by_strategy(element, doc, strategy, source_categories=None, 
                                      rooms_by_level=None, spaces_by_level=None, areas_by_level=None,
                                      element_index=None, element_index_cell_size=50.0, 
-                                     sort_property="ElementId", sort_descending=False):
+                                     sort_property="ElementId", sort_descending=False, link_instance=None):
     """Unified function that routes to appropriate containment method.
     
     Args:
         element: Target element
-        doc: Revit document
+        doc: Revit document (source doc; when link_instance is set, this is the link doc)
         strategy: Containment strategy ("room", "space", "area", "element")
         source_categories: List of BuiltInCategory values (for element strategy)
         rooms_by_level: Optional pre-grouped rooms dict
@@ -2067,6 +2094,7 @@ def get_containing_element_by_strategy(element, doc, strategy, source_categories
         areas_by_level: Optional pre-grouped areas dict
         element_index: Optional spatial index dict for element strategy (fast path)
         element_index_cell_size: Cell size for spatial index (feet, default 50.0)
+        link_instance: Optional RevitLinkInstance when source is linked (for element strategy coord transform)
         
     Returns:
         Element: Containing element or None
@@ -2080,9 +2108,9 @@ def get_containing_element_by_strategy(element, doc, strategy, source_categories
     elif strategy == "element":
         # Use indexed lookup if index is provided (fast path)
         if element_index is not None:
-            return get_containing_element_indexed(element, doc, element_index, element_index_cell_size, sort_property=sort_property, sort_descending=sort_descending)
+            return get_containing_element_indexed(element, doc, element_index, element_index_cell_size, sort_property=sort_property, sort_descending=sort_descending, link_instance=link_instance)
         else:
-            # Fallback to database query method
+            # Fallback to database query method (link not used for fallback - same-doc only)
             return get_containing_element(element, doc, source_categories)
     else:
         return None
@@ -2132,12 +2160,12 @@ def precompute_geometries(elements, doc):
                 area_count += 1
                 solid = _create_solid_from_area(element, doc)
                 if solid:
-                    # Cache both solid and bounding box
-                    _geometry_cache[element_id] = {"solid": solid, "bbox": bbox}
+                    # Cache as list keyed "solids" to match is_point_in_element's expected format
+                    _geometry_cache[element_id] = {"solids": [solid], "bbox": bbox}
                     area_success_count += 1
                 else:
                     # Cache failure to avoid retrying for every target element
-                    _geometry_cache[element_id] = {"solid": None, "bbox": bbox, "failed": True}
+                    _geometry_cache[element_id] = {"solids": [], "bbox": bbox, "failed": True}
                     area_fail_count += 1
                     logger.debug("[DEBUG] Failed to create solid for area {} (ID: {})".format(element.Id, element_id))
                 continue
@@ -2161,8 +2189,8 @@ def precompute_geometries(elements, doc):
                     break
             
             if solid:
-                # Cache both solid and bounding box
-                _geometry_cache[element_id] = {"solid": solid, "bbox": bbox}
+                # Cache as list keyed "solids" to match is_point_in_element's expected format
+                _geometry_cache[element_id] = {"solids": [solid], "bbox": bbox}
         except Exception as e:
             logger.debug("Error precomputing geometry for element {}: {}".format(element_id, str(e)))
             continue
