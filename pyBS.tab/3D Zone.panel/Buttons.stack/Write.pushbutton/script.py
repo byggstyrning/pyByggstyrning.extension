@@ -8,7 +8,7 @@ spatial elements (Rooms, Spaces, Areas, Mass/Generic Model) to contained element
 __title__ = "Write Mappings"
 __author__ = "Byggstyrning AB"
 __doc__ = "Write spatial mappings to elements"
-__highlight__ = 'new'
+
 
 # Import standard libraries
 import sys

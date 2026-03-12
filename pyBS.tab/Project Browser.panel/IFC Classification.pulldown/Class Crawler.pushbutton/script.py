@@ -8,7 +8,7 @@ and displays the results.
 __title__ = "Class Crawler"
 __author__ = "pyByggstyrning"
 __doc__ = """Send element types from active view to Byggstyrning's IFC classification service"""
-__highlight__ = 'new'
+
 
 import clr
 import json

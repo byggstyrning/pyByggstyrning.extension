@@ -8,7 +8,7 @@ replacing the extrusion profile with each area's boundary loops.
 __title__ = "Create 3D Zones from Areas"
 __author__ = "Byggstyrning AB"
 __doc__ = "Create Generic Model family instances from Area boundaries using 3DZone.rfa template"
-__highlight__ = 'new'
+
 
 # Import standard libraries
 import sys

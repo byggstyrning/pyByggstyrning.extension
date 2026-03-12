@@ -1,6 +1,5 @@
 tooltip:
   en_us: Update pyByggstyrning from Git and reload pyRevit. Checks for updates and pulls latest changes before reloading.
-  sv_se: Uppdatera pyByggstyrning från Git och ladda om pyRevit. Kontrollerar uppdateringar och hämtar senaste ändringarna före omladdning.
 engine:
   clean: true
 title:

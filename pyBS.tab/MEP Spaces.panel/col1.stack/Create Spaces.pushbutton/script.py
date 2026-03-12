@@ -16,7 +16,7 @@ Options:
 - Write Name and Number from Room to Space
 - Remove existing spaces before creating
 """
-__highlight__ = 'new'
+
 
 # Standard library imports
 import sys

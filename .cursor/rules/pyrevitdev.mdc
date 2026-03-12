@@ -292,4 +292,75 @@ Based on real-world debugging sessions, here are critical patterns to avoid and 
 
 ---
 
-This Markdown file outlines the essential rules and best practices for PyRevit development with a focus on code structure, debugging, WPF integration, IronPython 2.7 practices, managing scopes and events for WPF windows, and common pitfalls to avoid.  
+## 7. Collecting pyRevit Debug Logs
+
+When a script fails at runtime or pyRevit itself misbehaves, the runtime debug log is the primary diagnostic artifact. This section covers how to activate logging, collect logs, and interpret them.
+
+Reference: [pyRevit – Collecting Debug Log](https://pyrevitlabs.notion.site/Collecting-Debug-Log-61941fa7782844e98e416e66ac39e4cf)
+
+### Activating File Logging
+
+- **Via pyRevit Settings (normal operation)**  
+  Open pyRevit Settings → Reporting Levels and activate **File Debug Logging**.
+
+- **Via config file (when pyRevit fails to load)**  
+  If pyRevit crashes Revit on startup, edit the config file directly:
+  1. Navigate to `%APPDATA%/pyRevit/`
+  2. Open (or create) `pyRevit_config.ini`
+  3. Ensure the `[core]` section contains `filelogging = true`:
+  ```ini
+  [core]
+  filelogging = true
+  ```
+
+### Clearing Existing Logs Before Reproduction
+
+Clear stale logs so only the relevant session is captured:
+
+```
+pyrevit caches clear --all
+```
+
+### Collecting the Debug Log
+
+1. Start Revit (it will load more slowly while logging).
+2. Reproduce the issue or wait for the crash.
+3. Navigate to `%APPDATA%/pyRevit/<RevitVersion>/` (e.g. `%APPDATA%/pyRevit/2025/`).
+4. Find the file ending in `_runtime.log` — this is the debug log for that session.
+
+### Log File Location Quick Reference
+
+| Item | Path |
+|------|------|
+| pyRevit config | `%APPDATA%/pyRevit/pyRevit_config.ini` |
+| Runtime logs | `%APPDATA%/pyRevit/<RevitVersion>/pyRevit_*_runtime.log` |
+
+### Using the Cursor Runtime Log Viewer
+
+This project includes a Cursor command (`.cursor/commands/runtimelogs.md`) that automates log reading. Key functions:
+
+- `Show-RecentLogs -Lines 100` — last 100 lines, all levels
+- `Show-RecentErrors -Lines 50` — only ERROR entries
+- `Show-RecentWarnings -Lines 50` — only WARNING entries
+- `Search-Logs -SearchTerm "MyScript"` — search for a specific term
+- `List-AllLogFiles` — list all available log files with sizes and dates
+
+### Interpreting Common Log Patterns
+
+- **IronPython tracebacks** — look for `Traceback (most recent call last):` followed by the exception. The last file/line in the traceback is usually the root cause.
+- **XAML parse errors** — appear as `XamlParseException`. Check for mismatched resource keys, missing `DynamicResource` references, or property-element ordering issues (see Section 6).
+- **Extension load failures** — search for `ERROR` entries near the start of the log. These often indicate missing dependencies or syntax errors in `startup.py` or `lib/` modules.
+- **Transaction errors** — `InvalidOperationException` during document modification usually means a transaction was not started or was rolled back. Verify `Transaction` context manager usage.
+
+### Workflow for Debugging with Logs
+
+1. **Enable file logging** (settings or config file).
+2. **Clear caches** with `pyrevit caches clear --all`.
+3. **Restart Revit** and reproduce the problem.
+4. **Read the log** using the Cursor runtime log viewer or directly from `%APPDATA%/pyRevit/<RevitVersion>/`.
+5. **Search for ERROR/WARNING** entries and IronPython tracebacks.
+6. **Disable file logging** after debugging to avoid performance overhead.
+
+---
+
+This Markdown file outlines the essential rules and best practices for PyRevit development with a focus on code structure, debugging, WPF integration, IronPython 2.7 practices, managing scopes and events for WPF windows, common pitfalls to avoid, and collecting runtime debug logs.  

@@ -16,7 +16,7 @@ For each Space in the current model, this tool copies:
 This updates the built-in Name/Number from the room-bounding
 parameters that Revit populates automatically.
 """
-__highlight__ = 'new'
+
 
 # Standard library imports
 import time

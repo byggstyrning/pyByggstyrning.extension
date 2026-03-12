@@ -14,7 +14,7 @@ Maps parameters from spatial elements (Rooms, Spaces, Areas, 3D Zones) to elemen
 Target Filter Categories is OPTIONAL:
 - Leave empty to write parameters to ALL elements inside the spatial geometry
 - Select specific categories to limit which element types receive the mapped parameters"""
-__highlight__ = 'new'
+
 
 # Import standard libraries
 import sys

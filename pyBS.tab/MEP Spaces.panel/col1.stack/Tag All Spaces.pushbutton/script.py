@@ -17,7 +17,7 @@ Features:
 - Multi-select views using Shift+Click or Ctrl+Click
 - Search to quickly find views
 """
-__highlight__ = 'new'
+
 
 # Standard library imports
 import sys

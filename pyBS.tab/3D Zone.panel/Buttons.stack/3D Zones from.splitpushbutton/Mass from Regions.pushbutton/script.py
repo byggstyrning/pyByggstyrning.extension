@@ -12,7 +12,7 @@ family in Revit. The template should contain a simple Form element.
 __title__ = "Mass from\nRegions"
 __author__ = "Byggstyrning AB"
 __doc__ = "Create Mass family instances from FilledRegion boundaries using MassZone.rfa template"
-__highlight__ = 'new'
+
 
 # Import standard libraries
 import sys
