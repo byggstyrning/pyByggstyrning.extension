@@ -15,8 +15,6 @@ import json
 import os
 import os.path as op
 import re
-import codecs
-import time
 from collections import OrderedDict
 
 # .NET imports
@@ -537,44 +535,18 @@ class ClassificationWindow(WPFWindow):
     
     def __init__(self, element_types):
         try:
-            # #region agent log
-            import codecs, json, time
-            with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H1","location":"script.py:520","message":"ClassificationWindow.__init__ entry","data":{"element_types_count":len(element_types)},"timestamp":int(time.time()*1000)})+'\n')
-            # #endregion
-            
             xaml_path = op.join(op.dirname(__file__), "ClassificationWindow.xaml")
             logger.info("Loading ClassificationWindow from: {}".format(xaml_path))
             
             if not op.exists(xaml_path):
                 raise Exception("XAML file not found: {}".format(xaml_path))
             
-            # #region agent log
-            with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H1,H5","location":"script.py:528","message":"Before WPFWindow.__init__","data":{"xaml_exists":True},"timestamp":int(time.time()*1000)})+'\n')
-            # #endregion
-            
             WPFWindow.__init__(self, xaml_path)
-            
-            # #region agent log
-            with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H1,H5","location":"script.py:530","message":"After WPFWindow.__init__","data":{"success":True},"timestamp":int(time.time()*1000)})+'\n')
-            # #endregion
             
             logger.info("WPFWindow initialized successfully")
             
-            # #region agent log
-            with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H2","location":"script.py:532","message":"Before load_styles_to_window","data":{},"timestamp":int(time.time()*1000)})+'\n')
-            # #endregion
-            
             # Load styles
             load_styles_to_window(self)
-            
-            # #region agent log
-            with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H2","location":"script.py:533","message":"After load_styles_to_window","data":{},"timestamp":int(time.time()*1000)})+'\n')
-            # #endregion
             
             logger.info("Styles loaded")
             
@@ -598,18 +570,8 @@ class ClassificationWindow(WPFWindow):
             # Handle window key events - prevent ESC from closing
             self.PreviewKeyDown += self.Window_PreviewKeyDown
             
-            # #region agent log
-            with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H1","location":"script.py:549","message":"Before _initialize_ui","data":{},"timestamp":int(time.time()*1000)})+'\n')
-            # #endregion
-            
             # Initialize UI
             self._initialize_ui()
-            
-            # #region agent log
-            with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H1","location":"script.py:550","message":"After _initialize_ui","data":{},"timestamp":int(time.time()*1000)})+'\n')
-            # #endregion
             
             logger.info("ClassificationWindow initialization complete")
         except Exception as ex:
@@ -629,17 +591,6 @@ class ClassificationWindow(WPFWindow):
                 self.displayed_items.Add(item)
             
             self.elementTypesDataGrid.ItemsSource = self.displayed_items
-            
-            # #region agent log
-            # Check column configuration after setting ItemsSource
-            for col in self.elementTypesDataGrid.Columns:
-                col_header = str(col.Header) if col.Header else None
-                if col_header == "IFC Class":
-                    from System.Windows.Controls import DataGridTemplateColumn
-                    if isinstance(col, DataGridTemplateColumn):
-                        with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H5","location":"script.py:_initialize_ui","message":"IFC Class column configuration","data":{"is_read_only":col.IsReadOnly,"has_cell_template":col.CellTemplate is not None,"has_cell_editing_template":col.CellEditingTemplate is not None},"timestamp":int(time.time()*1000)})+'\n')
-            # #endregion
             
             # IFC search state
             self.current_schema_version = "IFC2X3"
@@ -719,12 +670,9 @@ class ClassificationWindow(WPFWindow):
             self.elementTypesDataGrid.PreviewMouseLeftButtonUp += self.DataGrid_PreviewMouseLeftButtonUp
             self.elementTypesDataGrid.PreviewKeyDown += self.DataGrid_PreviewKeyDown
             
-            # #region agent log
-            # Add DataGrid editing event handlers for debugging
             self.elementTypesDataGrid.BeginningEdit += self.DataGrid_BeginningEdit
             self.elementTypesDataGrid.PreparingCellForEdit += self.DataGrid_PreparingCellForEdit
             self.elementTypesDataGrid.CellEditEnding += self.DataGrid_CellEditEnding
-            # #endregion
             
             # Status update timer
             from System.Windows.Threading import DispatcherTimer
@@ -867,30 +815,11 @@ class ClassificationWindow(WPFWindow):
     def TextBox_Loaded(self, sender, e):
         """Focus and select text when TextBox is loaded in edit mode"""
         try:
-            # #region agent log
-            with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H2","location":"script.py:TextBox_Loaded","message":"TextBox_Loaded called","data":{"sender_type":str(type(sender).__name__) if sender else None},"timestamp":int(time.time()*1000)})+'\n')
-            # #endregion
-            
             text_box = sender
             if text_box is not None:
-                # #region agent log
-                with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H2","location":"script.py:TextBox_Loaded","message":"TextBox properties before focus","data":{"is_visible":text_box.IsVisible,"opacity":text_box.Opacity,"background":str(text_box.Background) if text_box.Background else None,"foreground":str(text_box.Foreground) if text_box.Foreground else None,"text":text_box.Text[:50] if text_box.Text else None,"width":text_box.ActualWidth,"height":text_box.ActualHeight},"timestamp":int(time.time()*1000)})+'\n')
-                # #endregion
-                
                 text_box.Focus()
                 text_box.SelectAll()
-                
-                # #region agent log
-                with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H2","location":"script.py:TextBox_Loaded","message":"TextBox focused and selected","data":{"is_focused":text_box.IsFocused,"selection_length":text_box.SelectionLength},"timestamp":int(time.time()*1000)})+'\n')
-                # #endregion
         except Exception as ex:
-            # #region agent log
-            with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H2","location":"script.py:TextBox_Loaded","message":"TextBox_Loaded error","data":{"error":str(ex)},"timestamp":int(time.time()*1000)})+'\n')
-            # #endregion
             logger.debug("TextBox_Loaded error: {}".format(str(ex)))
     
     def DataGrid_PreviewMouseLeftButtonUp(self, sender, args):
@@ -904,11 +833,6 @@ class ClassificationWindow(WPFWindow):
             point = args.GetPosition(self.elementTypesDataGrid)
             hit = VisualTreeHelper.HitTest(self.elementTypesDataGrid, point)
             
-            # #region agent log
-            with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H1","location":"script.py:PreviewMouseLeftButtonUp","message":"PreviewMouseLeftButtonUp called","data":{"point_x":point.X,"point_y":point.Y,"has_hit":hit is not None},"timestamp":int(time.time()*1000)})+'\n')
-            # #endregion
-            
             if not hit or not hit.VisualHit:
                 return
             
@@ -917,21 +841,12 @@ class ClassificationWindow(WPFWindow):
             clicked_element_type = None
             while parent and parent != self.elementTypesDataGrid:
                 type_name = parent.GetType().Name
-                # #region agent log
-                with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H1","location":"script.py:PreviewMouseLeftButtonUp","message":"Checking parent element","data":{"type_name":type_name},"timestamp":int(time.time()*1000)})+'\n')
-                # #endregion
                 if "CheckBox" in type_name:
                     clicked_on_checkbox = True
                     break
                 if "DataGridCell" in type_name or "TextBlock" in type_name:
                     clicked_element_type = type_name
                 parent = VisualTreeHelper.GetParent(parent)
-            
-            # #region agent log
-            with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H1","location":"script.py:PreviewMouseLeftButtonUp","message":"Click analysis","data":{"clicked_on_checkbox":clicked_on_checkbox,"clicked_element_type":clicked_element_type},"timestamp":int(time.time()*1000)})+'\n')
-            # #endregion
             
             # Only toggle IsSelected if checkbox was clicked
             if clicked_on_checkbox:
@@ -963,59 +878,25 @@ class ClassificationWindow(WPFWindow):
                             Action(apply_to_others)
                         )
                 # If checkbox was clicked, don't do anything else - let the checkbox handle it
-                # #region agent log
-                with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H1","location":"script.py:PreviewMouseLeftButtonUp","message":"Returning early - checkbox clicked","data":{},"timestamp":int(time.time()*1000)})+'\n')
-                # #endregion
                 return
             
             # If checkbox was NOT clicked, do not toggle IsSelected
             # The row selection is handled by the DataGrid itself
             # This prevents clicking the row from affecting the checkbox state
-            # #region agent log
-            with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H1","location":"script.py:PreviewMouseLeftButtonUp","message":"Not a checkbox click - allowing event to propagate","data":{},"timestamp":int(time.time()*1000)})+'\n')
-            # #endregion
                     
         except Exception as ex:
-            # #region agent log
-            with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H1","location":"script.py:PreviewMouseLeftButtonUp","message":"Error in PreviewMouseLeftButtonUp","data":{"error":str(ex)},"timestamp":int(time.time()*1000)})+'\n')
-            # #endregion
             logger.debug("DataGrid mouse up error: {}".format(str(ex)))
     
     def DataGrid_BeginningEdit(self, sender, e):
         """Handle when DataGrid begins editing"""
         try:
             column_header = str(e.Column.Header) if e.Column else None
-            # #region agent log
-            from System.Windows.Controls import DataGridTemplateColumn
-            col_info = {}
-            if e.Column and isinstance(e.Column, DataGridTemplateColumn):
-                col_info = {
-                    "is_read_only": e.Column.IsReadOnly,
-                    "has_cell_template": e.Column.CellTemplate is not None,
-                    "has_cell_editing_template": e.Column.CellEditingTemplate is not None
-                }
-            with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H3","location":"script.py:BeginningEdit","message":"DataGrid beginning edit","data":{"column_header":column_header,"row_index":e.Row.GetIndex(),"column_info":col_info},"timestamp":int(time.time()*1000)})+'\n')
-            # #endregion
             
             # Workaround: Since PreparingCellForEdit doesn't fire reliably for editable columns,
             # manually find and focus the TextBox after a short delay
             if column_header == "IFC Class" or column_header == "Predefined Type":
-                # #region agent log
-                with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H3","location":"script.py:BeginningEdit","message":"Starting TextBox search workaround","data":{},"timestamp":int(time.time()*1000)})+'\n')
-                # #endregion
-                
                 def find_and_focus_textbox():
                     try:
-                        # #region agent log
-                        with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H3","location":"script.py:BeginningEdit:find_and_focus_textbox","message":"Callback executing","data":{},"timestamp":int(time.time()*1000)})+'\n')
-                        # #endregion
-                        
                         from System.Windows.Media import VisualTreeHelper
                         from System.Windows.Controls import DataGridCell
                         
@@ -1032,41 +913,18 @@ class ClassificationWindow(WPFWindow):
                         # Find the cell from the row
                         row = e.Row
                         if row:
-                            # #region agent log
-                            with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                                f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H3","location":"script.py:BeginningEdit:find_and_focus_textbox","message":"Searching row for cell","data":{"children_count":VisualTreeHelper.GetChildrenCount(row)},"timestamp":int(time.time()*1000)})+'\n')
-                            # #endregion
-                            
                             # Search for the DataGridCell that matches this column
                             for i in range(VisualTreeHelper.GetChildrenCount(row)):
                                 child = VisualTreeHelper.GetChild(row, i)
                                 if isinstance(child, DataGridCell):
-                                    # #region agent log
-                                    with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                                        f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H3","location":"script.py:BeginningEdit:find_and_focus_textbox","message":"Found DataGridCell","data":{"column_match":child.Column == e.Column,"is_editing":child.IsEditing},"timestamp":int(time.time()*1000)})+'\n')
-                                    # #endregion
-                                    
                                     if child.Column == e.Column:
                                         # Found the cell, now search for TextBox
                                         text_box = find_textbox(child)
                                         if text_box:
-                                            # #region agent log
-                                            with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                                                f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H3","location":"script.py:BeginningEdit:find_and_focus_textbox","message":"Found TextBox manually","data":{"is_visible":text_box.IsVisible,"text":text_box.Text[:50] if text_box.Text else None},"timestamp":int(time.time()*1000)})+'\n')
-                                            # #endregion
                                             text_box.Focus()
                                             text_box.SelectAll()
                                             return
-                                        else:
-                                            # #region agent log
-                                            with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                                                f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H3","location":"script.py:BeginningEdit:find_and_focus_textbox","message":"TextBox not found in cell","data":{},"timestamp":int(time.time()*1000)})+'\n')
-                                            # #endregion
                     except Exception as ex:
-                        # #region agent log
-                        with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H3","location":"script.py:BeginningEdit:find_and_focus_textbox","message":"Error finding TextBox","data":{"error":str(ex)},"timestamp":int(time.time()*1000)})+'\n')
-                        # #endregion
                         import traceback
                         logger.error("Error in find_and_focus_textbox: {}".format(traceback.format_exc()))
                 
@@ -1076,77 +934,45 @@ class ClassificationWindow(WPFWindow):
                 # Also try with Input priority as backup
                 self.Dispatcher.BeginInvoke(DispatcherPriority.Input, Action(find_and_focus_textbox))
         except Exception as ex:
-            # #region agent log
-            with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H3","location":"script.py:BeginningEdit","message":"BeginningEdit error","data":{"error":str(ex)},"timestamp":int(time.time()*1000)})+'\n')
-            # #endregion
+            pass
     
     def DataGrid_PreparingCellForEdit(self, sender, e):
         """Handle when DataGrid prepares cell for editing"""
         try:
-            # #region agent log
             editing_element_type = None
             if e.EditingElement:
                 editing_element_type = str(type(e.EditingElement).__name__)
             column_header = str(e.Column.Header) if e.Column else None
-            with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H3","location":"script.py:PreparingCellForEdit","message":"DataGrid preparing cell for edit","data":{"column_header":column_header,"editing_element_type":editing_element_type,"has_editing_element":e.EditingElement is not None},"timestamp":int(time.time()*1000)})+'\n')
-            # #endregion
             
             # For IFC Class and Predefined Type columns, try to find TextBox in the visual tree
             if column_header == "IFC Class" or column_header == "Predefined Type":
-                # #region agent log
                 from System.Windows.Media import VisualTreeHelper
-                def find_textbox_in_tree(element, depth=0, path=""):
+                def find_textbox_in_tree(element, depth=0):
                     if depth > 10:  # Prevent infinite recursion
                         return None
                     if isinstance(element, TextBox):
-                        # #region agent log
-                        with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H4","location":"script.py:PreparingCellForEdit:find_textbox","message":"Found TextBox!","data":{"depth":depth,"path":path},"timestamp":int(time.time()*1000)})+'\n')
-                        # #endregion
                         return element
                     try:
                         child_count = VisualTreeHelper.GetChildrenCount(element)
                         for i in range(child_count):
                             child = VisualTreeHelper.GetChild(element, i)
-                            child_type = str(type(child).__name__)
-                            result = find_textbox_in_tree(child, depth + 1, path + "/" + child_type)
+                            result = find_textbox_in_tree(child, depth + 1)
                             if result:
                                 return result
-                    except Exception as ex:
-                        # #region agent log
-                        with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H4","location":"script.py:PreparingCellForEdit:find_textbox","message":"Error in search","data":{"depth":depth,"error":str(ex)},"timestamp":int(time.time()*1000)})+'\n')
-                        # #endregion
+                    except Exception:
+                        pass
                     return None
                 
                 text_box = None
                 if e.EditingElement:
-                    # #region agent log
-                    with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H4","location":"script.py:PreparingCellForEdit","message":"Starting TextBox search","data":{"editing_element_type":editing_element_type,"has_editing_element":e.EditingElement is not None},"timestamp":int(time.time()*1000)})+'\n')
-                    # #endregion
-                    text_box = find_textbox_in_tree(e.EditingElement, 0, editing_element_type)
-                
-                with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H4","location":"script.py:PreparingCellForEdit","message":"{} - searching for TextBox".format(column_header),"data":{"found_textbox":text_box is not None,"editing_element_type":editing_element_type},"timestamp":int(time.time()*1000)})+'\n')
-                # #endregion
+                    text_box = find_textbox_in_tree(e.EditingElement, 0)
                 
                 if text_box:
-                    # #region agent log
-                    with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H4","location":"script.py:PreparingCellForEdit","message":"{} TextBox properties".format(column_header),"data":{"is_visible":text_box.IsVisible,"opacity":text_box.Opacity,"background":str(text_box.Background) if text_box.Background else None,"foreground":str(text_box.Foreground) if text_box.Foreground else None,"text":text_box.Text[:50] if text_box.Text else None,"width":text_box.ActualWidth,"height":text_box.ActualHeight,"is_focusable":text_box.Focusable,"is_enabled":text_box.IsEnabled},"timestamp":int(time.time()*1000)})+'\n')
-                    # #endregion
                     # Focus and select text immediately
                     try:
                         text_box.Focus()
                         text_box.SelectAll()
                     except Exception as ex:
-                        # #region agent log
-                        with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H4","location":"script.py:PreparingCellForEdit","message":"Error focusing TextBox","data":{"error":str(ex)},"timestamp":int(time.time()*1000)})+'\n')
-                        # #endregion
                         # Try again with dispatcher as fallback
                         def focus_textbox():
                             try:
@@ -1155,31 +981,12 @@ class ClassificationWindow(WPFWindow):
                             except:
                                 pass
                         self.Dispatcher.BeginInvoke(DispatcherPriority.Input, Action(focus_textbox))
-            # Check if it's a TextBox and log its properties
-            elif e.EditingElement and isinstance(e.EditingElement, TextBox):
-                text_box = e.EditingElement
-                # #region agent log
-                with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H4","location":"script.py:PreparingCellForEdit","message":"TextBox found in PreparingCellForEdit","data":{"is_visible":text_box.IsVisible,"opacity":text_box.Opacity,"background":str(text_box.Background) if text_box.Background else None,"foreground":str(text_box.Foreground) if text_box.Foreground else None,"text":text_box.Text[:50] if text_box.Text else None,"width":text_box.ActualWidth,"height":text_box.ActualHeight,"is_focusable":text_box.Focusable},"timestamp":int(time.time()*1000)})+'\n')
-                # #endregion
-        except Exception as ex:
-            # #region agent log
-            with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H3","location":"script.py:PreparingCellForEdit","message":"PreparingCellForEdit error","data":{"error":str(ex)},"timestamp":int(time.time()*1000)})+'\n')
-            # #endregion
+        except Exception:
+            pass
     
     def DataGrid_CellEditEnding(self, sender, e):
         """Handle when DataGrid cell edit ends"""
-        try:
-            # #region agent log
-            with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H3","location":"script.py:CellEditEnding","message":"DataGrid cell edit ending","data":{"column_header":str(e.Column.Header) if e.Column else None,"edit_action":str(e.EditAction)},"timestamp":int(time.time()*1000)})+'\n')
-            # #endregion
-        except Exception as ex:
-            # #region agent log
-            with codecs.open(r'c:\code\pyRevit Extensions\pyByggstyrning.extension\.cursor\debug.log', 'a', 'utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"initial","hypothesisId":"H3","location":"script.py:CellEditEnding","message":"CellEditEnding error","data":{"error":str(ex)},"timestamp":int(time.time()*1000)})+'\n')
-            # #endregion
+        pass
     
     def DataGrid_PreviewKeyDown(self, sender, args):
         """Handle keyboard shortcuts for toggling selection"""

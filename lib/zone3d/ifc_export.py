@@ -144,14 +144,6 @@ class ExportReexecuteHandler:
         """Execute the re-triggered export."""
         global _pending_export_settings
         
-        try:
-            import json
-            import os.path as op
-            log_path = op.join(op.dirname(op.dirname(op.dirname(op.abspath(__file__)))), ".cursor", "debug.log")
-            with open(log_path, "a") as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"L","location":"ifc_export.py:ExportReexecuteHandler.Execute","message":"Re-executing export","data":{"has_settings":_pending_export_settings is not None},"timestamp":__import__("time").time()}) + "\n")
-        except: pass
-        
         if not _pending_export_settings:
             logger.warning("No pending export settings - cannot re-trigger export")
             return
