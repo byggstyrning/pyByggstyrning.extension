@@ -1,0 +1,9 @@
+tooltip:
+  en_us: >
+    Sets 3D vertical extents (Z bottom / Z top) on selected grids to 0 m and 100 m.
+    Supports straight grids and multi-segment grid chains (applies to each segment).
+
+title:
+  en_us: "Grid Z\nExtents"
+engine:
+  clean: true
