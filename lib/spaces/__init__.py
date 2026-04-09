@@ -11,6 +11,7 @@ Exports:
     - get_plan_views(doc): Get all floor/ceiling plans (non-template, non-dependent)
     - get_views_with_space_tags(doc): Find views containing space tags
     - tag_spaces_in_view(doc, view, tag_type_id, space_ids=None): Tag spaces in a view
+    - capture_space_parameters(spaces), restore_space_parameters(space, snapshot): parameter preservation
 """
 
 from __future__ import print_function
@@ -361,3 +362,6 @@ def tag_spaces_in_view(doc, view, tag_type_id, space_ids=None):
         logger.error("Error processing view {}: {}".format(view.Name, str(e)))
     
     return (tagged_count, skipped_count, error_count)
+
+
+from spaces.params import capture_space_parameters, restore_space_parameters  # noqa: E402

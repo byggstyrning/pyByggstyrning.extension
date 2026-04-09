@@ -52,3 +52,6 @@ installer.ps1
 
 # pyRevit LLM.txt
 .cursor/pyrevit-llms.txt
+
+# Local NDJSON debug dumps (e.g. temporary instrumentation)
+debug-*.log

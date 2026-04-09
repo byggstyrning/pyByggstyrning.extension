@@ -4,7 +4,9 @@
 Provides simple git update functionality for the extension.
 """
 from __future__ import print_function
+import os
 import os.path as op
+import subprocess
 
 
 def get_extension_dir():
@@ -37,6 +39,155 @@ def get_repo_info():
         return None
     except Exception:
         return None
+
+
+def _run_git(args, extension_dir):
+    """Run a git command in extension_dir. Returns (returncode, stdout, stderr) as str."""
+    popen_kw = dict(
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        stdin=subprocess.PIPE,
+        cwd=extension_dir,
+        shell=False,
+    )
+    if os.name == 'nt':
+        try:
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            si.wShowWindow = getattr(subprocess, 'SW_HIDE', 0)
+            popen_kw['startupinfo'] = si
+        except Exception:
+            pass
+        popen_kw['creationflags'] = 0x08000000
+
+    try:
+        proc = subprocess.Popen(['git'] + list(args), **popen_kw)
+    except TypeError:
+        popen_kw.pop('creationflags', None)
+        try:
+            proc = subprocess.Popen(['git'] + list(args), **popen_kw)
+        except Exception as ex:
+            return -1, '', str(ex)
+    except Exception as ex:
+        return -1, '', str(ex)
+
+    try:
+        out, err = proc.communicate()
+        code = proc.returncode
+    except Exception as ex:
+        return -1, '', str(ex)
+
+    def _to_str(data):
+        if data is None:
+            return ''
+        if isinstance(data, unicode):  # noqa: F821  # IronPython / Py2
+            return data
+        try:
+            return data.decode('utf-8', 'replace')
+        except Exception:
+            return str(data)
+
+    return code, _to_str(out), _to_str(err)
+
+
+def get_current_branch():
+    """Return the current branch name, or None if not a repo or detached/unknown."""
+    extension_dir = get_extension_dir()
+    if not extension_dir:
+        return None
+    code, out, err = _run_git(['rev-parse', '--abbrev-ref', 'HEAD'], extension_dir)
+    if code != 0:
+        return None
+    name = out.strip()
+    if name == 'HEAD':
+        return None
+    return name
+
+
+def list_local_branches():
+    """Return sorted local branch names (refs/heads)."""
+    extension_dir = get_extension_dir()
+    if not extension_dir:
+        return []
+    code, out, err = _run_git(
+        ['for-each-ref', 'refs/heads/', '--format=%(refname:short)'],
+        extension_dir,
+    )
+    if code != 0:
+        return []
+    branches = []
+    for line in out.splitlines():
+        line = line.strip()
+        if line:
+            branches.append(line)
+    return sorted(branches, key=lambda s: s.lower())
+
+
+DEFAULT_REMOTE = 'origin'
+
+
+def list_remote_branches(remote=DEFAULT_REMOTE):
+    """Return sorted branch names for ``remote`` using local remote-tracking refs.
+
+    Uses ``refs/remotes/<remote>`` (no network). Run ``git fetch`` to refresh the list.
+    """
+    extension_dir = get_extension_dir()
+    if not extension_dir:
+        return []
+    remote_prefix = '{}/'.format(remote)
+    ref_path = 'refs/remotes/{}/'.format(remote)
+    code, out, err = _run_git(
+        ['for-each-ref', ref_path, '--format=%(refname:short)'],
+        extension_dir,
+    )
+    if code != 0:
+        return []
+    branches = []
+    for line in out.splitlines():
+        line = line.strip()
+        if not line or not line.startswith(remote_prefix):
+            continue
+        name = line[len(remote_prefix):]
+        if name == 'HEAD':
+            continue
+        branches.append(name)
+    return sorted(set(branches), key=lambda s: s.lower())
+
+
+def checkout_branch(branch_name, remote=DEFAULT_REMOTE):
+    """Check out a branch that exists on the remote (see ``list_remote_branches``).
+
+    Returns (success, message).
+    """
+    extension_dir = get_extension_dir()
+    if not extension_dir:
+        return False, 'Extension directory is not a git repository.'
+    if not branch_name:
+        return False, 'No branch selected.'
+    allowed = list_remote_branches(remote)
+    if branch_name not in allowed:
+        return False, (
+            'Branch is not listed for remote "{}". '
+            'Fetch the remote (e.g. pyRevit Reload) and try again.'
+        ).format(remote)
+
+    code, out, err = _run_git(['checkout', branch_name], extension_dir)
+    if code == 0:
+        return True, 'OK'
+
+    _run_git(['fetch', remote, branch_name], extension_dir)
+    code, out, err = _run_git(['checkout', branch_name], extension_dir)
+    if code == 0:
+        return True, 'OK'
+
+    ref = '{}/{}'.format(remote, branch_name)
+    code, out, err = _run_git(['checkout', '-b', branch_name, ref], extension_dir)
+    if code != 0:
+        detail = (err or out or '').strip()
+        if not detail:
+            detail = 'git checkout failed (exit code {})'.format(code)
+        return False, detail
+    return True, 'OK'
 
 
 def get_version_string(repo_info):

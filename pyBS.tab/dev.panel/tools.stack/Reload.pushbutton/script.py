@@ -1,6 +1,10 @@
 """Update from Git and reload pyRevit."""
 # -*- coding=utf-8 -*-
 #pylint: disable=import-error,invalid-name,broad-except
+
+__title__ = 'Reload'
+__highlight__ = 'new'
+
 from pyrevit import script
 from pyrevit.loader import sessionmgr
 from pyrevit.loader import sessioninfo
