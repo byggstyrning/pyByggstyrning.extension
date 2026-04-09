@@ -1,0 +1,7 @@
+tooltip:
+  en_us: Sandbox button to confirm the Test panel ribbon bundle loads.
+engine:
+  clean: true
+title:
+  en_us: 'Test Feature'
+context: zero-doc

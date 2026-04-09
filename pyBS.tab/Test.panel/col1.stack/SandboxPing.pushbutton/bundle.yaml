@@ -1,0 +1,7 @@
+tooltip:
+  en_us: Second stack item (pyRevit stacks need at least two buttons).
+engine:
+  clean: true
+title:
+  en_us: 'Ping'
+context: zero-doc
