@@ -1,0 +1,53 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Select Branch"
+        Width="280"
+        Height="260"
+        MinWidth="240"
+        MinHeight="200"
+        ResizeMode="CanResizeWithGrip"
+        WindowStartupLocation="CenterScreen"
+        ShowInTaskbar="False">
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock x:Name="currentBranchText"
+                   Grid.Row="0"
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,8"/>
+
+        <ListBox x:Name="branchList"
+                 Grid.Row="1"
+                 MinHeight="72"
+                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                 ScrollViewer.VerticalScrollBarVisibility="Auto">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <TextBlock Text="{Binding}"
+                               TextWrapping="NoWrap"/>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
+        <StackPanel Grid.Row="2"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,10,0,0">
+            <Button x:Name="cancelButton"
+                    Content="Cancel"
+                    Width="72"
+                    Margin="0,0,8,0"
+                    IsCancel="True"
+                    Click="CancelButton_Click"/>
+            <Button x:Name="switchReloadButton"
+                    Content="Switch &amp; reload"
+                    MinWidth="96"
+                    IsDefault="True"
+                    Click="SwitchReloadButton_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

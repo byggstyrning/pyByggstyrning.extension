@@ -1,0 +1,7 @@
+tooltip:
+  en_us: Pick a branch from origin (remote-tracking refs), check out, and reload pyRevit. Run git fetch first if the list is empty.
+engine:
+  clean: true
+title:
+  en_us: 'Select Branch'
+context: zero-doc
