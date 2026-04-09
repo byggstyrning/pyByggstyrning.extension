@@ -14,7 +14,7 @@ MEP Spaces at the same locations in the current model.
 
 Options:
 - Write Name and Number from Room to Space
-- Remove existing spaces before creating
+- Remove and recreate spaces (preserves other parameters when linked to a Room; keeps unlinked spaces)
 """
 
 
@@ -233,22 +233,26 @@ def get_host_phases(doc):
     return phases
 
 
-def delete_existing_spaces(doc):
-    """Delete all existing spaces in the document.
+def delete_existing_spaces(doc, exclude_ids=None):
+    """Delete existing spaces in the document, optionally preserving some by id.
     
     Pinned spaces cannot be deleted by Revit - these are reported separately.
+    Spaces listed in exclude_ids (no linked Room / cannot restore) are preserved.
     
     Args:
         doc: Revit document
+        exclude_ids: Optional set of int (ElementId.IntegerValue) for spaces to skip
         
     Returns:
-        dict: Results with 'deleted', 'failed', and 'pinned_skipped' counts
+        dict: Results with 'deleted', 'failed', 'pinned_skipped', 'preserved_unlinked'
     """
     result = {
         'deleted': 0,
         'failed': 0,
-        'pinned_skipped': 0
+        'pinned_skipped': 0,
+        'preserved_unlinked': 0
     }
+    exclude = exclude_ids if exclude_ids else set()
     
     try:
         spaces = FilteredElementCollector(doc).OfClass(SpatialElement).ToElements()
@@ -257,6 +261,10 @@ def delete_existing_spaces(doc):
         if space_elements:
             for space in space_elements:
                 try:
+                    sid = space.Id.IntegerValue
+                    if sid in exclude:
+                        result['preserved_unlinked'] += 1
+                        continue
                     # Check if pinned - Revit won't let us delete pinned elements
                     if space.Pinned:
                         result['pinned_skipped'] += 1
@@ -301,10 +309,14 @@ def create_spaces_from_linked_rooms(doc, linked_item, write_params=True,
         'deleted': 0,
         'delete_failed': 0,
         'pinned_skipped': 0,
+        'preserved_unlinked': 0,
+        'params_restored': 0,
+        'spaces_matched': 0,
         'errors': [],
         'level_warnings': [],
         'phase_warnings': []
     }
+    param_cache = {}
     
     link_instance = linked_item.link_instance
     link_doc = linked_item.link_doc
@@ -335,14 +347,27 @@ def create_spaces_from_linked_rooms(doc, linked_item, write_params=True,
     
     # Delete existing spaces if requested (in its own transaction)
     if remove_existing:
+        from spaces.params import capture_space_parameters, restore_space_parameters
         if progress_bar:
             progress_bar.update_progress(0, total_rooms)
+        # Capture parameters from spaces linked to Rooms; preserve spaces without Space.Room
+        try:
+            existing_spaces = [
+                s for s in FilteredElementCollector(doc).OfClass(SpatialElement).ToElements()
+                if isinstance(s, Space)
+            ]
+            param_cache, unlinked_exclude = capture_space_parameters(existing_spaces)
+        except Exception as e:
+            logger.error("Error capturing space parameters: {}".format(str(e)))
+            param_cache = {}
+            unlinked_exclude = set()
         t = Transaction(doc, "Delete Existing Spaces")
         start_transaction_with_warning_suppression(t)
-        delete_results = delete_existing_spaces(doc)
+        delete_results = delete_existing_spaces(doc, exclude_ids=unlinked_exclude)
         results['deleted'] = delete_results['deleted']
         results['delete_failed'] = delete_results['failed']
         results['pinned_skipped'] = delete_results['pinned_skipped']
+        results['preserved_unlinked'] = delete_results.get('preserved_unlinked', 0)
         t.Commit()
     
     # Get host phases ONCE before the loop (performance optimization)
@@ -513,6 +538,18 @@ def create_spaces_from_linked_rooms(doc, linked_item, write_params=True,
                                     
                         except Exception as e:
                             logger.debug("Error setting space parameters: {}".format(str(e)))
+                    
+                    # Restore parameters from old space (keyed by linked Room UniqueId)
+                    if remove_existing and param_cache and new_space:
+                        try:
+                            room_uid = room.UniqueId
+                            if room_uid in param_cache:
+                                n_rest = restore_space_parameters(
+                                    new_space, param_cache[room_uid])
+                                results['params_restored'] += n_rest
+                                results['spaces_matched'] += 1
+                        except Exception as e:
+                            logger.debug("Error restoring space parameters: {}".format(str(e)))
                 else:
                     results['skipped_failed'] += 1
                     
@@ -588,6 +625,19 @@ def show_results(results):
     
     message_parts.append("{} spaces created".format(results['created']))
     
+    if results.get('preserved_unlinked', 0) > 0:
+        message_parts.append(
+            "{} spaces preserved (no Room link from Space.Room)".format(
+                results['preserved_unlinked']))
+    
+    if results.get('spaces_matched', 0) > 0:
+        message_parts.append(
+            "{} spaces recreated with parameters preserved ({} parameter values restored)".format(
+                results['spaces_matched'], results.get('params_restored', 0)))
+    elif results.get('params_restored', 0) > 0:
+        message_parts.append(
+            "{} parameter values restored".format(results['params_restored']))
+    
     # Show tagging results if re-tagging was performed
     if results.get('tagged', 0) > 0:
         message_parts.append("{} spaces tagged in {} views".format(
@@ -626,6 +676,12 @@ def show_results(results):
         balloon_lines.append("{} pinned (not deleted)".format(results['pinned_skipped']))
     
     balloon_lines.append("{} created".format(results['created']))
+    
+    if results.get('preserved_unlinked', 0) > 0:
+        balloon_lines.append("{} preserved (no Room link)".format(results['preserved_unlinked']))
+    
+    if results.get('spaces_matched', 0) > 0:
+        balloon_lines.append("{} w/ params restored".format(results['spaces_matched']))
     
     if results.get('tagged', 0) > 0:
         balloon_lines.append("{} tagged".format(results['tagged']))
