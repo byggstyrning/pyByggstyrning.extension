@@ -122,3 +122,22 @@ try:
         script_logger.warning("Failed to register 3D Zone IFC export handler")
 except Exception as e:
     script_logger.warning("Could not register 3D Zone IFC export handler: {}".format(str(e)))
+
+# Register IFC export handlers for NestedParentId (nested shared families)
+try:
+    import sys
+    import os.path as op
+    extension_dir = op.dirname(op.abspath(__file__))
+    lib_path = op.join(extension_dir, 'lib')
+    if lib_path not in sys.path:
+        sys.path.insert(0, lib_path)
+
+    from nested_family import ifc_export as nested_ifc_export
+    if nested_ifc_export.register_ifc_export_handler():
+        pass
+    else:
+        script_logger.warning("Failed to register NestedParentId IFC export handler")
+except Exception as e:
+    script_logger.warning(
+        "Could not register NestedParentId IFC export handler: {}".format(str(e))
+    )
