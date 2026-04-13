@@ -590,11 +590,11 @@ def get_source_document(doc, zone_config):
                         logger.debug("Using linked document '{}' for source elements".format(linked_doc_name))
                         return (link_doc, link)
                     else:
-                        logger.warning("Linked document '{}' found but GetLinkDocument() returned None".format(linked_doc_name))
+                        logger.info("Linked document '{}' found but GetLinkDocument() returned None".format(linked_doc_name))
                 except Exception as e:
                     logger.warning("Error accessing linked document '{}': {}".format(linked_doc_name, str(e)))
         
-        logger.warning("Linked document '{}' not found, using main document".format(linked_doc_name))
+        logger.info("Linked document '{}' not found, using main document".format(linked_doc_name))
         return (doc, None)
     except Exception as e:
         logger.error("Error finding linked document '{}': {}".format(linked_doc_name, str(e)))
@@ -737,7 +737,7 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
         
         if not source_elements:
 
-            logger.warning("[DEBUG] No source elements found at all for categories: {}".format(source_categories))
+            logger.info("[DEBUG] No source elements found at all for categories: {}".format(source_categories))
             return results
         
         # Filter source elements to only include those with source parameters that have values
@@ -761,7 +761,7 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
         
         if not source_elements:
 
-            logger.warning("[DEBUG] No source elements found with required parameters: {}".format(source_param_names))
+            logger.info("[DEBUG] No source elements found with required parameters: {}".format(source_param_names))
             return results
         
         # Sort source elements by configured sort property (default: ElementId)
