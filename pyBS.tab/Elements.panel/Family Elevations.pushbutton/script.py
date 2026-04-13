@@ -6,8 +6,8 @@ __author__ = "pyByggstyrning"
 __highlight__ = "new"
 __doc__ = """Create elevation views for family instances and place them on sheets.
 
-Select categories and instances. Views use instance bounding box and facing orientation.
-Views are placed on sheets in a grid layout (20 wide), grouped and sorted by user-selected parameters.
+Select categories and instances. Annotation categories (e.g. title blocks, tags) are not listed.
+Views use instance bounding box and facing orientation; sheets use a grid layout (20 wide).
 """
 
 # Import .NET libraries
@@ -109,14 +109,27 @@ def _get_family_instance_location_point(instance):
     return None
 
 
+def _is_annotation_category(cat):
+    """True if category is annotation-type (title blocks, tags, generic annotations, etc.)."""
+    if not cat:
+        return False
+    try:
+        return cat.CategoryType == DB.CategoryType.Annotation
+    except Exception:
+        return False
+
+
 def _discover_family_instance_category_names():
-    """Sorted unique category names for all FamilyInstance elements in the document."""
+    """Sorted unique category names for model FamilyInstances (excludes annotation categories)."""
     names = set()
     for fi in FilteredElementCollector(doc).OfClass(FamilyInstance).ToElements():
         try:
             cat = fi.Category
-            if cat and cat.Name:
-                names.add(cat.Name)
+            if not cat or not cat.Name:
+                continue
+            if _is_annotation_category(cat):
+                continue
+            names.add(cat.Name)
         except Exception:
             pass
     return sorted(names)
@@ -156,7 +169,6 @@ class FamilyInstanceData(forms.Reactive):
         super(FamilyInstanceData, self).__init__()
         self.instance = instance
         self.instance_id = instance.Id
-        self._is_selected = True
 
         self._mark = self._get_param_string(instance, BuiltInParameter.ALL_MODEL_MARK) or ""
         try:
@@ -187,15 +199,6 @@ class FamilyInstanceData(forms.Reactive):
         except Exception:
             pass
         return ""
-
-    @property
-    def IsSelected(self):
-        return self._is_selected
-
-    @IsSelected.setter
-    def IsSelected(self, value):
-        self._is_selected = value
-        self.OnPropertyChanged("IsSelected")
 
     @property
     def Mark(self):
@@ -307,16 +310,25 @@ class FamilyElevationsWindow(forms.WPFWindow):
         self.created_sheets = []
 
         self._category_items = ObservableCollection[CategoryFilterItem]()
+        self._category_display = ObservableCollection[CategoryFilterItem]()
 
         self._setup_scale_options()
         self._setup_templates()
         self._setup_elevation_types()
         self._setup_grouping_options()
         self._populate_category_filters()
-        self.categoryListBox.ItemsSource = self._category_items
+        self._sync_category_list_display()
+        self.categoryListBox.ItemsSource = self._category_display
         self._load_instances()
 
         self.instancesDataGrid.ItemsSource = self.instances_data
+        self.instancesDataGrid.SelectionChanged += self.instancesDataGrid_SelectionChanged
+        try:
+            self.instancesDataGrid.UnselectAll()
+        except Exception:
+            pass
+
+        self._update_category_selection_count()
         self._update_selection_count()
 
     def _setup_scale_options(self):
@@ -362,7 +374,23 @@ class FamilyElevationsWindow(forms.WPFWindow):
     def _populate_category_filters(self):
         self._category_items.Clear()
         for name in _discover_family_instance_category_names():
-            self._category_items.Add(CategoryFilterItem(name, True))
+            self._category_items.Add(CategoryFilterItem(name, False))
+
+    def _sync_category_list_display(self):
+        """Refresh filtered category list (search) without changing check state."""
+        self._category_display.Clear()
+        search = ""
+        if hasattr(self, "categorySearchTextBox") and self.categorySearchTextBox:
+            search = (self.categorySearchTextBox.Text or "").strip().lower()
+        for item in self._category_items:
+            if not search or search in item.CategoryName.lower():
+                self._category_display.Add(item)
+
+    def _update_category_selection_count(self):
+        n_sel = sum(1 for i in self._category_items if i.IsSelected)
+        n_tot = self._category_items.Count
+        if hasattr(self, "categorySelectionCountText") and self.categorySelectionCountText:
+            self.categorySelectionCountText.Text = "{} of {} categories included".format(n_sel, n_tot)
 
     def _get_selected_category_names(self):
         selected = []
@@ -381,6 +409,8 @@ class FamilyElevationsWindow(forms.WPFWindow):
                 cat = fi.Category
                 if not cat or not cat.Name:
                     continue
+                if _is_annotation_category(cat):
+                    continue
                 if cat.Name not in allowed:
                     continue
                 row = FamilyInstanceData(fi)
@@ -393,6 +423,7 @@ class FamilyElevationsWindow(forms.WPFWindow):
         )
 
         self._apply_search_filter()
+        self._update_category_selection_count()
 
         logger.debug("Loaded {} instances for selected categories".format(len(self.all_instances_data)))
 
@@ -405,19 +436,29 @@ class FamilyElevationsWindow(forms.WPFWindow):
         for item in self.all_instances_data:
             if item.matches_search(search_text):
                 self.instances_data.Add(item)
+        try:
+            if hasattr(self, "instancesDataGrid") and self.instancesDataGrid:
+                self.instancesDataGrid.UnselectAll()
+        except Exception:
+            pass
         self._update_selection_count()
 
     def _update_selection_count(self):
-        selected_count = sum(1 for d in self.all_instances_data if d.IsSelected)
+        sel = 0
+        try:
+            if hasattr(self, "instancesDataGrid") and self.instancesDataGrid:
+                sel = self.instancesDataGrid.SelectedItems.Count
+        except Exception:
+            sel = 0
         filtered_count = self.instances_data.Count
         total_count = len(self.all_instances_data)
 
         if filtered_count < total_count:
             self.selectionCountText.Text = "{} selected ({} shown of {})".format(
-                selected_count, filtered_count, total_count)
+                sel, filtered_count, total_count)
         else:
             self.selectionCountText.Text = "{} of {} instances selected".format(
-                selected_count, total_count)
+                sel, total_count)
 
     def _get_scale_value(self):
         scale_text = self.scaleComboBox.SelectedItem
@@ -426,7 +467,15 @@ class FamilyElevationsWindow(forms.WPFWindow):
         return 50
 
     def _get_selected_instances(self):
-        return [d for d in self.all_instances_data if d.IsSelected]
+        """Rows chosen in the DataGrid (Extended selection: Ctrl/Shift multi-select)."""
+        out = []
+        try:
+            if hasattr(self, "instancesDataGrid") and self.instancesDataGrid:
+                for obj in self.instancesDataGrid.SelectedItems:
+                    out.append(obj)
+        except Exception:
+            pass
+        return out
 
     def _get_plan_view(self):
         active = doc.ActiveView
@@ -443,6 +492,20 @@ class FamilyElevationsWindow(forms.WPFWindow):
     # Event Handlers
     # =========================================================================
 
+    def categorySearchTextBox_TextChanged(self, sender, args):
+        """Filter which categories appear in the list (does not change inclusion)."""
+        self._sync_category_list_display()
+
+    def categorySelectAllButton_Click(self, sender, args):
+        for item in self._category_items:
+            item.IsSelected = True
+        self._load_instances()
+
+    def categoryDeselectAllButton_Click(self, sender, args):
+        for item in self._category_items:
+            item.IsSelected = False
+        self._load_instances()
+
     def categoryFilterCheckBox_Changed(self, sender, args):
         """Reload instances when category inclusion changes."""
         self._load_instances()
@@ -450,17 +513,21 @@ class FamilyElevationsWindow(forms.WPFWindow):
     def instanceSearchTextBox_TextChanged(self, sender, args):
         self._apply_search_filter()
 
-    def selectAllCheckBox_Checked(self, sender, args):
-        for row in self.instances_data:
-            row.IsSelected = True
+    def instancesDataGrid_SelectionChanged(self, sender, args):
         self._update_selection_count()
 
-    def selectAllCheckBox_Unchecked(self, sender, args):
-        for row in self.instances_data:
-            row.IsSelected = False
+    def instanceSelectAllFilteredButton_Click(self, sender, args):
+        try:
+            self.instancesDataGrid.SelectAll()
+        except Exception:
+            pass
         self._update_selection_count()
 
-    def instanceCheckBox_Changed(self, sender, args):
+    def instanceDeselectAllFilteredButton_Click(self, sender, args):
+        try:
+            self.instancesDataGrid.UnselectAll()
+        except Exception:
+            pass
         self._update_selection_count()
 
     def cancelButton_Click(self, sender, args):
@@ -824,5 +891,13 @@ if __name__ == '__main__':
         if not section_types:
             forms.alert("No section view types found in the project.", title="Error")
         else:
-            window = FamilyElevationsWindow()
-            window.ShowDialog()
+            model_categories = _discover_family_instance_category_names()
+            if not model_categories:
+                forms.alert(
+                    "No model family instance categories found. Annotation categories "
+                    "(e.g. title blocks, tags, generic annotations) are excluded.",
+                    title="No Categories",
+                )
+            else:
+                window = FamilyElevationsWindow()
+                window.ShowDialog()
