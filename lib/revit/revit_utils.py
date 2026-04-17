@@ -7,6 +7,32 @@ from System.Collections.Generic import List
 from unicodedata import normalize
 from unicodedata import category as unicode_category
 
+try:
+    from revit.compat import (
+        get_element_id_value,
+        is_param_yesno,
+        make_element_id,
+    )
+except ImportError:
+    # lib/ not on sys.path yet; provide shims so this module stays importable.
+    def get_element_id_value(item):
+        try:
+            return item.Value
+        except AttributeError:
+            return item.IntegerValue
+
+    def is_param_yesno(definition):
+        return False
+
+    def make_element_id(value):
+        if isinstance(value, ElementId):
+            return value
+        try:
+            from System import Int64 as _Int64
+            return ElementId(_Int64(value))
+        except Exception:
+            return ElementId(value)
+
 def get_visible_elements():
     """Get all visible elements in the current view"""
     doc = revit.doc
@@ -66,7 +92,7 @@ def get_available_parameters():
             continue
             
         # If we've already processed this category, skip the element
-        cat_id = element.Category.Id.IntegerValue
+        cat_id = get_element_id_value(element.Category.Id)
         if cat_id in processed_categories:
             continue
             
@@ -260,7 +286,7 @@ def apply_color_to_elements(doc, view, element_ids, color, override_projection=T
     if override_projection:
         ogs.SetProjectionLineColor(color)
         ogs.SetCutLineColor(color)
-        ogs.SetProjectionLinePatternId(ElementId(-1))  # Solid line
+        ogs.SetProjectionLinePatternId(make_element_id(-1))  # Solid line
     
     # Always set surface pattern color
     if override_surfaces and solid_fill_id:
@@ -308,30 +334,18 @@ def get_parameter_value_string(para):
     elif para.StorageType == StorageType.ElementId:
         id_val = para.AsElementId()
         # Use the ElementId.InvalidElementId comparison for safety
-        if id_val != ElementId.InvalidElementId and id_val.IntegerValue >= 0:
+        if id_val != ElementId.InvalidElementId and get_element_id_value(id_val) >= 0:
             element = doc.GetElement(id_val)
             if element:
                 return element.Name
         return "None"
     elif para.StorageType == StorageType.Integer:
-        version = int(HOST_APP.version)
-        if version > 2021:
-            param_type = para.Definition.GetDataType()
-            if SpecTypeId.Boolean.YesNo == param_type:
-                return "True" if para.AsInteger() == 1 else "False"
-            else:
-                return para.AsValueString()
-        else:
-            # For older Revit versions
-            try:
-                param_type = para.Definition.ParameterType
-                if ParameterType.YesNo == param_type:
-                    return "True" if para.AsInteger() == 1 else "False"
-                else:
-                    return para.AsValueString()
-            except:
-                # If parameter type can't be determined, just return value string
-                return para.AsValueString() or str(para.AsInteger())
+        if is_param_yesno(para.Definition):
+            return "True" if para.AsInteger() == 1 else "False"
+        try:
+            return para.AsValueString()
+        except:
+            return para.AsValueString() or str(para.AsInteger())
     elif para.StorageType == StorageType.String:
         return para.AsString() or "None"
     else:
@@ -432,14 +446,13 @@ def get_categories_in_view(doc, view, excluded_cats=None):
                 .ToElements()
     
     categories_dict = {}
-    get_elementid_value = get_elementid_value_func()
-    
+
     for element in collector:
         if element.Category is None:
             continue
             
         category = element.Category
-        cat_id = get_elementid_value(category.Id)
+        cat_id = get_element_id_value(category.Id)
         
         # Skip excluded categories
         if cat_id in excluded_cats:
@@ -486,16 +499,11 @@ def get_categories_in_view(doc, view, excluded_cats=None):
 def get_elementid_value_func():
     """Returns the ElementId value extraction function based on the Revit version.
     
-    Follows API changes in Revit 2024.
+    Follows API changes in Revit 2024. Back-compat shim around
+    :func:`revit.compat.get_element_id_value` - new code should import that
+    helper directly.
 
     Returns:
         function: A function that returns the value of an ElementId.
-    """    
-    def get_value_post2024(item):
-        return item.Value
-
-    def get_value_pre2024(item):
-        return item.IntegerValue
-
-    version = int(HOST_APP.version)
-    return get_value_post2024 if version > 2023 else get_value_pre2024 
+    """
+    return get_element_id_value

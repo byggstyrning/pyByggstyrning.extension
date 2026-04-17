@@ -10,6 +10,14 @@ import System
 # Import the MMI schema
 from mmi.schema import MMIParameterSchema
 from mmi.config import CONFIG_KEYS
+try:
+    from revit.compat import get_element_id_value
+except ImportError:
+    def get_element_id_value(item):
+        try:
+            return item.Value
+        except AttributeError:
+            return item.IntegerValue
 
 # Initialize logger
 logger = script.get_logger()
@@ -92,7 +100,7 @@ def set_mmi_value(doc, elements, value, param_name=None):
         try:
             # Skip excluded categories
             if element.Category and element.Category.Id:
-                category_id = element.Category.Id.IntegerValue
+                category_id = get_element_id_value(element.Category.Id)
                 if category_id in EXCLUDED_CATEGORIES:
                     # Silently skip excluded categories (don't add to failed_elements)
                     logger.debug("Skipping excluded category: {} ({})".format(

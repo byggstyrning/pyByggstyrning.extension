@@ -5,6 +5,24 @@ from Autodesk.Revit.DB import Color, ElementId
 from pyrevit import script
 from pyrevit.userconfig import user_config
 
+try:
+    from revit.compat import get_element_id_value, make_element_id
+except ImportError:
+    def get_element_id_value(item):
+        try:
+            return item.Value
+        except AttributeError:
+            return item.IntegerValue
+
+    def make_element_id(value):
+        if isinstance(value, ElementId):
+            return value
+        try:
+            from System import Int64 as _Int64
+            return ElementId(_Int64(value))
+        except Exception:
+            return ElementId(value)
+
 # Initialize logger
 logger = script.get_logger()
 
@@ -107,7 +125,7 @@ def get_colored_view_id():
         
         if view_id_str:
             try:
-                return ElementId(int(view_id_str))
+                return make_element_id(int(view_id_str))
             except:
                 return None
         return None
@@ -122,7 +140,7 @@ def set_colored_view_id(view_id):
             user_config.add_section(CONFIG_SECTION)
         
         section = getattr(user_config, CONFIG_SECTION)
-        section.set_option(CONFIG_KEY_VIEW_ID, str(view_id.IntegerValue))
+        section.set_option(CONFIG_KEY_VIEW_ID, str(get_element_id_value(view_id)))
         user_config.save_changes()
     except Exception as ex:
         logger.error("Error setting colored view ID: {}".format(ex))
@@ -138,7 +156,7 @@ def get_colored_element_ids():
         
         if ids_str:
             try:
-                id_list = [ElementId(int(x)) for x in ids_str.split(",") if x.strip()]
+                id_list = [make_element_id(int(x)) for x in ids_str.split(",") if x.strip()]
                 return id_list
             except Exception as ex:
                 logger.debug("Error parsing colored element IDs: {}".format(ex))
@@ -155,7 +173,7 @@ def set_colored_element_ids(element_ids):
             user_config.add_section(CONFIG_SECTION)
         
         section = getattr(user_config, CONFIG_SECTION)
-        ids_str = ",".join([str(eid.IntegerValue) for eid in element_ids])
+        ids_str = ",".join([str(get_element_id_value(eid)) for eid in element_ids])
         section.set_option(CONFIG_KEY_ELEMENT_IDS, ids_str)
         user_config.save_changes()
     except Exception as ex:

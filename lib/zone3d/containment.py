@@ -16,6 +16,17 @@ from Autodesk.Revit.DB.Architecture import Room
 from Autodesk.Revit.DB.Mechanical import Space
 from pyrevit import script
 
+try:
+    from revit.compat import get_element_id_value
+except ImportError:
+    # Fallback when lib/ is not yet on sys.path - should not happen in
+    # pyRevit runtime but keeps import-time safety for tooling/linting.
+    def get_element_id_value(item):
+        try:
+            return item.Value
+        except AttributeError:
+            return item.IntegerValue
+
 # Initialize logger
 logger = script.get_logger()
 
@@ -40,7 +51,7 @@ def get_phase_map_for_link(host_doc, link_instance):
     
     try:
         link_type_id = link_instance.GetTypeId()
-        if not link_type_id or link_type_id.IntegerValue < 0:
+        if not link_type_id or get_element_id_value(link_type_id) < 0:
             return None
             
         link_type = host_doc.GetElement(link_type_id)
@@ -453,7 +464,7 @@ def _get_host_object_test_points(element, doc=None, grid_size=5):
             # GetTopFaces is only supported for Floor, Ceiling, Roof; other HostObjects (e.g. foundation) throw
             cat = element.Category
             supports_top_faces = (cat is not None and cat.Id is not None and
-                cat.Id.IntegerValue in (int(BuiltInCategory.OST_Floors), int(BuiltInCategory.OST_Ceilings), int(BuiltInCategory.OST_Roofs)))
+                get_element_id_value(cat.Id) in (int(BuiltInCategory.OST_Floors), int(BuiltInCategory.OST_Ceilings), int(BuiltInCategory.OST_Roofs)))
             if supports_top_faces:
                 try:
                     face_refs = HostObjectUtils.GetTopFaces(element)
@@ -648,7 +659,7 @@ def _create_solid_from_area(area, doc):
     Returns:
         Solid: 3D solid representing the Area volume, or None if creation fails
     """
-    area_id = area.Id.IntegerValue
+    area_id = get_element_id_value(area.Id)
     try:
         logger.debug("Creating solid for area {} (ID: {})".format(area.Id, area_id))
         
@@ -821,7 +832,7 @@ def is_point_in_area(area, point, doc):
         bool: True if point is in area
     """
     try:
-        element_id = area.Id.IntegerValue
+        element_id = get_element_id_value(area.Id)
         
         # Use cached solid if available
         if element_id in _geometry_cache:
@@ -948,7 +959,7 @@ def is_point_in_element(element, point, doc):
         bool: True if point is in element (inside any of its solids)
     """
     try:
-        element_id = element.Id.IntegerValue
+        element_id = get_element_id_value(element.Id)
         
         # Use cached geometry if available
         if element_id in _geometry_cache:
@@ -1180,7 +1191,7 @@ def build_rooms_by_phase_and_level(rooms):
             rooms_skipped_no_phase += 1
             continue
         
-        phase_id_int = phase_id.IntegerValue
+        phase_id_int = get_element_id_value(phase_id)
         
         # Get room level
         if hasattr(room, "LevelId") and room.LevelId:
@@ -1233,13 +1244,13 @@ def element_exists_in_phase(element, phase_id):
             return True
         
         # Element must be created in or before this phase
-        if created_phase_id.IntegerValue > phase_id.IntegerValue:
+        if get_element_id_value(created_phase_id) > get_element_id_value(phase_id):
             return False
         
         # Element must not be demolished in or before this phase
         if demolished_phase_id:
             # If demolished phase <= current phase, element doesn't exist
-            if demolished_phase_id.IntegerValue <= phase_id.IntegerValue:
+            if get_element_id_value(demolished_phase_id) <= get_element_id_value(phase_id):
                 return False
         
         return True
@@ -1321,7 +1332,7 @@ def get_containing_room_phase_aware(element, doc, rooms_by_phase_by_level, order
                 # Build lookup from source phase ElementId to index
                 src_phase_id_to_idx = {}
                 for src_idx, (src_phase, _) in enumerate(ordered_phases):
-                    src_phase_id_to_idx[src_phase.Id.IntegerValue] = src_idx
+                    src_phase_id_to_idx[get_element_id_value(src_phase.Id)] = src_idx
                 
                 # Map each element phase to source phase using Revit's phase map
                 for elem_idx, (elem_phase, _) in enumerate(element_phases_for_checking):
@@ -1329,7 +1340,7 @@ def get_containing_room_phase_aware(element, doc, rooms_by_phase_by_level, order
                     # phase_map maps host phase ID -> linked (source) phase ID
                     if host_phase_id in phase_map:
                         linked_phase_id = phase_map[host_phase_id]
-                        linked_phase_int = linked_phase_id.IntegerValue
+                        linked_phase_int = get_element_id_value(linked_phase_id)
                         if linked_phase_int in src_phase_id_to_idx:
                             element_phase_map[elem_idx] = src_phase_id_to_idx[linked_phase_int]
                 
@@ -1411,7 +1422,7 @@ def get_containing_room_phase_aware(element, doc, rooms_by_phase_by_level, order
         # Iterate through phases where element exists (ascending order)
         for phase_idx in range(start_idx, end_idx):
             phase, _ = ordered_phases[phase_idx]
-            phase_id_int = phase.Id.IntegerValue
+            phase_id_int = get_element_id_value(phase.Id)
             
             # CRITICAL: Check if element exists in this specific phase
             # Skip if element is demolished in this phase
@@ -1503,7 +1514,7 @@ def get_containing_room_phase_aware(element, doc, rooms_by_phase_by_level, order
         # Return room with lowest ElementId if multiple matches found
         if matching_rooms:
             # Sort by ElementId (lowest first) and return the first one
-            matching_rooms.sort(key=lambda r: r.Id.IntegerValue)
+            matching_rooms.sort(key=lambda r: get_element_id_value(r.Id))
             return matching_rooms[0]
         
         return None
@@ -1788,7 +1799,7 @@ def get_containing_area(element, doc, areas_by_level=None):
                 for area in level_areas:
                     areas_checked += 1
                     # Skip areas that failed solid creation during precomputation
-                    area_id = area.Id.IntegerValue
+                    area_id = get_element_id_value(area.Id)
                     if area_id in _geometry_cache:
                         cached = _geometry_cache[area_id]
                         if cached.get("failed", False):
@@ -1808,7 +1819,7 @@ def get_containing_area(element, doc, areas_by_level=None):
                     for area in area_list:
                         areas_checked += 1
                         # Skip areas that failed solid creation during precomputation
-                        area_id = area.Id.IntegerValue
+                        area_id = get_element_id_value(area.Id)
                         if area_id in _geometry_cache:
                             cached = _geometry_cache[area_id]
                             if cached.get("failed", False):
@@ -1852,7 +1863,7 @@ def build_source_element_spatial_index(source_elements, doc, cell_size_feet=50.0
     # Sort elements by specified property (elements should already be sorted, but ensure consistency)
     # If sort_property is ElementId, use simple integer value sort
     if sort_property == "ElementId":
-        sorted_elements = sorted(source_elements, key=lambda el: el.Id.IntegerValue, reverse=sort_descending)
+        sorted_elements = sorted(source_elements, key=lambda el: get_element_id_value(el.Id), reverse=sort_descending)
     else:
         # Import sort function from core
         try:
@@ -1860,10 +1871,10 @@ def build_source_element_spatial_index(source_elements, doc, cell_size_feet=50.0
             sorted_elements = sort_source_elements(source_elements, sort_property, descending=sort_descending)
         except ImportError:
             # Fallback to ElementId sorting if import fails
-            sorted_elements = sorted(source_elements, key=lambda el: el.Id.IntegerValue, reverse=sort_descending)
+            sorted_elements = sorted(source_elements, key=lambda el: get_element_id_value(el.Id), reverse=sort_descending)
     
     for element in sorted_elements:
-        element_id = element.Id.IntegerValue
+        element_id = get_element_id_value(element.Id)
         
         # Get cached bounding box
         bbox = None
@@ -1967,7 +1978,7 @@ def get_containing_element_indexed(target_el, doc, element_index, cell_size_feet
         seen_ids = set()
         candidates_dict = {}
         for source_el in all_candidates:
-            el_id = source_el.Id.IntegerValue
+            el_id = get_element_id_value(source_el.Id)
             if el_id not in seen_ids:
                 seen_ids.add(el_id)
                 candidates_dict[el_id] = source_el
@@ -1975,7 +1986,7 @@ def get_containing_element_indexed(target_el, doc, element_index, cell_size_feet
         # Convert to list and sort by sort_property to preserve user's configured sort order
         candidates = list(candidates_dict.values())
         if sort_property == "ElementId":
-            candidates.sort(key=lambda el: el.Id.IntegerValue, reverse=sort_descending)
+            candidates.sort(key=lambda el: get_element_id_value(el.Id), reverse=sort_descending)
         else:
             # Use sort_source_elements function to maintain consistency with spatial index sorting
             try:
@@ -1983,7 +1994,7 @@ def get_containing_element_indexed(target_el, doc, element_index, cell_size_feet
                 candidates = sort_source_elements(candidates, sort_property, descending=sort_descending)
             except ImportError:
                 # Fallback to ElementId sorting if import fails
-                candidates.sort(key=lambda el: el.Id.IntegerValue, reverse=sort_descending)
+                candidates.sort(key=lambda el: get_element_id_value(el.Id), reverse=sort_descending)
         
         # Check candidates in user's configured sort order (preserved from spatial index)
         # Elements are already sorted in the index, and deduplication preserves sort order
@@ -1992,7 +2003,7 @@ def get_containing_element_indexed(target_el, doc, element_index, cell_size_feet
             for point in test_points:
                 # Fast bounding box rejection
                 try:
-                    element_id = source_el.Id.IntegerValue
+                    element_id = get_element_id_value(source_el.Id)
                     if element_id in _geometry_cache:
                         cached = _geometry_cache[element_id]
                         bbox = cached.get("bbox")
@@ -2054,7 +2065,7 @@ def get_containing_element(element, doc, source_categories):
                     .ToElements()
                 
                 for el in category_elements:
-                    el_id = el.Id.IntegerValue
+                    el_id = get_element_id_value(el.Id)
                     if el_id not in element_ids:
                         element_ids.add(el_id)
                         candidate_elements.append(el)
@@ -2066,7 +2077,7 @@ def get_containing_element(element, doc, source_categories):
                 .ToElements()
         
         # Sort candidates by ElementId for deterministic selection (lowest wins)
-        candidate_elements = sorted(candidate_elements, key=lambda el: el.Id.IntegerValue)
+        candidate_elements = sorted(candidate_elements, key=lambda el: get_element_id_value(el.Id))
         
         # Now check geometry only on pre-filtered candidates (much fewer elements)
         for source_el in candidate_elements:
@@ -2145,7 +2156,7 @@ def precompute_geometries(elements, doc):
     area_fail_count = 0
     
     for element in elements:
-        element_id = element.Id.IntegerValue
+        element_id = get_element_id_value(element.Id)
         
         # Skip if already cached
         if element_id in _geometry_cache:

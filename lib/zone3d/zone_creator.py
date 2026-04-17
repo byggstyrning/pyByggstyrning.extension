@@ -9,6 +9,14 @@ from Autodesk.Revit.DB import (
 )
 from pyrevit import script, forms, revit
 from zone3d import family_creation as fc_module
+try:
+    from revit.compat import get_element_id_value
+except ImportError:
+    def get_element_id_value(item):
+        try:
+            return item.Value
+        except AttributeError:
+            return item.IntegerValue
 
 logger = script.get_logger()
 
@@ -286,7 +294,7 @@ def create_zones_from_spatial_elements(
         
         for elem_idx, spatial_element in enumerate(selected_elements):
             try:
-                element_id = spatial_element.Id.IntegerValue
+                element_id = get_element_id_value(spatial_element.Id)
                 
                 # Get element info using adapter
                 element_number_str = adapter.get_number(spatial_element)

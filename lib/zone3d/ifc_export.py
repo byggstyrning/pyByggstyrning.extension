@@ -15,6 +15,14 @@ in FileExporting and reused in FileExported for direct parameter writes.
 
 from pyrevit import script, revit
 try:
+    from revit.compat import get_element_id_value
+except ImportError:
+    def get_element_id_value(item):
+        try:
+            return item.Value
+        except AttributeError:
+            return item.IntegerValue
+try:
     from zone3d import config, core
 except ImportError:
     # Handle relative imports
@@ -290,7 +298,7 @@ def file_exporting_handler(sender, args):
                 except: pass
 
             if view_id:
-                logger.debug("IFC export from view: {}".format(view_id.IntegerValue))
+                logger.debug("IFC export from view: {}".format(get_element_id_value(view_id)))
             else:
                 logger.debug("No ViewId found in export event - processing all elements (not filtered by view)")
         except Exception as e:

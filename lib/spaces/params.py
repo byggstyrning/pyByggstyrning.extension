@@ -18,6 +18,15 @@ from Autodesk.Revit.DB.Mechanical import Space
 
 from pyrevit import script
 
+try:
+    from revit.compat import get_element_id_value
+except ImportError:
+    def get_element_id_value(item):
+        try:
+            return item.Value
+        except AttributeError:
+            return item.IntegerValue
+
 logger = script.get_logger()
 
 
@@ -116,7 +125,7 @@ def capture_space_parameters(spaces):
     Returns:
         tuple: (param_cache, unlinked_space_ids)
             param_cache: dict mapping room UniqueId (str) -> {param_name: (StorageType, value)}
-            unlinked_space_ids: set of int (space Id.IntegerValue) for spaces with no Space.Room
+            unlinked_space_ids: set of int (space Id value) for spaces with no Space.Room
     """
     param_cache = {}
     unlinked_space_ids = set()
@@ -131,13 +140,13 @@ def capture_space_parameters(spaces):
             linked_room = None
 
         if linked_room is None:
-            unlinked_space_ids.add(space.Id.IntegerValue)
+            unlinked_space_ids.add(get_element_id_value(space.Id))
             continue
 
         try:
             room_uid = linked_room.UniqueId
         except Exception:
-            unlinked_space_ids.add(space.Id.IntegerValue)
+            unlinked_space_ids.add(get_element_id_value(space.Id))
             continue
 
         snapshot = {}

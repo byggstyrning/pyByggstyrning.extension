@@ -8,6 +8,15 @@ from Autodesk.Revit.DB import (
 )
 from pyrevit import script
 
+try:
+    from revit.compat import get_element_id_value
+except ImportError:
+    def get_element_id_value(item):
+        try:
+            return item.Value
+        except AttributeError:
+            return item.IntegerValue
+
 logger = script.get_logger()
 
 
@@ -344,7 +353,7 @@ class AreaAdapter(SpatialElementAdapter):
                 generic_instances = zone_instances_cache
             
             # Check if any instance matches this area by family name pattern
-            area_id_str = str(element.Id.IntegerValue)
+            area_id_str = str(get_element_id_value(element.Id))
             expected_family_name_pattern = "3DZone_Area-{}_".format(area_number_str.replace(" ", "-"))
             
             for instance in generic_instances:
@@ -635,7 +644,7 @@ class RoomAdapter(SpatialElementAdapter):
     
     def get_existing_instance(self, element, doc, zone_instances_cache=None):
         """Get existing 3D Zone instance for room if it exists."""
-        room_id_str = str(element.Id.IntegerValue)
+        room_id_str = str(get_element_id_value(element.Id))
         
         # Iterate through pre-filtered 3DZone instances only
         if zone_instances_cache is None:
@@ -922,7 +931,7 @@ class RegionAdapter(SpatialElementAdapter):
     
     def get_number(self, element):
         """Get region element ID as string."""
-        return str(element.Id.IntegerValue)
+        return str(get_element_id_value(element.Id))
     
     def get_name(self, element):
         """Get region type name or 'Unnamed Region'."""
@@ -1062,7 +1071,7 @@ class RegionAdapter(SpatialElementAdapter):
     def get_existing_instance(self, element, doc, zone_instances_cache=None):
         """Get existing 3D Zone instance for region if it exists."""
         try:
-            region_id_str = str(element.Id.IntegerValue)
+            region_id_str = str(get_element_id_value(element.Id))
             
             # Find all Generic Model instances if cache not provided
             if zone_instances_cache is None:

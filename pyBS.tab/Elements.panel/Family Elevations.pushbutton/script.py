@@ -48,6 +48,8 @@ lib_path = op.join(extension_dir, 'lib')
 if lib_path not in sys.path:
     sys.path.insert(0, lib_path)
 
+from revit.compat import get_element_id_value
+
 # Get logger
 logger = script.get_logger()
 
@@ -637,10 +639,10 @@ class FamilyElevationsWindow(forms.WPFWindow):
         """Create a section view for a family instance using ViewSection.CreateSection."""
 
         mark_param = instance.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)
-        mark = mark_param.AsString() if mark_param and mark_param.HasValue else str(instance.Id.IntegerValue)
+        mark = mark_param.AsString() if mark_param and mark_param.HasValue else str(get_element_id_value(instance.Id))
 
         if DEBUG_MODE:
-            logger.debug("Creating section for instance: {} (Id={})".format(mark, instance.Id.IntegerValue))
+            logger.debug("Creating section for instance: {} (Id={})".format(mark, get_element_id_value(instance.Id)))
 
         inst_loc = _get_family_instance_location_point(instance)
         if inst_loc is None:

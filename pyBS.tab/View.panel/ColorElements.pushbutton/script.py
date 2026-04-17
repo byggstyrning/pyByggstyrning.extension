@@ -58,6 +58,7 @@ from pyrevit.framework import List
 from pyrevit.script import get_logger
 import wpf
 from revit import revit_utils
+from revit.compat import is_param_yesno, make_element_id
 
 # Get logger
 logger = get_logger()
@@ -324,7 +325,7 @@ class ApplyColorsHandler(UI.IExternalEventHandler):
                             if self.ui.overrideProjectionCheckbox.IsChecked:
                                 ogs.SetProjectionLineColor(color)
                                 ogs.SetCutLineColor(color)
-                                ogs.SetProjectionLinePatternId(DB.ElementId(-1))
+                                ogs.SetProjectionLinePatternId(make_element_id(-1))
                             
                             # Always set surface pattern color
                             ogs.SetSurfaceForegroundPatternColor(color)
@@ -2608,18 +2609,10 @@ class RevitColorizerWindow(WPFWindow):
             else:
                 return "None"
         elif para.StorageType == DB.StorageType.Integer:
-            if self.version > 2021:
-                param_type = para.Definition.GetDataType()
-                if DB.SpecTypeId.Boolean.YesNo == param_type:
-                    return "True" if para.AsInteger() == 1 else "False"
-                else:
-                    return para.AsValueString()
-            else:
-                param_type = para.Definition.ParameterType
-                if DB.ParameterType.YesNo == param_type:
-                    return "True" if para.AsInteger() == 1 else "False"
-                else:
-                    return para.AsValueString()
+            # Version-safe YesNo check via compat helper.
+            if is_param_yesno(para.Definition):
+                return "True" if para.AsInteger() == 1 else "False"
+            return para.AsValueString()
         elif para.StorageType == DB.StorageType.String:
             return para.AsString() or "None"
         else:

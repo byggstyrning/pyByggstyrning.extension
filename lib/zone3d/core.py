@@ -21,6 +21,7 @@ try:
     if lib_dir not in sys.path:
         sys.path.insert(0, lib_dir)
     from revit.revit_utils import is_element_editable
+    from revit.compat import get_element_id_value, make_element_id
 except ImportError:
     # Handle relative imports
     import containment
@@ -38,6 +39,23 @@ except ImportError:
         # Fallback if import fails
         def is_element_editable(doc, element):
             return True, "Editable"
+    try:
+        from revit.compat import get_element_id_value, make_element_id
+    except ImportError:
+        def get_element_id_value(item):
+            try:
+                return item.Value
+            except AttributeError:
+                return item.IntegerValue
+
+        def make_element_id(value):
+            if isinstance(value, ElementId):
+                return value
+            try:
+                from System import Int64 as _Int64
+                return ElementId(_Int64(value))
+            except Exception:
+                return ElementId(value)
 
 # Initialize logger
 logger = script.get_logger()
@@ -104,7 +122,7 @@ def copy_parameter_value(source_param, target_param, return_value=False):
                         return (False, value) if return_value else False  # Value unchanged, skip write
                 target_param.Set(value)
                 # Convert ElementId to integer for caching
-                value = value.IntegerValue if value else None
+                value = get_element_id_value(value) if value else None
         else:
             return (False, None) if return_value else False
         
@@ -219,7 +237,7 @@ def sort_source_elements(source_elements, sort_property="ElementId", descending=
     
     # If sorting by ElementId, use simple integer value sort
     if sort_property == "ElementId":
-        return sorted(source_elements, key=lambda el: el.Id.IntegerValue, reverse=descending)
+        return sorted(source_elements, key=lambda el: get_element_id_value(el.Id), reverse=descending)
     
     def get_sort_value(element):
         """Get sort value from element property.
@@ -230,16 +248,18 @@ def sort_source_elements(source_elements, sort_property="ElementId", descending=
         - element_id: ElementId as tiebreaker
         """
         try:
+            element_id_val = get_element_id_value(element.Id)
+
             # Try to get parameter
             param = element.LookupParameter(sort_property)
             if not param:
                 # Parameter not found - empty value, comes first
-                return (0, None, element.Id.IntegerValue)
+                return (0, None, element_id_val)
             
             # Check if parameter has value
             if not param.HasValue:
                 # No value - empty value, comes first
-                return (0, None, element.Id.IntegerValue)
+                return (0, None, element_id_val)
             
             # Get value based on storage type
             storage_type = param.StorageType
@@ -247,32 +267,35 @@ def sort_source_elements(source_elements, sort_property="ElementId", descending=
                 value = param.AsString()
                 if not value or not value.strip():
                     # Empty string - empty value, comes first
-                    return (0, None, element.Id.IntegerValue)
+                    return (0, None, element_id_val)
                 # Has value - return (1, value, element_id) for sorting
-                return (1, value, element.Id.IntegerValue)
+                return (1, value, element_id_val)
             elif storage_type == StorageType.Integer:
                 value = param.AsInteger()
                 # Has value - return (1, value, element_id) for sorting
-                return (1, value, element.Id.IntegerValue)
+                return (1, value, element_id_val)
             elif storage_type == StorageType.Double:
                 value = param.AsDouble()
                 # Has value - return (1, value, element_id) for sorting
-                return (1, value, element.Id.IntegerValue)
+                return (1, value, element_id_val)
             elif storage_type == StorageType.ElementId:
                 elem_id = param.AsElementId()
                 if elem_id and elem_id != ElementId.InvalidElementId:
                     # Has value - return (1, elem_id, element_id) for sorting
-                    return (1, elem_id.IntegerValue, element.Id.IntegerValue)
+                    return (1, get_element_id_value(elem_id), element_id_val)
                 else:
                     # Invalid ElementId - empty value, comes first
-                    return (0, None, element.Id.IntegerValue)
+                    return (0, None, element_id_val)
             else:
                 # Unknown storage type - empty value, comes first
-                return (0, None, element.Id.IntegerValue)
+                return (0, None, element_id_val)
         except Exception as e:
             logger.debug("Error getting sort value for property '{}': {}".format(sort_property, str(e)))
             # Error occurred - empty value, comes first
-            return (0, None, element.Id.IntegerValue)
+            try:
+                return (0, None, get_element_id_value(element.Id))
+            except Exception:
+                return (0, None, 0)
     
     # Sort elements using the sort value function
     # Elements with empty values (has_value=0) come first, then sorted by value
@@ -289,7 +312,7 @@ def sort_source_elements(source_elements, sort_property="ElementId", descending=
                 non_empty_elements.append(element)
         
         # Sort empty elements by element_id (deterministic)
-        empty_elements.sort(key=lambda el: el.Id.IntegerValue)
+        empty_elements.sort(key=lambda el: get_element_id_value(el.Id))
         
         # Sort non-empty elements by sort_value
         # For descending, we need to handle different types differently
@@ -319,7 +342,7 @@ def sort_source_elements(source_elements, sort_property="ElementId", descending=
     except Exception as e:
         logger.warning("Error sorting source elements by property '{}': {}".format(sort_property, str(e)))
         # Fallback to ElementId sorting
-        return sorted(source_elements, key=lambda el: el.Id.IntegerValue, reverse=descending)
+        return sorted(source_elements, key=lambda el: get_element_id_value(el.Id), reverse=descending)
 
 def is_3dzone_family(element):
     """Check if an element is a 3DZone family (Generic Model with family name containing "3DZone").
@@ -435,10 +458,10 @@ def _get_element_type_cached(doc, type_id):
     Returns:
         ElementType or None
     """
-    if not type_id or type_id.IntegerValue < 0:
+    if not type_id or get_element_id_value(type_id) < 0:
         return None
     
-    cache_key = type_id.IntegerValue
+    cache_key = get_element_id_value(type_id)
     if cache_key not in _element_type_cache:
         _element_type_cache[cache_key] = doc.GetElement(type_id)
     return _element_type_cache[cache_key]
@@ -696,8 +719,9 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
                                 if symbol and hasattr(symbol, "FamilyName"):
                                     family_name = symbol.FamilyName
                                     if family_name and "3DZone" in family_name:
-                                        if el.Id.IntegerValue not in element_ids:
-                                            element_ids.add(el.Id.IntegerValue)
+                                        el_id_val = get_element_id_value(el.Id)
+                                        if el_id_val not in element_ids:
+                                            element_ids.add(el_id_val)
                                             source_elements.append(el)
                                             filtered_count += 1
                         except:
@@ -716,8 +740,9 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
                             .OfCategory(category)\
                             .ToElements()
                     for el in category_elements:
-                        if el.Id.IntegerValue not in element_ids:
-                            element_ids.add(el.Id.IntegerValue)
+                        el_id_val = get_element_id_value(el.Id)
+                        if el_id_val not in element_ids:
+                            element_ids.add(el_id_val)
                             source_elements.append(el)
         else:
             # If view_id is provided and not using linked doc, filter by view visibility
@@ -818,8 +843,9 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
                         .OfCategory(category)\
                         .ToElements()
                 for el in category_elements:
-                    if el.Id.IntegerValue not in element_ids:
-                        element_ids.add(el.Id.IntegerValue)
+                    el_id_val = get_element_id_value(el.Id)
+                    if el_id_val not in element_ids:
+                        element_ids.add(el_id_val)
                         target_elements.append(el)
         else:
             # If view_id is provided, filter by view visibility
@@ -886,7 +912,7 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
             if has_target_parameter(target_el, target_param_names):
                 filtered_target_elements.append(target_el)
             else:
-                elements_without_target_params.append(target_el.Id.IntegerValue)
+                elements_without_target_params.append(get_element_id_value(target_el.Id))
         
         filter_time = time.time() - filter_start_time
         logger.debug("[DEBUG] Pre-filtering complete in {:.2f}s: {} elements have target parameters, {} elements filtered out".format(
@@ -1004,7 +1030,7 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
                 
                 # Log first element to confirm loop is running
                 if idx == 0:
-                    logger.debug("[PROGRESS] Processing first element (ID: {})...".format(target_el.Id.IntegerValue))
+                    logger.debug("[PROGRESS] Processing first element (ID: {})...".format(get_element_id_value(target_el.Id)))
                 
                 # Update progress bar every 5%
                 if progress_bar and total_elements > 0:
@@ -1107,7 +1133,7 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
                 if cache_dict is not None and isinstance(copy_result, dict):
                     written_vals = copy_result.get("written_values", {})
                     if written_vals:
-                        element_id = target_el.Id.IntegerValue
+                        element_id = get_element_id_value(target_el.Id)
                         if element_id not in cache_dict:
                             cache_dict[element_id] = {}
                         cache_dict[element_id].update(written_vals)
@@ -1126,7 +1152,7 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
                 if params_copied > 0:
                     elements_updated += 1
                     total_params_copied += params_copied
-                    updated_element_ids.append(target_el.Id.IntegerValue)  # Track updated element ID
+                    updated_element_ids.append(get_element_id_value(target_el.Id))  # Track updated element ID
 
                 elif params_already_correct > 0:
                     # Element already has correct values - count separately
@@ -1137,7 +1163,10 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
                     params_copy_failed_count += 1
 
             except Exception as e:
-                element_id_val = target_el.Id.IntegerValue if hasattr(target_el.Id, 'IntegerValue') else str(target_el.Id)
+                try:
+                    element_id_val = get_element_id_value(target_el.Id)
+                except Exception:
+                    element_id_val = str(target_el.Id)
                 error_msg = "Error processing element {}: {}".format(element_id_val, str(e))
                 logger.error(error_msg)
                 results["errors"].append(error_msg)
@@ -1254,7 +1283,7 @@ def write_cached_parameters(doc, cache_dict, target_param_names, only_empty=Fals
                             continue
                         param.Set(float(cached_value))
                     elif param.StorageType == StorageType.ElementId:
-                        cached_eid = ElementId(int(cached_value)) if cached_value else ElementId.InvalidElementId
+                        cached_eid = make_element_id(int(cached_value)) if cached_value else ElementId.InvalidElementId
                         if param.HasValue and param.AsElementId() == cached_eid:
                             params_already_correct += 1
                             continue

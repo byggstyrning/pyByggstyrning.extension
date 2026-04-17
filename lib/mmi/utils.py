@@ -5,15 +5,24 @@ import re
 from Autodesk.Revit.DB import FilteredElementCollector, ParameterElement, BuiltInParameter
 from Autodesk.Revit.DB import ElementId, StorageType, LocationPoint, LocationCurve
 
-# Try to import ParameterType, which might not be available in all Revit API versions
-try:
-    from Autodesk.Revit.DB import ParameterType
-    HAS_PARAMETER_TYPE = True
-except ImportError:
-    # Fallback for older Revit versions where ParameterType might be defined differently
-    HAS_PARAMETER_TYPE = False
-
 from pyrevit import revit, script
+
+try:
+    from revit.compat import get_element_id_value, is_param_text
+except ImportError:
+    from Autodesk.Revit.DB import StorageType as _StorageType
+
+    def get_element_id_value(item):
+        try:
+            return item.Value
+        except AttributeError:
+            return item.IntegerValue
+
+    def is_param_text(definition):
+        try:
+            return definition.StorageType == _StorageType.String
+        except Exception:
+            return False
 
 # Initialize logger
 logger = script.get_logger()
@@ -40,15 +49,10 @@ def find_mmi_parameters(doc):
             
             # Check if parameter name contains 'MMI'
             if 'MMI' in param_name:
-                # Check storage type (we want string parameters)
-                if HAS_PARAMETER_TYPE:
-                    # Use ParameterType if available
-                    if definition.ParameterType == ParameterType.Text:
-                        mmi_params.append(param_name)
-                else:
-                    # Fallback: Check if it's a string parameter by storage type
-                    if definition.StorageType == StorageType.String:
-                        mmi_params.append(param_name)
+                # Version-safe text classification via compat helper.
+                # Falls back to StorageType check on all Revit versions.
+                if is_param_text(definition):
+                    mmi_params.append(param_name)
         except Exception as e:
             logger.debug("Error checking parameter: {}".format(str(e)))
     
@@ -230,14 +234,14 @@ def get_mmi_statistics(doc, param_name=None):
                     else:
                         # No numeric value found
                         stats["invalid_values"].append({
-                            "element_id": element.Id.IntegerValue,
+                            "element_id": get_element_id_value(element.Id),
                             "value": value_str,
                             "reason": "No numeric value found"
                         })
                 except Exception as ex:
                     # Error extracting numeric value
                     stats["invalid_values"].append({
-                        "element_id": element.Id.IntegerValue,
+                        "element_id": get_element_id_value(element.Id),
                         "value": value_str,
                         "reason": str(ex)
                     })

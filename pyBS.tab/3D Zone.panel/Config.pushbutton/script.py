@@ -60,6 +60,11 @@ except ImportError as e:
     forms.alert("Failed to import required libraries. Check logs for details.")
     script.exit()
 
+from revit.compat import (
+    get_element_id_value,
+    is_param_acceptable_for_mapping,
+)
+
 # Import WPF components
 from System import EventHandler, Action
 from System.Collections.ObjectModel import ObservableCollection
@@ -590,7 +595,7 @@ def get_all_model_categories(doc):
             if category.CategoryType == CategoryType.Model and category.AllowsBoundParameters:
                 try:
                     # Get BuiltInCategory from category ID
-                    cat_id = category.Id.IntegerValue
+                    cat_id = get_element_id_value(category.Id)
                     # Built-in categories have negative IDs
                     if cat_id < 0:
                         builtin_cat = BuiltInCategory(cat_id)
@@ -646,23 +651,14 @@ def get_all_writable_instance_parameters(doc):
             if isinstance(binding, InstanceBinding):
                 param_name = definition.Name
                 try:
-                    if definition.ParameterType in [
-                        ParameterType.Text,
-                        ParameterType.Number,
-                        ParameterType.Integer,
-                        ParameterType.YesNo
-                    ]:
+                    # StorageType in {String, Double, Integer} matches the legacy
+                    # ParameterType in {Text, Number, Integer, YesNo} intent and
+                    # works on every Revit version (Definition.ParameterType was
+                    # removed in 2026).
+                    if is_param_acceptable_for_mapping(definition):
                         params.add(param_name)
                 except:
-                    try:
-                        if definition.StorageType in [
-                            StorageType.String,
-                            StorageType.Double,
-                            StorageType.Integer
-                        ]:
-                            params.add(param_name)
-                    except:
-                        pass
+                    pass
     except Exception as e:
         logger.warning("Error reading ParameterBindings: {}".format(str(e)))
     
@@ -677,7 +673,7 @@ def get_all_writable_instance_parameters(doc):
                 if not element or not element.Category:
                     continue
                 
-                cat_id = element.Category.Id.IntegerValue
+                cat_id = get_element_id_value(element.Category.Id)
                 
                 if cat_id in processed_categories:
                     continue

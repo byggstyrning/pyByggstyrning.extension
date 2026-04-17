@@ -59,6 +59,7 @@ from mmi.config import CONFIG_SECTION, CONFIG_KEY_ACTIVE, MMI_THRESHOLD
 from mmi.config import is_monitor_active, set_monitor_active
 from mmi.core import get_mmi_parameter_name, load_monitor_config
 from mmi.utils import get_element_location, get_element_mmi_value, validate_mmi_value
+from revit.compat import get_element_id_value
 
 # Import MMI Schema
 try:
@@ -219,7 +220,7 @@ element_mmi_cache = {}  # Cache to store element MMI values to detect changes
 def update_element_location_cache(element_id, location):
     """Update the element location cache."""
     global element_location_cache
-    element_location_cache[element_id.IntegerValue] = {
+    element_location_cache[get_element_id_value(element_id)] = {
         "location": location,
         "timestamp": datetime.datetime.now()
     }
@@ -294,7 +295,7 @@ def populate_initial_mmi_cache(doc):
             
             # Cache all MMI values (both high and low)
             if mmi_value is not None:
-                element_mmi_cache[element.Id.IntegerValue] = mmi_value
+                element_mmi_cache[get_element_id_value(element.Id)] = mmi_value
                 cache_count += 1
         
         logger.debug("Cached MMI values for {} elements".format(cache_count))
@@ -434,8 +435,9 @@ def document_changed_handler(sender, args):
                     current_location = get_element_location(element)
                     if current_location:
                         # Check if we have a previous location
-                        if element_id.IntegerValue in element_location_cache:
-                            prev_location = element_location_cache[element_id.IntegerValue]["location"]
+                        cache_key = get_element_id_value(element_id)
+                        if cache_key in element_location_cache:
+                            prev_location = element_location_cache[cache_key]["location"]
                             # Calculate distance moved
                             distance = current_location.DistanceTo(prev_location)
                             # If moved more than a small threshold (0.1 meters)
@@ -454,7 +456,7 @@ def document_changed_handler(sender, args):
                 # ===== STEP 3: PIN ELEMENTS (only when MMI changes) =====
                 if pin_elements_enabled and mmi_value >= MMI_THRESHOLD:
                     # Check if MMI value changed to/above threshold
-                    element_id_int = element_id.IntegerValue
+                    element_id_int = get_element_id_value(element_id)
                     prev_mmi = element_mmi_cache.get(element_id_int)
                     
                     # Pin if: 
@@ -481,7 +483,7 @@ def document_changed_handler(sender, args):
                     element_mmi_cache[element_id_int] = mmi_value
                 elif mmi_value is not None:
                     # Update cache for low MMI elements too (to detect future changes)
-                    element_mmi_cache[element_id.IntegerValue] = mmi_value
+                    element_mmi_cache[get_element_id_value(element_id)] = mmi_value
         
         # Process validation if needed
         if elements_to_validate and validation_corrections and mmi_event_handler and external_event:
@@ -499,7 +501,7 @@ def document_changed_handler(sender, args):
             details = []
             for item in top_elements:
                 details.append("Element ID: {} (MMI: {}, Distance: {:.2f}m)".format(
-                    item["id"].IntegerValue, item["mmi"], item["distance"]))
+                    get_element_id_value(item["id"]), item["mmi"], item["distance"]))
             
             tooltip = "High MMI elements should be carefully managed:\n" + "\n".join(details)
             if count > 5:

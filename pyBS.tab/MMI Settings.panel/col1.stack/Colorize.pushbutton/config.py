@@ -52,6 +52,7 @@ logger = script.get_logger()
 
 # Import MMI libraries
 from mmi.core import get_mmi_parameter_name
+from revit.compat import get_element_id_value, create_equals_rule, make_element_id
 
 # Official MMI Color codes from https://mmi-veilederen.no/?page_id=85
 # Each filter matches exact MMI values (e.g., "000", "100", "125", etc.)
@@ -121,10 +122,10 @@ def get_categories_with_parameter(doc, mmi_param_id, mmi_param_name):
                 # Found the parameter binding - get its categories
 # Exclude certain categories that shouldn't be in filters
                 excluded_category_ids = {
-                    ElementId(-2000700),  # Materials
-                    ElementId(-2003200),  # Areas
-                    ElementId(-2000160),  # Rooms
-                    ElementId(-2008107),  # HVAC Zones
+                    make_element_id(-2000700),  # Materials
+                    make_element_id(-2003200),  # Areas
+                    make_element_id(-2000160),  # Rooms
+                    make_element_id(-2008107),  # HVAC Zones
                 }
                 
                 categories = binding.Categories
@@ -142,10 +143,10 @@ if valid_categories.Count > 0:
             if param_def.Name == mmi_param_name:
 # Exclude certain categories that shouldn't be in filters
                 excluded_category_ids = {
-                    ElementId(-2000700),  # Materials
-                    ElementId(-2003200),  # Areas
-                    ElementId(-2000160),  # Rooms
-                    ElementId(-2008107),  # HVAC Zones
+                    make_element_id(-2000700),  # Materials
+                    make_element_id(-2003200),  # Areas
+                    make_element_id(-2000160),  # Rooms
+                    make_element_id(-2008107),  # HVAC Zones
                 }
                 
                 categories = binding.Categories
@@ -155,8 +156,10 @@ if valid_categories.Count > 0:
                         if cat.Id in excluded_category_ids:
                             continue
                         
-                        # Avoid duplicates
-                        if cat.Id not in [c.IntegerValue for c in valid_categories]:
+                        # Avoid duplicates: compare by integer id to match
+                        # the ElementId values already in valid_categories.
+                        cat_id_int = get_element_id_value(cat.Id)
+                        if cat_id_int not in [get_element_id_value(c) for c in valid_categories]:
                             valid_categories.Add(cat.Id)
 if valid_categories.Count > 0:
                     return valid_categories
@@ -209,7 +212,7 @@ if valid_categories.Count > 0:
             
             if param_found:
                 # Element has the parameter - add its category
-                cat_id = elem.Category.Id.IntegerValue
+                cat_id = get_element_id_value(elem.Category.Id)
                 category_ids_found.add(cat_id)
         except Exception as ex:
 pass
@@ -278,22 +281,10 @@ def create_mmi_filter(doc, filter_range, mmi_param_id, categories):
         # ColorSplasher uses CreateEqualsRule for all parameter types, including built-in parameters
         # The key is getting the parameter ID from an element's Parameter object, not from bindings
         
-        # Get Revit version
-        version = int(HOST_APP.version)
-        if version > 2023:
-            # Revit 2024+ uses different signature (no case_sensitive parameter)
-            rule = ParameterFilterRuleFactory.CreateEqualsRule(
-                mmi_param_id,
-                mmi_value
-            )
-        else:
-            # Revit 2023 and earlier requires case_sensitive parameter
-            rule = ParameterFilterRuleFactory.CreateEqualsRule(
-                mmi_param_id,
-                mmi_value,
-                True  # Case sensitive
-            )
-        
+        # CreateEqualsRule dropped its caseSensitive parameter in Revit 2024.
+        # revit.compat.create_equals_rule hides the difference.
+        rule = create_equals_rule(mmi_param_id, mmi_value, case_sensitive=True)
+
         element_filter = ElementParameterFilter(rule)
         
 # Create the ParameterFilterElement

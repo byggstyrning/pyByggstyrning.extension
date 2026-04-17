@@ -8,6 +8,15 @@ from Autodesk.Revit.UI import UIDocument
 from pyrevit import script, forms, revit
 from System.Collections.Generic import List
 
+try:
+    from revit.compat import get_element_id_value
+except ImportError:
+    def get_element_id_value(item):
+        try:
+            return item.Value
+        except AttributeError:
+            return item.IntegerValue
+
 # Initialize logger
 logger = script.get_logger()
 
@@ -92,7 +101,7 @@ def track_modified_elements_before_sync(doc):
                         
                     # Store current MMI state
                     mmi_value, value_str, param = get_element_mmi_value(element, mmi_param_name, doc)
-                    _user_modified_elements[element_id.IntegerValue] = {
+                    _user_modified_elements[get_element_id_value(element_id)] = {
                         "element_id": element_id,
                         "mmi_value": mmi_value,
                         "mmi_string": value_str,
@@ -366,7 +375,7 @@ def process_post_sync_check(doc):
             tooltip_lines.append("Missing MMI:")
             for item in results["elements_missing_mmi"][:3]:  # Show first 3
                 tooltip_lines.append("  • {} (ID: {})".format(
-                    item["category"], item["element_id"].IntegerValue))
+                    item["category"], get_element_id_value(item["element_id"])))
             if missing_count > 3:
                 tooltip_lines.append("  • ... and {} more".format(missing_count - 3))
                 

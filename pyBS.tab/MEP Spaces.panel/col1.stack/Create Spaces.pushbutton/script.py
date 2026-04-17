@@ -68,6 +68,8 @@ lib_path = op.join(extension_dir, 'lib')
 if lib_path not in sys.path:
     sys.path.insert(0, lib_path)
 
+from revit.compat import get_element_id_value
+
 # Initialize logger
 logger = script.get_logger()
 
@@ -241,7 +243,7 @@ def delete_existing_spaces(doc, exclude_ids=None):
     
     Args:
         doc: Revit document
-        exclude_ids: Optional set of int (ElementId.IntegerValue) for spaces to skip
+        exclude_ids: Optional set of int ElementId values for spaces to skip
         
     Returns:
         dict: Results with 'deleted', 'failed', 'pinned_skipped', 'preserved_unlinked'
@@ -261,7 +263,7 @@ def delete_existing_spaces(doc, exclude_ids=None):
         if space_elements:
             for space in space_elements:
                 try:
-                    sid = space.Id.IntegerValue
+                    sid = get_element_id_value(space.Id)
                     if sid in exclude:
                         result['preserved_unlinked'] += 1
                         continue

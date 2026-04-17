@@ -13,14 +13,6 @@ clr.AddReference('RevitAPI')
 clr.AddReference('RevitAPIUI')
 from Autodesk.Revit.DB import *
 
-# Revit version compatibility
-try:
-    from Autodesk.Revit.DB import UnitTypeId
-    USE_FORGE_UNITS = True
-except ImportError:
-    from Autodesk.Revit.DB import DisplayUnitType
-    USE_FORGE_UNITS = False
-
 from pyrevit import script, forms, revit
 
 # Add lib path
@@ -36,6 +28,11 @@ from revit.revit_utils import (
     is_element_editable,
     is_parameter_writable
 )
+from revit.compat import (
+    convert_from_internal_units,
+    get_element_id_value,
+    UnitTypeId,
+)
 
 logger = script.get_logger()
 WEIGHT_PARAM_DEFAULT = "Weight"
@@ -47,23 +44,25 @@ _material_density_cache = {}
 def convert_volume_to_cubic_meters(volume_internal):
     """Convert volume from Revit internal units to cubic meters."""
     try:
-        if USE_FORGE_UNITS:
-            return UnitUtils.ConvertFromInternalUnits(volume_internal, UnitTypeId.CubicMeters)
-        else:
-            return UnitUtils.ConvertFromInternalUnits(volume_internal, DisplayUnitType.DUT_CUBIC_METERS)
-    except:
-        return volume_internal * 0.0283168
+        if UnitTypeId is not None:
+            return convert_from_internal_units(volume_internal, UnitTypeId.CubicMeters)
+    except Exception:
+        pass
+    # Fallback factor (ft^3 -> m^3) for very old Revit where UnitTypeId is unavailable.
+    return volume_internal * 0.0283168
 
 
 def convert_density_to_kg_per_cubic_meter(density_internal):
-    """Convert density from Revit internal units to kg/m³."""
+    """Convert density from Revit internal units to kg/m3."""
     try:
-        if USE_FORGE_UNITS:
-            return UnitUtils.ConvertFromInternalUnits(density_internal, UnitTypeId.KilogramsPerCubicMeter)
-        else:
-            return UnitUtils.ConvertFromInternalUnits(density_internal, DisplayUnitType.DUT_KILOGRAMS_PER_CUBIC_METER)
-    except:
-        return density_internal * 16.0185
+        if UnitTypeId is not None:
+            return convert_from_internal_units(
+                density_internal, UnitTypeId.KilogramsPerCubicMeter
+            )
+    except Exception:
+        pass
+    # Fallback factor (lb/ft^3 -> kg/m^3).
+    return density_internal * 16.0185
 
 
 def get_elements_with_volume_in_view(doc, view):
@@ -94,7 +93,7 @@ def get_material_density(material):
         return None
     
     # Check cache first
-    material_id = material.Id.IntegerValue
+    material_id = get_element_id_value(material.Id)
     if material_id in _material_density_cache:
         return _material_density_cache[material_id]
     
@@ -194,11 +193,13 @@ def calculate_density_from_layers(element):
             density = get_material_density(material)
             if density and density > 0:
                 try:
-                    if USE_FORGE_UNITS:
-                        thickness_meters = UnitUtils.ConvertFromInternalUnits(layer_thickness, UnitTypeId.Meters)
+                    if UnitTypeId is not None:
+                        thickness_meters = convert_from_internal_units(
+                            layer_thickness, UnitTypeId.Meters
+                        )
                     else:
-                        thickness_meters = UnitUtils.ConvertFromInternalUnits(layer_thickness, DisplayUnitType.DUT_METERS)
-                except:
+                        thickness_meters = layer_thickness * 0.3048
+                except Exception:
                     thickness_meters = layer_thickness * 0.3048
                 
                 total_density_thickness += density * thickness_meters
