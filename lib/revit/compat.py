@@ -9,8 +9,11 @@ direct function call.
 Covered deprecations:
 
 * ``ElementId.IntegerValue`` -> ``ElementId.Value`` (Revit 2024, 64-bit ids).
-  ``IntegerValue`` still exists but raises ``OverflowException`` when the id
-  does not fit in Int32. Use :func:`get_element_id_value`.
+  On Revit 2024 and 2025 ``IntegerValue`` still exists but raises
+  ``OverflowException`` when the id does not fit in Int32. Revit 2026
+  removes ``IntegerValue`` from the ``ElementId`` surface entirely, so any
+  direct attribute access will ``AttributeError``. Always use
+  :func:`get_element_id_value`, which does attribute detection.
 
 * ``Definition.ParameterType`` / ``ParameterType`` enum (deprecated Revit 2022,
   ``Definition.ParameterType`` removed from the ``Definition`` class in Revit
@@ -73,18 +76,18 @@ else:
         return ElementId(value)
 
 
-if HAS_64BIT_ELEMENT_ID:
-    def get_element_id_value(element_id):
-        """Return the integer value of an :class:`ElementId`.
+def get_element_id_value(element_id):
+    """Return the integer value of an :class:`ElementId`.
 
-        Uses ``ElementId.Value`` on Revit 2024+ (Int64) and ``IntegerValue``
-        on earlier versions. Always prefer this helper over ``.IntegerValue``
-        which throws on Int64 overflow starting Revit 2024.
-        """
+    Uses ``ElementId.Value`` when available (Revit 2024+, Int64) and falls
+    back to ``IntegerValue`` on earlier versions. Attribute detection rather
+    than a version flag is used because Revit 2026 removed ``IntegerValue``
+    outright, so a mis-parsed ``HOST_APP.version`` on startup must not force
+    us into the legacy branch.
+    """
+    if hasattr(element_id, 'Value'):
         return element_id.Value
-else:
-    def get_element_id_value(element_id):
-        return element_id.IntegerValue
+    return element_id.IntegerValue
 
 
 def get_elementid_value_func():

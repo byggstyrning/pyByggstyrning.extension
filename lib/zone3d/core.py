@@ -43,10 +43,9 @@ except ImportError:
         from revit.compat import get_element_id_value, make_element_id
     except ImportError:
         def get_element_id_value(item):
-            try:
+            if hasattr(item, 'Value'):
                 return item.Value
-            except AttributeError:
-                return item.IntegerValue
+            return item.IntegerValue
 
         def make_element_id(value):
             if isinstance(value, ElementId):

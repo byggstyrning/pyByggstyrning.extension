@@ -13,10 +13,9 @@ except ImportError:
     from Autodesk.Revit.DB import StorageType as _StorageType
 
     def get_element_id_value(item):
-        try:
+        if hasattr(item, 'Value'):
             return item.Value
-        except AttributeError:
-            return item.IntegerValue
+        return item.IntegerValue
 
     def is_param_text(definition):
         try:

@@ -18,10 +18,9 @@ try:
     from revit.compat import get_element_id_value
 except ImportError:
     def get_element_id_value(item):
-        try:
+        if hasattr(item, 'Value'):
             return item.Value
-        except AttributeError:
-            return item.IntegerValue
+        return item.IntegerValue
 try:
     from zone3d import config, core
 except ImportError:

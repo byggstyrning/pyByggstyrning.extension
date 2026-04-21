@@ -16,10 +16,9 @@ try:
 except ImportError:
     # lib/ not on sys.path yet; provide shims so this module stays importable.
     def get_element_id_value(item):
-        try:
+        if hasattr(item, 'Value'):
             return item.Value
-        except AttributeError:
-            return item.IntegerValue
+        return item.IntegerValue
 
     def is_param_yesno(definition):
         return False

@@ -353,16 +353,27 @@ def create_spaces_from_linked_rooms(doc, linked_item, write_params=True,
         if progress_bar:
             progress_bar.update_progress(0, total_rooms)
         # Capture parameters from spaces linked to Rooms; preserve spaces without Space.Room
+        existing_spaces = [
+            s for s in FilteredElementCollector(doc).OfClass(SpatialElement).ToElements()
+            if isinstance(s, Space)
+        ]
         try:
-            existing_spaces = [
-                s for s in FilteredElementCollector(doc).OfClass(SpatialElement).ToElements()
-                if isinstance(s, Space)
-            ]
             param_cache, unlinked_exclude = capture_space_parameters(existing_spaces)
         except Exception as e:
             logger.error("Error capturing space parameters: {}".format(str(e)))
             param_cache = {}
+            # Preserve any space whose linked Room cannot be resolved so we
+            # never silently delete user data when capture fails mid-way.
             unlinked_exclude = set()
+            try:
+                for s in existing_spaces:
+                    try:
+                        if s.Room is None:
+                            unlinked_exclude.add(get_element_id_value(s.Id))
+                    except Exception:
+                        unlinked_exclude.add(get_element_id_value(s.Id))
+            except Exception:
+                pass
         t = Transaction(doc, "Delete Existing Spaces")
         start_transaction_with_warning_suppression(t)
         delete_results = delete_existing_spaces(doc, exclude_ids=unlinked_exclude)

@@ -22,10 +22,9 @@ except ImportError:
     # Fallback when lib/ is not yet on sys.path - should not happen in
     # pyRevit runtime but keeps import-time safety for tooling/linting.
     def get_element_id_value(item):
-        try:
+        if hasattr(item, 'Value'):
             return item.Value
-        except AttributeError:
-            return item.IntegerValue
+        return item.IntegerValue
 
 # Initialize logger
 logger = script.get_logger()
