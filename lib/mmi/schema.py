@@ -20,7 +20,7 @@ class MMIParameterSchema(BaseSchema):
     @simple_field(value_type="string")
     def schema_version():
         """Current schema version."""
-        return "1.1"
+        return "1.2"
     
     @simple_field(value_type="string")
     def mmi_parameter_name():
@@ -61,3 +61,8 @@ class MMIParameterSchema(BaseSchema):
     def check_mmi_after_sync():
         """Whether to check MMI on user-owned elements after sync."""
         return False
+
+    @simple_field(value_type="string")
+    def default_mmi():
+        """Default MMI string applied to new instances when monitor is on (empty = disabled)."""
+        return None

@@ -48,8 +48,15 @@ if lib_path not in sys.path:
 logger = script.get_logger()
 
 # Import from MMI library modules
-from mmi.config import CONFIG_KEYS
-from mmi.core import get_mmi_parameter_name, save_mmi_parameter, save_monitor_config, load_monitor_config
+from mmi.config import CONFIG_KEYS, STANDARD_MMI_VALUES
+from mmi.core import (
+    get_mmi_parameter_name,
+    save_mmi_parameter,
+    save_monitor_config,
+    load_monitor_config,
+    get_default_mmi,
+    save_default_mmi,
+)
 
 # Import revit utils
 from revit.revit_utils import get_available_parameters
@@ -73,6 +80,8 @@ class MMISettingsWindow(forms.WPFWindow):
             
             # Set up ComboBox
             self.parameterComboBox.DisplayMemberPath = "display_name"
+            
+            self._populate_default_mmi_combo()
             
             # Flag to prevent saving during initialization
             self._is_initializing = True
@@ -135,6 +144,16 @@ class MMISettingsWindow(forms.WPFWindow):
         except Exception as e:
             logger.error("Error loading parameters: {}".format(str(e)))
     
+    def _populate_default_mmi_combo(self):
+        """Fill Default on new instances combo: (None) plus standard MMI values."""
+        try:
+            self.defaultMmiComboBox.Items.Clear()
+            self.defaultMmiComboBox.Items.Add("(None)")
+            for v in STANDARD_MMI_VALUES:
+                self.defaultMmiComboBox.Items.Add(v)
+        except Exception as e:
+            logger.error("Error populating default MMI combo: {}".format(str(e)))
+    
     def load_config(self):
         """Load current MMI configuration and parameter name."""
         try:
@@ -156,6 +175,15 @@ class MMISettingsWindow(forms.WPFWindow):
             self.pinElementsCheckBox.IsChecked = current_config.get("pin_elements", False)
             self.warnOnMoveCheckBox.IsChecked = current_config.get("warn_on_move", False)
             self.checkAfterSyncCheckBox.IsChecked = current_config.get("check_mmi_after_sync", False)
+            
+            stored_default = get_default_mmi(revit.doc)
+            self.defaultMmiComboBox.SelectedIndex = 0
+            if stored_default:
+                for i in range(self.defaultMmiComboBox.Items.Count):
+                    item = self.defaultMmiComboBox.Items[i]
+                    if item == stored_default:
+                        self.defaultMmiComboBox.SelectedIndex = i
+                        break
             
         except Exception as e:
             logger.error("Error loading MMI configuration: {}".format(str(e)))
@@ -191,18 +219,31 @@ class MMISettingsWindow(forms.WPFWindow):
             }
             
             # Save the configuration
-            if save_monitor_config(revit.doc, config):
-                forms.show_balloon(
-                    header="MMI Settings Saved",
-                    text="MMI monitor configuration has been saved.",
-                    tooltip="MMI monitor configuration has been saved.",
-                    is_new=True
-                )
-                # Close window
-                self.Close()
-            else:
+            if not save_monitor_config(revit.doc, config):
                 error_msg = "Failed to save MMI Monitor configuration. See log for details."
                 forms.warning(error_msg, title="MMI Monitor Config Error")
+                return
+            
+            sel = self.defaultMmiComboBox.SelectedItem
+            if sel is None or sel == "(None)":
+                default_to_save = ""
+            else:
+                default_to_save = str(sel).strip()
+            
+            if not save_default_mmi(revit.doc, default_to_save):
+                forms.warning(
+                    "Failed to save Default on new instances. See log for details.",
+                    title="MMI Settings",
+                )
+                return
+            
+            forms.show_balloon(
+                header="MMI Settings Saved",
+                text="MMI monitor configuration has been saved.",
+                tooltip="MMI monitor configuration has been saved.",
+                is_new=True,
+            )
+            self.Close()
                 
         except Exception as e:
             logger.error("Error saving MMI configuration: {}".format(str(e)))

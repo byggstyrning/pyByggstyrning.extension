@@ -2,7 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="MMI Settings" 
         Width="500" 
-        Height="625"
+        Height="700"
         ResizeMode="CanResize"
         WindowStartupLocation="CenterScreen"
         ShowInTaskbar="True"
@@ -42,6 +42,30 @@
             <Border Grid.Row="1" Style="{DynamicResource PanelBorderStyle}">
                 <StackPanel Margin="10">
                     <TextBlock Text="Monitor Configuration:" Style="{DynamicResource SubheaderTextBlockStyle}" Margin="0,0,0,10"/>
+                    
+                    <!-- Default on new instances -->
+                    <Grid Margin="0,0,0,12">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <StackPanel Grid.Row="0" Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="Default on new instances" Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center"/>
+                            <TextBlock Text="ⓘ" FontSize="14" Foreground="{DynamicResource TextSecondaryBrush}" Margin="5,0,0,0" VerticalAlignment="Center" Cursor="Hand">
+                                <TextBlock.ToolTip>
+                                    <ToolTip Background="{DynamicResource PopupBackgroundBrush}" Foreground="{DynamicResource TextBrush}">
+                                        <StackPanel Margin="5">
+                                            <TextBlock Text="Default on new instances" FontWeight="Bold" Foreground="{DynamicResource TextBrush}" Margin="0,0,0,5"/>
+                                            <TextBlock Text="When the MMI Monitor is on and a value is selected here, new instances that already have the MMI parameter with a blank value get that default. Existing instances are not changed by this path. Choose (None) to disable." TextWrapping="Wrap" MaxWidth="350" Foreground="{DynamicResource TextBrush}"/>
+                                        </StackPanel>
+                                    </ToolTip>
+                                </TextBlock.ToolTip>
+                            </TextBlock>
+                        </StackPanel>
+                        <TextBlock Grid.Row="1" Text="MMI value applied to new instances with an empty MMI string (MMI Monitor)." Foreground="{DynamicResource TextBrush}" Margin="0,3,0,5" FontSize="11" TextWrapping="Wrap"/>
+                        <ComboBox x:Name="defaultMmiComboBox" Grid.Row="2" MinHeight="28"/>
+                    </Grid>
                     
                     <!-- Attempt to fix MMI values -->
                     <Grid Margin="0,8">

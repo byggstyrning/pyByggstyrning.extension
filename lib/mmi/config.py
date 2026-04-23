@@ -12,6 +12,12 @@ CONFIG_SECTION = 'MMIMonitor'
 CONFIG_KEY_ACTIVE = 'isActive'
 MMI_THRESHOLD = 400
 
+# MMI values exposed on the MMI ribbon (split pushbuttons)
+STANDARD_MMI_VALUES = (
+    "200", "225", "250", "275", "300", "325", "350", "375",
+    "400", "425", "450", "475",
+)
+
 # Standard config keys mapping
 CONFIG_KEYS = {
     "✅ Attempt to fix MMI values": "validate_mmi",

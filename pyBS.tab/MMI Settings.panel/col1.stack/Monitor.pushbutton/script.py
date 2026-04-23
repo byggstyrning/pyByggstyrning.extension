@@ -57,8 +57,13 @@ logger = script.get_logger()
 # Import MMI libraries
 from mmi.config import CONFIG_SECTION, CONFIG_KEY_ACTIVE, MMI_THRESHOLD
 from mmi.config import is_monitor_active, set_monitor_active
-from mmi.core import get_mmi_parameter_name, load_monitor_config
-from mmi.utils import get_element_location, get_element_mmi_value, validate_mmi_value
+from mmi.core import get_mmi_parameter_name, load_monitor_config, get_default_mmi
+from mmi.utils import (
+    get_element_location,
+    get_element_mmi_value,
+    validate_mmi_value,
+    is_mmi_value_blank_for_default,
+)
 from revit.compat import get_element_id_value
 
 # Import MMI Schema
@@ -364,126 +369,131 @@ def document_changed_handler(sender, args):
         # Check if we should monitor
         if not is_monitor_active():
             return
-            
-        # Get the modified elements
-        modified_element_ids = args.GetModifiedElementIds()
         
-        if modified_element_ids.Count == 0:
-            return
-            
-        # Get the document
         doc = args.GetDocument()
+        modified_element_ids = args.GetModifiedElementIds()
+        added_element_ids = args.GetAddedElementIds()
+        mod_count = modified_element_ids.Count if modified_element_ids else 0
+        add_count = added_element_ids.Count if added_element_ids else 0
+        
+        if mod_count == 0 and add_count == 0:
+            return
         
         # Get MMI parameter name
         mmi_param_name = get_mmi_parameter_name(doc)
         if not mmi_param_name:
             logger.warning("No MMI parameter name configured. Use MMI Config tool first.")
             return
-         
-        # Get monitor settings
+        
+        default_mmi = get_default_mmi(doc)
         monitor_settings = load_monitor_config(doc, use_display_names=False)
         
-        # Check which features are enabled
         validate_enabled = monitor_settings["validate_mmi"]
         warn_on_move_enabled = monitor_settings["warn_on_move"]
         pin_elements_enabled = monitor_settings["pin_elements"]
         
-        if not (validate_enabled or warn_on_move_enabled or pin_elements_enabled):
-            logger.debug("No MMI monitor features are enabled. Skipping processing.")
+        has_modified_features = validate_enabled or warn_on_move_enabled or pin_elements_enabled
+        has_default_on_new = bool(default_mmi and str(default_mmi).strip())
+        
+        if not has_modified_features and not has_default_on_new:
+            logger.debug("No MMI monitor features enabled and no default on new instances. Skipping.")
             return
         
-        logger.debug("Processing {} modified elements with MMI parameter: {}".format(
-            modified_element_ids.Count, mmi_param_name))
-        
-        # Track elements for different operations
         elements_to_validate = []
         validation_corrections = {}
         elements_to_pin = []
         moved_high_mmi_elements = []
         
-        # Clean old entries from element location cache
-        clean_element_location_cache()
+        # ----- Added elements: Default on new instances only -----
+        if has_default_on_new and add_count > 0:
+            logger.debug(
+                "Processing {} added elements for default MMI (param: {})".format(
+                    add_count, mmi_param_name))
+            for element_id in added_element_ids:
+                element = doc.GetElement(element_id)
+                if element is None or not hasattr(element, "Pinned"):
+                    continue
+                mmi_value, value_str, param = get_element_mmi_value(element, mmi_param_name, doc)
+                if param is None:
+                    continue
+                if mmi_value is not None:
+                    continue
+                if not is_mmi_value_blank_for_default(mmi_value, value_str):
+                    continue
+                elements_to_validate.append(element_id)
+                validation_corrections[element_id] = {
+                    "original": "(empty)",
+                    "fixed": str(default_mmi).strip(),
+                    "param": mmi_param_name,
+                }
+                logger.debug(
+                    "New instance {} queued for default MMI {}".format(element_id, default_mmi))
         
-        # First pass: Process all elements for validation and move detection
-        for element_id in modified_element_ids:
-            element = doc.GetElement(element_id)
-            
-            # Skip null elements or elements that can't be pinned
-            if element is None or not hasattr(element, "Pinned"):
-                continue
+        # ----- Modified elements: validate / warn / pin (unchanged) -----
+        if has_modified_features and mod_count > 0:
+            logger.debug("Processing {} modified elements with MMI parameter: {}".format(
+                mod_count, mmi_param_name))
+            clean_element_location_cache()
+            for element_id in modified_element_ids:
+                element = doc.GetElement(element_id)
                 
-            # Get the MMI value for the element
-            mmi_value, value_str, param = get_element_mmi_value(element, mmi_param_name, doc)
-            
-            if mmi_value is not None:
-                # ===== STEP 1: VALIDATE =====
-                if validate_enabled and param:
-                    orig_value, fixed_value = validate_mmi_value(value_str)
-                    if orig_value and fixed_value:
-                        elements_to_validate.append(element_id)
-                        validation_corrections[element_id] = {
-                            "original": orig_value,
-                            "fixed": fixed_value,
-                            "param": mmi_param_name
-                        }
-                        logger.debug("Element {} needs MMI value correction: '{}' to '{}'".format(
-                            element_id, orig_value, fixed_value))
+                if element is None or not hasattr(element, "Pinned"):
+                    continue
+                    
+                mmi_value, value_str, param = get_element_mmi_value(element, mmi_param_name, doc)
                 
-                # ===== STEP 2: WARN ON MOVE =====
-                if warn_on_move_enabled and mmi_value > MMI_THRESHOLD:
-                    # Get current location
-                    current_location = get_element_location(element)
-                    if current_location:
-                        # Check if we have a previous location
-                        cache_key = get_element_id_value(element_id)
-                        if cache_key in element_location_cache:
-                            prev_location = element_location_cache[cache_key]["location"]
-                            # Calculate distance moved
-                            distance = current_location.DistanceTo(prev_location)
-                            # If moved more than a small threshold (0.1 meters)
-                            if distance > 0.1:
-                                moved_high_mmi_elements.append({
-                                    "id": element_id,
-                                    "mmi": mmi_value,
-                                    "distance": distance
-                                })
-                                logger.debug("High MMI Element {} moved {:.2f} meters".format(
-                                    element_id, distance))
+                if mmi_value is not None:
+                    if validate_enabled and param:
+                        orig_value, fixed_value = validate_mmi_value(value_str)
+                        if orig_value and fixed_value:
+                            elements_to_validate.append(element_id)
+                            validation_corrections[element_id] = {
+                                "original": orig_value,
+                                "fixed": fixed_value,
+                                "param": mmi_param_name
+                            }
+                            logger.debug("Element {} needs MMI value correction: '{}' to '{}'".format(
+                                element_id, orig_value, fixed_value))
+                    
+                    if warn_on_move_enabled and mmi_value > MMI_THRESHOLD:
+                        current_location = get_element_location(element)
+                        if current_location:
+                            cache_key = get_element_id_value(element_id)
+                            if cache_key in element_location_cache:
+                                prev_location = element_location_cache[cache_key]["location"]
+                                distance = current_location.DistanceTo(prev_location)
+                                if distance > 0.1:
+                                    moved_high_mmi_elements.append({
+                                        "id": element_id,
+                                        "mmi": mmi_value,
+                                        "distance": distance
+                                    })
+                                    logger.debug("High MMI Element {} moved {:.2f} meters".format(
+                                        element_id, distance))
+                            update_element_location_cache(element_id, current_location)
+                    
+                    if pin_elements_enabled and mmi_value >= MMI_THRESHOLD:
+                        element_id_int = get_element_id_value(element_id)
+                        prev_mmi = element_mmi_cache.get(element_id_int)
                         
-                        # Update location cache for future checks
-                        update_element_location_cache(element_id, current_location)
-                
-                # ===== STEP 3: PIN ELEMENTS (only when MMI changes) =====
-                if pin_elements_enabled and mmi_value >= MMI_THRESHOLD:
-                    # Check if MMI value changed to/above threshold
-                    element_id_int = get_element_id_value(element_id)
-                    prev_mmi = element_mmi_cache.get(element_id_int)
-                    
-                    # Pin if: 
-                    # 1. Element is not already pinned, AND
-                    # 2. Either we don't have a cached MMI (new element) OR the MMI value changed
-                    should_pin = False
-                    
-                    if not element.Pinned:
-                        if prev_mmi is None:
-                            # First time seeing this element with high MMI
-                            should_pin = True
-                            logger.debug("Element {} newly detected with MMI {} - queuing for pin".format(
-                                element_id, mmi_value))
-                        elif prev_mmi < MMI_THRESHOLD and mmi_value >= MMI_THRESHOLD:
-                            # MMI value changed from below to above threshold
-                            should_pin = True
-                            logger.debug("Element {} MMI changed from {} to {} - queuing for pin".format(
-                                element_id, prev_mmi, mmi_value))
-                    
-                    if should_pin:
-                        elements_to_pin.append(element_id)
-                    
-                    # Update MMI cache
-                    element_mmi_cache[element_id_int] = mmi_value
-                elif mmi_value is not None:
-                    # Update cache for low MMI elements too (to detect future changes)
-                    element_mmi_cache[get_element_id_value(element_id)] = mmi_value
+                        should_pin = False
+                        
+                        if not element.Pinned:
+                            if prev_mmi is None:
+                                should_pin = True
+                                logger.debug("Element {} newly detected with MMI {} - queuing for pin".format(
+                                    element_id, mmi_value))
+                            elif prev_mmi < MMI_THRESHOLD and mmi_value >= MMI_THRESHOLD:
+                                should_pin = True
+                                logger.debug("Element {} MMI changed from {} to {} - queuing for pin".format(
+                                    element_id, prev_mmi, mmi_value))
+                        
+                        if should_pin:
+                            elements_to_pin.append(element_id)
+                        
+                        element_mmi_cache[element_id_int] = mmi_value
+                    elif mmi_value is not None:
+                        element_mmi_cache[get_element_id_value(element_id)] = mmi_value
         
         # Process validation if needed
         if elements_to_validate and validation_corrections and mmi_event_handler and external_event:
@@ -739,6 +749,11 @@ if __name__ == '__main__':
                 enabled_features.append("Attempt to fix MMI values")
             if monitor_settings["check_mmi_after_sync"]:
                 enabled_features.append("Check MMI after sync")
+            
+            default_mmi_saved = get_default_mmi(revit.doc)
+            if default_mmi_saved:
+                enabled_features.append(
+                    "Default on new instances: {}".format(default_mmi_saved))
                 
             if not enabled_features:
                 enabled_features.append("No features enabled (configure in Settings)")

@@ -26,6 +26,11 @@ except ImportError:
 # Initialize logger
 logger = script.get_logger()
 
+try:
+    basestring
+except NameError:
+    basestring = str
+
 def find_mmi_parameters(doc):
     """Find all parameters named 'MMI' or containing 'MMI' in the document.
     
@@ -93,6 +98,23 @@ def validate_mmi_value(value_str):
     else:
         # Value is already valid, no correction needed
         return None, None
+
+
+def is_mmi_value_blank_for_default(mmi_value, value_str):
+    """True when there is no numeric MMI and the stored string is empty or whitespace only.
+
+    Used for Default on new instances: only fill when blank, not for odd non-numeric text.
+    """
+    if mmi_value is not None:
+        return False
+    if value_str is None:
+        return True
+    try:
+        s = value_str if isinstance(value_str, basestring) else str(value_str)
+    except Exception:
+        return False
+    return len(s.strip()) == 0
+
 
 def get_elements_by_mmi_value(doc, mmi_value, param_name=None, comparison="equal"):
     """Get elements with a specific MMI value.
