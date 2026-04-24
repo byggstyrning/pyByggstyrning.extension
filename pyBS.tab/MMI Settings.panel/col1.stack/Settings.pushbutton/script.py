@@ -20,12 +20,22 @@ import time
 import clr
 clr.AddReference('RevitAPI')
 clr.AddReference('RevitAPIUI')
+# ObservableCollection: namespace lives in System.ObjectModel on .NET Core / some Revit builds
+for _oc_ref in ('System.ObjectModel', 'System', 'System.Collections'):
+    try:
+        clr.AddReference(_oc_ref)
+    except Exception:
+        pass
 from Autodesk.Revit.DB import *
 
 # Import .NET System
 import System
 from System import Object
-from System.Collections.ObjectModel import ObservableCollection
+try:
+    from System.Collections.ObjectModel import ObservableCollection
+except ImportError:
+    import System.Collections.ObjectModel as _obs_mod
+    ObservableCollection = _obs_mod.ObservableCollection
 
 # Import pyRevit modules
 from pyrevit import script
@@ -48,14 +58,40 @@ if lib_path not in sys.path:
 logger = script.get_logger()
 
 # Import from MMI library modules
-from mmi.config import CONFIG_KEYS
-from mmi.core import get_mmi_parameter_name, save_mmi_parameter, save_monitor_config, load_monitor_config
+from mmi.config import CONFIG_KEYS, STANDARD_MMI_VALUES
+from mmi.colorizer import get_color_for_mmi
+from mmi.core import (
+    get_mmi_parameter_name,
+    save_mmi_parameter,
+    save_monitor_config,
+    load_monitor_config,
+    get_default_mmi,
+    save_default_mmi,
+)
 
 # Import revit utils
 from revit.revit_utils import get_available_parameters
 
 # Import styles for theme support
 from styles import load_styles_to_window
+
+from System.Windows.Media import Brushes, SolidColorBrush, Color as WpfMediaColor
+
+
+class DefaultMmiComboItem(Object):
+    """One row in the default MMI ComboBox (optional swatch + label, WPF-bindable)."""
+
+    def __init__(self, mmi_code, label, swatch_brush, tool_tip):
+        self.mmi_code = mmi_code or ""
+        self.label = label
+        self.swatch_brush = swatch_brush
+        self.tool_tip = tool_tip or ""
+
+    def ToString(self):
+        return self.label
+
+    def __str__(self):
+        return self.label
 
 
 class MMISettingsWindow(forms.WPFWindow):
@@ -73,6 +109,8 @@ class MMISettingsWindow(forms.WPFWindow):
             
             # Set up ComboBox
             self.parameterComboBox.DisplayMemberPath = "display_name"
+            
+            self._populate_default_mmi_combo()
             
             # Flag to prevent saving during initialization
             self._is_initializing = True
@@ -135,6 +173,33 @@ class MMISettingsWindow(forms.WPFWindow):
         except Exception as e:
             logger.error("Error loading parameters: {}".format(str(e)))
     
+    def _populate_default_mmi_combo(self):
+        """Fill Default on new instances combo: (None) plus standard MMI values with color swatches."""
+        try:
+            self.defaultMmiComboBox.Items.Clear()
+            self.defaultMmiComboBox.Items.Add(
+                DefaultMmiComboItem(
+                    "",
+                    "(None)",
+                    Brushes.Transparent,
+                    "No default MMI text applied to new instances.",
+                )
+            )
+            for v in STANDARD_MMI_VALUES:
+                try:
+                    n = int(v)
+                except Exception:
+                    n = 0
+                rev_col, full_name = get_color_for_mmi(n)
+                brush = SolidColorBrush(
+                    WpfMediaColor.FromRgb(rev_col.Red, rev_col.Green, rev_col.Blue)
+                )
+                self.defaultMmiComboBox.Items.Add(
+                    DefaultMmiComboItem(v, v, brush, full_name)
+                )
+        except Exception as e:
+            logger.error("Error populating default MMI combo: {}".format(str(e)))
+    
     def load_config(self):
         """Load current MMI configuration and parameter name."""
         try:
@@ -156,6 +221,19 @@ class MMISettingsWindow(forms.WPFWindow):
             self.pinElementsCheckBox.IsChecked = current_config.get("pin_elements", False)
             self.warnOnMoveCheckBox.IsChecked = current_config.get("warn_on_move", False)
             self.checkAfterSyncCheckBox.IsChecked = current_config.get("check_mmi_after_sync", False)
+            self.defaultOnNewInstancesCheckBox.IsChecked = current_config.get(
+                "default_on_new_instances", False)
+            
+            stored_default = get_default_mmi(revit.doc)
+            self.defaultMmiComboBox.SelectedIndex = 0
+            if stored_default:
+                sd = str(stored_default).strip()
+                for i in range(self.defaultMmiComboBox.Items.Count):
+                    item = self.defaultMmiComboBox.Items[i]
+                    code = getattr(item, "mmi_code", None)
+                    if code is not None and str(code).strip() == sd:
+                        self.defaultMmiComboBox.SelectedIndex = i
+                        break
             
         except Exception as e:
             logger.error("Error loading MMI configuration: {}".format(str(e)))
@@ -187,22 +265,37 @@ class MMISettingsWindow(forms.WPFWindow):
                 "validate_mmi": self.validateMmiCheckBox.IsChecked or False,
                 "pin_elements": self.pinElementsCheckBox.IsChecked or False,
                 "warn_on_move": self.warnOnMoveCheckBox.IsChecked or False,
-                "check_mmi_after_sync": self.checkAfterSyncCheckBox.IsChecked or False
+                "check_mmi_after_sync": self.checkAfterSyncCheckBox.IsChecked or False,
+                "default_on_new_instances": self.defaultOnNewInstancesCheckBox.IsChecked or False,
             }
             
             # Save the configuration
-            if save_monitor_config(revit.doc, config):
-                forms.show_balloon(
-                    header="MMI Settings Saved",
-                    text="MMI monitor configuration has been saved.",
-                    tooltip="MMI monitor configuration has been saved.",
-                    is_new=True
-                )
-                # Close window
-                self.Close()
-            else:
+            if not save_monitor_config(revit.doc, config):
                 error_msg = "Failed to save MMI Monitor configuration. See log for details."
                 forms.warning(error_msg, title="MMI Monitor Config Error")
+                return
+            
+            sel = self.defaultMmiComboBox.SelectedItem
+            code = getattr(sel, "mmi_code", None) if sel is not None else None
+            if not code:
+                default_to_save = ""
+            else:
+                default_to_save = str(code).strip()
+            
+            if not save_default_mmi(revit.doc, default_to_save):
+                forms.warning(
+                    "Failed to save Default on new instances. See log for details.",
+                    title="MMI Settings",
+                )
+                return
+            
+            forms.show_balloon(
+                header="MMI Settings Saved",
+                text="MMI monitor configuration has been saved.",
+                tooltip="MMI monitor configuration has been saved.",
+                is_new=True,
+            )
+            self.Close()
                 
         except Exception as e:
             logger.error("Error saving MMI configuration: {}".format(str(e)))

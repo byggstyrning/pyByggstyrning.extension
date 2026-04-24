@@ -12,12 +12,20 @@ CONFIG_SECTION = 'MMIMonitor'
 CONFIG_KEY_ACTIVE = 'isActive'
 MMI_THRESHOLD = 400
 
+# MMI values offered as defaults (e.g. Settings "Default on new instances" combo)
+STANDARD_MMI_VALUES = (
+    "100", "125", "150", "175",
+    "200", "225", "250", "275", "300", "325", "350", "375",
+    "400", "425", "450", "475",
+)
+
 # Standard config keys mapping
 CONFIG_KEYS = {
     "✅ Attempt to fix MMI values": "validate_mmi",
     "🔒 Pin elements >=400": "pin_elements",
     "⚠️ Warn when moving elements >=425": "warn_on_move",
-    "🔄 Check MMI after sync": "check_mmi_after_sync"
+    "🔄 Check MMI after sync": "check_mmi_after_sync",
+    "🆕 Default on new instances": "default_on_new_instances",
 }
 
 def is_monitor_active():

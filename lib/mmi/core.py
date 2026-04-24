@@ -301,6 +301,8 @@ def migrate_mmi_storage(doc, old_storage, new_schema):
                 entity.set("warn_on_move", old_data.get("warn_on_move", False))
                 # Set default for new field
                 entity.set("check_mmi_after_sync", False)
+                entity.set("default_mmi", "")
+                entity.set("default_on_new_instances", False)
                 
             logger.debug("Successfully migrated MMI storage to new schema (ElementId: {})".format(new_storage.Id))
             return new_storage
@@ -339,7 +341,69 @@ def save_mmi_parameter(doc, parameter_name):
     except Exception as e:
         logger.error("Failed to save MMI parameter: {}".format(str(e)))
         return False
-    
+
+
+def get_default_mmi(doc):
+    """Read project default MMI for new instances from extensible storage.
+
+    Returns:
+        str: Stored value or \"\" if unset / invalid.
+    """
+    try:
+        data_storage = get_or_create_mmi_storage(doc)
+        if not data_storage:
+            return ""
+        schema = MMIParameterSchema(data_storage)
+        if not schema.is_valid:
+            return ""
+        try:
+            raw = schema.get("default_mmi")
+        except Exception:
+            return ""
+        if raw is None:
+            return ""
+        s = str(raw).strip()
+        return s
+    except Exception as e:
+        logger.error("Error reading default_mmi: {}".format(str(e)))
+        return ""
+
+
+def save_default_mmi(doc, value):
+    """Persist default MMI for new instances (empty string disables).
+
+    Returns:
+        bool: True on success.
+    """
+    try:
+        data_storage = get_or_create_mmi_storage(doc)
+        if not data_storage:
+            logger.error("Could not get or create MMI storage for default_mmi")
+            return False
+        normalized = "" if value is None else str(value).strip()
+        schema = MMIParameterSchema(data_storage)
+        current = ""
+        if schema.is_valid:
+            try:
+                cur = schema.get("default_mmi")
+                if cur is not None:
+                    current = str(cur).strip()
+            except Exception:
+                current = ""
+        if current == normalized:
+            return True
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with revit.Transaction("Save MMI default on new instances", doc):
+            with MMIParameterSchema(data_storage) as entity:
+                entity.set("default_mmi", normalized)
+                entity.set("last_used_date", timestamp)
+        logger.debug("Saved default_mmi: {}".format(repr(normalized)))
+        return True
+    except Exception as e:
+        logger.error("Failed to save default_mmi: {}".format(str(e)))
+        return False
+
+
 def save_monitor_config(doc, selected_config):
     """Save the MMI monitor configuration to extensible storage."""
     try:
