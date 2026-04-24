@@ -9,6 +9,10 @@ __title__ = "Monitor"
 __author__ = "Byggstyrning AB"
 __doc__ = "Toggle MMI Monitor on/off for the current session"
 __highlight__ = 'updated'
+# Keep the IronPython engine alive after this script exits so that
+# our DocumentChanged / Sync event handlers retain their delegates and
+# module-level globals (baseline set, caches) survive between edits.
+__persistentengine__ = True
 
 # Import standard libraries
 import sys
@@ -127,14 +131,25 @@ class MMIEventHandler(IExternalEventHandler):
                                         param = element_type.LookupParameter(param_name)
                             except Exception as e:
                                 logger.debug("Error getting type parameter: {}".format(e))
-                                
-                        # Update the value if parameter exists
-                        if param and param.HasValue and param.StorageType == StorageType.String:
-                            param.Set(fixed_value)
-                            corrected_count += 1
-                            correction_details.append("'{}' → '{}'".format(orig_value, fixed_value))
-                            logger.debug("Corrected MMI value from '{}' to '{}' for element {}".format(
-                                orig_value, fixed_value, element_id))
+                        
+                        apply_skip = None
+                        if not param:
+                            apply_skip = "no_param"
+                        elif param.IsReadOnly:
+                            apply_skip = "readonly"
+                        elif param.StorageType != StorageType.String:
+                            apply_skip = "not_string_storage"
+                        # Blank MMI: HasValue is often False; Set is still valid for writable string params.
+                        if apply_skip is None:
+                            try:
+                                param.Set(str(fixed_value))
+                                corrected_count += 1
+                                correction_details.append("'{}' → '{}'".format(orig_value, fixed_value))
+                                logger.debug("Corrected MMI value from '{}' to '{}' for element {}".format(
+                                    orig_value, fixed_value, element_id))
+                            except Exception as set_ex:
+                                logger.debug(
+                                    "MMI correction Set failed for {}: {}".format(element_id, set_ex))
                     
                     t.Commit()
                     
@@ -220,6 +235,8 @@ doc_synchronizing_handler = None
 doc_synchronized_handler = None
 element_location_cache = {}  # Cache to store element locations for move detection
 element_mmi_cache = {}  # Cache to store element MMI values to detect changes
+# Integer ElementId values: snapshot at monitor ON; ids not in this set are new post-activation
+baseline_element_ids_for_default = set()
 
 
 def update_element_location_cache(element_id, location):
@@ -308,6 +325,25 @@ def populate_initial_mmi_cache(doc):
     except Exception as ex:
         logger.error("Error populating initial MMI cache: {}".format(ex))
 
+
+def populate_baseline_element_ids_for_default(doc):
+    """Snapshot all current model element ids. New ids after monitor ON get default MMI (if enabled)."""
+    global baseline_element_ids_for_default
+    try:
+        baseline_element_ids_for_default = set()
+        for element in FilteredElementCollector(doc).WhereElementIsNotElementType().ToElements():
+            if not element.Category or element.Category.CategoryType != CategoryType.Model:
+                continue
+            if not hasattr(element, "Pinned"):
+                continue
+            baseline_element_ids_for_default.add(get_element_id_value(element.Id))
+        logger.debug(
+            "Baseline element ids for default MMI: {}".format(
+                len(baseline_element_ids_for_default)))
+    except Exception as ex:
+        logger.error("Error populating baseline for default MMI: {}".format(ex))
+
+
 def pin_all_high_mmi_elements(doc):
     """Proactively pin all high MMI elements when monitor activates.
     This prevents movement before it happens."""
@@ -393,18 +429,20 @@ def document_changed_handler(sender, args):
         pin_elements_enabled = monitor_settings["pin_elements"]
         
         has_modified_features = validate_enabled or warn_on_move_enabled or pin_elements_enabled
-        has_default_on_new = bool(default_mmi and str(default_mmi).strip())
+        toggle_default_on_new = bool(monitor_settings.get("default_on_new_instances", False))
+        has_default_on_new = toggle_default_on_new and bool(default_mmi and str(default_mmi).strip())
         
         if not has_modified_features and not has_default_on_new:
             logger.debug("No MMI monitor features enabled and no default on new instances. Skipping.")
             return
         
+        global baseline_element_ids_for_default
         elements_to_validate = []
         validation_corrections = {}
         elements_to_pin = []
         moved_high_mmi_elements = []
         
-        # ----- Added elements: Default on new instances only -----
+        # ----- Added elements: Default on new instances (GetAddedElementIds) -----
         if has_default_on_new and add_count > 0:
             logger.debug(
                 "Processing {} added elements for default MMI (param: {})".format(
@@ -413,12 +451,16 @@ def document_changed_handler(sender, args):
                 element = doc.GetElement(element_id)
                 if element is None or not hasattr(element, "Pinned"):
                     continue
+                if not element.Category or element.Category.CategoryType != CategoryType.Model:
+                    continue
                 mmi_value, value_str, param = get_element_mmi_value(element, mmi_param_name, doc)
                 if param is None:
                     continue
                 if mmi_value is not None:
                     continue
                 if not is_mmi_value_blank_for_default(mmi_value, value_str):
+                    continue
+                if element_id in validation_corrections:
                     continue
                 elements_to_validate.append(element_id)
                 validation_corrections[element_id] = {
@@ -427,7 +469,33 @@ def document_changed_handler(sender, args):
                     "param": mmi_param_name,
                 }
                 logger.debug(
-                    "New instance {} queued for default MMI {}".format(element_id, default_mmi))
+                    "New instance (added) {} queued for default MMI {}".format(element_id, default_mmi))
+            for element_id in added_element_ids:
+                baseline_element_ids_for_default.add(get_element_id_value(element_id))
+        
+        # ----- Modified elements: new ids not in baseline (e.g. some walls only in modified set) -----
+        if has_default_on_new and mod_count > 0:
+            for element_id in modified_element_ids:
+                eid_i = get_element_id_value(element_id)
+                if eid_i in baseline_element_ids_for_default:
+                    continue
+                element = doc.GetElement(element_id)
+                if element and hasattr(element, "Pinned") and element.Category and element.Category.CategoryType == CategoryType.Model:
+                    mmi_value, value_str, param = get_element_mmi_value(element, mmi_param_name, doc)
+                    if (param
+                            and mmi_value is None
+                            and is_mmi_value_blank_for_default(mmi_value, value_str)
+                            and element_id not in validation_corrections):
+                        elements_to_validate.append(element_id)
+                        validation_corrections[element_id] = {
+                            "original": "(empty)",
+                            "fixed": str(default_mmi).strip(),
+                            "param": mmi_param_name,
+                        }
+                        logger.debug(
+                            "New instance (modified) {} queued for default MMI {}".format(
+                                element_id, default_mmi))
+                baseline_element_ids_for_default.add(eid_i)
         
         # ----- Modified elements: validate / warn / pin (unchanged) -----
         if has_modified_features and mod_count > 0:
@@ -731,6 +799,9 @@ if __name__ == '__main__':
             if monitor_settings["pin_elements"]:
                 populate_initial_mmi_cache(revit.doc)
             
+            # Baseline model element ids: post-activation ids are treated as new for default MMI
+            populate_baseline_element_ids_for_default(revit.doc)
+            
             # Proactively pin all high MMI elements if pin_elements is enabled
             pinned_count = 0
             if monitor_settings["pin_elements"]:
@@ -751,9 +822,11 @@ if __name__ == '__main__':
                 enabled_features.append("Check MMI after sync")
             
             default_mmi_saved = get_default_mmi(revit.doc)
-            if default_mmi_saved:
+            if monitor_settings.get("default_on_new_instances", False) and default_mmi_saved:
                 enabled_features.append(
                     "Default on new instances: {}".format(default_mmi_saved))
+            elif monitor_settings.get("default_on_new_instances", False):
+                enabled_features.append("Default on new instances (pick a value in Settings)")
                 
             if not enabled_features:
                 enabled_features.append("No features enabled (configure in Settings)")
@@ -786,7 +859,8 @@ if __name__ == '__main__':
             # Clear caches
             element_location_cache = {}
             element_mmi_cache = {}
-            logger.debug("Cleared element location and MMI caches")
+            baseline_element_ids_for_default = set()
+            logger.debug("Cleared element location, MMI, and baseline caches")
             
             success = True
         else:

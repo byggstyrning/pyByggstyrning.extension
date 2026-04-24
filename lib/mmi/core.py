@@ -302,6 +302,7 @@ def migrate_mmi_storage(doc, old_storage, new_schema):
                 # Set default for new field
                 entity.set("check_mmi_after_sync", False)
                 entity.set("default_mmi", "")
+                entity.set("default_on_new_instances", False)
                 
             logger.debug("Successfully migrated MMI storage to new schema (ElementId: {})".format(new_storage.Id))
             return new_storage

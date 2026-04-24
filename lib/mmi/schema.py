@@ -20,7 +20,7 @@ class MMIParameterSchema(BaseSchema):
     @simple_field(value_type="string")
     def schema_version():
         """Current schema version."""
-        return "1.2"
+        return "1.3"
     
     @simple_field(value_type="string")
     def mmi_parameter_name():
@@ -66,3 +66,8 @@ class MMIParameterSchema(BaseSchema):
     def default_mmi():
         """Default MMI string applied to new instances when monitor is on (empty = disabled)."""
         return None
+
+    @simple_field(value_type="boolean")
+    def default_on_new_instances():
+        """When true and default_mmi is set, apply default MMI to new added instances with blank MMI."""
+        return False

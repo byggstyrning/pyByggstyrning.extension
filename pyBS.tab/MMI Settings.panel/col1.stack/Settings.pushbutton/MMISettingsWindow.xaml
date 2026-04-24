@@ -50,21 +50,50 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
-                        <StackPanel Grid.Row="0" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                             <TextBlock Text="Default on new instances" Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center"/>
                             <TextBlock Text="ⓘ" FontSize="14" Foreground="{DynamicResource TextSecondaryBrush}" Margin="5,0,0,0" VerticalAlignment="Center" Cursor="Hand">
                                 <TextBlock.ToolTip>
                                     <ToolTip Background="{DynamicResource PopupBackgroundBrush}" Foreground="{DynamicResource TextBrush}">
                                         <StackPanel Margin="5">
                                             <TextBlock Text="Default on new instances" FontWeight="Bold" Foreground="{DynamicResource TextBrush}" Margin="0,0,0,5"/>
-                                            <TextBlock Text="When the MMI Monitor is on and a value is selected here, new instances that already have the MMI parameter with a blank value get that default. Existing instances are not changed by this path. Choose (None) to disable." TextWrapping="Wrap" MaxWidth="350" Foreground="{DynamicResource TextBrush}"/>
+                                            <TextBlock Text="Turn on to apply the selected MMI to new instances when the MMI Monitor is active. Only runs for elements in DocumentChanged added-element IDs that already have the MMI parameter with a blank string. Pick a value below; choose (None) for no default text. Existing instances are not changed by this path." TextWrapping="Wrap" MaxWidth="350" Foreground="{DynamicResource TextBrush}"/>
                                         </StackPanel>
                                     </ToolTip>
                                 </TextBlock.ToolTip>
                             </TextBlock>
                         </StackPanel>
-                        <TextBlock Grid.Row="1" Text="MMI value applied to new instances with an empty MMI string (MMI Monitor)." Foreground="{DynamicResource TextBrush}" Margin="0,3,0,5" FontSize="11" TextWrapping="Wrap"/>
-                        <ComboBox x:Name="defaultMmiComboBox" Grid.Row="2" MinHeight="28"/>
+                        <CheckBox x:Name="defaultOnNewInstancesCheckBox" Grid.Row="0" Grid.Column="1" Style="{DynamicResource ToggleSwitchStyle}" VerticalAlignment="Center"/>
+                        <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Text="MMI value applied to new instances with an empty MMI string (MMI Monitor)." Foreground="{DynamicResource TextBrush}" Margin="0,3,0,5" FontSize="11" TextWrapping="Wrap"/>
+                        <ComboBox x:Name="defaultMmiComboBox" Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" MinHeight="28"
+                                  Foreground="{DynamicResource TextBrush}"
+                                  Background="{DynamicResource ControlBackgroundBrush}"
+                                  BorderBrush="{DynamicResource BorderBrush}">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                                        <Border x:Name="SwatchBorder" Width="18" Height="18" Margin="0,0,8,0" CornerRadius="2"
+                                                BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                                                VerticalAlignment="Center" SnapsToDevicePixels="True"
+                                                Background="{Binding swatch_brush}"/>
+                                        <TextBlock Text="{Binding label}" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource TextBrush}"
+                                                   ToolTip="{Binding tool_tip}"/>
+                                    </StackPanel>
+                                    <DataTemplate.Triggers>
+                                        <DataTrigger Binding="{Binding mmi_code}" Value="">
+                                            <Setter TargetName="SwatchBorder" Property="Visibility" Value="Collapsed"/>
+                                            <Setter TargetName="SwatchBorder" Property="Width" Value="0"/>
+                                            <Setter TargetName="SwatchBorder" Property="Margin" Value="0"/>
+                                        </DataTrigger>
+                                    </DataTemplate.Triggers>
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
                     </Grid>
                     
                     <!-- Attempt to fix MMI values -->
