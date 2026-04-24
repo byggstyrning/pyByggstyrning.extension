@@ -31,6 +31,7 @@ from Autodesk.Revit.DB import (
     OverrideGraphicSettings, FillPatternElement,
     Color as RevitColor,
     RevitLinkInstance, RevitLinkType,
+    Category, CategoryType,
 )
 
 import sys
@@ -53,6 +54,28 @@ if lib_path not in sys.path:
 from revit.compat import get_element_id_value, make_element_id
 
 logger = script.get_logger()
+
+# #region agent log
+import json as _dbg_json
+import time as _dbg_time
+_DBG_LOG_PATH = op.join(extension_dir, 'debug-64b963.log')
+
+def _dlog(hypothesis_id, location, message, data=None):
+    try:
+        payload = {
+            "sessionId": "64b963",
+            "runId": "clashviews",
+            "hypothesisId": hypothesis_id,
+            "timestamp": int(_dbg_time.time() * 1000),
+            "location": location,
+            "message": message,
+            "data": data or {},
+        }
+        with open(_DBG_LOG_PATH, 'a') as _f:
+            _f.write(_dbg_json.dumps(payload) + "\n")
+    except Exception:
+        pass
+# #endregion
 
 DEBUG_MODE = False
 
@@ -344,6 +367,103 @@ def _element_level_name(document, element):
         pass
 
     return "No Level"
+
+
+# =============================================================================
+# View/sheet name sanitation
+# =============================================================================
+
+# Revit forbids these characters in view / sheet names.
+_REVIT_NAME_FORBIDDEN = u'\\:{}[]<>;?|*`~'
+
+
+def _sanitize_revit_name(name):
+    """Strip characters that Revit rejects in view/sheet names."""
+    if name is None:
+        return u""
+    try:
+        s = unicode(name)
+    except Exception:
+        s = str(name)
+    out_chars = []
+    for ch in s:
+        if ch in _REVIT_NAME_FORBIDDEN:
+            out_chars.append(u" ")
+        else:
+            out_chars.append(ch)
+    cleaned = u"".join(out_chars)
+    while u"  " in cleaned:
+        cleaned = cleaned.replace(u"  ", u" ")
+    return cleaned.strip()
+
+
+def _host_category_id(document, bic):
+    """Return the host-document Category.Id for a BuiltInCategory, or None."""
+    try:
+        cat = Category.GetCategory(document, bic)
+        if cat is not None:
+            return cat.Id
+    except Exception:
+        pass
+    return None
+
+
+def _hide_non_target_model_categories(view, keep_cat_id_values):
+    """In *view*, hide every overridable Model category except those in keep set.
+
+    *keep_cat_id_values* is an iterable of category-id integer values.
+    Host view category visibility also drives linked-model visibility when the
+    link uses the "By host view" display mode (the Revit default), so hiding
+    non-target categories here scopes both host AND link content to the two
+    clashing categories.
+    """
+    keep_set = set()
+    for v in keep_cat_id_values:
+        if v is None:
+            continue
+        try:
+            keep_set.add(int(v))
+        except Exception:
+            continue
+    document = view.Document
+    hidden = 0
+    skipped = 0
+    try:
+        categories = document.Settings.Categories
+    except Exception:
+        return (0, 0)
+    for cat in categories:
+        try:
+            if cat.CategoryType != CategoryType.Model:
+                continue
+        except Exception:
+            continue
+        try:
+            cid = cat.Id
+        except Exception:
+            continue
+        try:
+            cid_val = int(get_element_id_value(cid))
+        except Exception:
+            try:
+                cid_val = int(cid.IntegerValue)
+            except Exception:
+                continue
+        if cid_val in keep_set:
+            continue
+        try:
+            if not view.CanCategoryBeHidden(cid):
+                skipped += 1
+                continue
+        except Exception:
+            pass
+        try:
+            view.SetCategoryHidden(cid, True)
+            hidden += 1
+        except Exception:
+            skipped += 1
+            continue
+    return (hidden, skipped)
 
 
 # =============================================================================
@@ -679,6 +799,10 @@ class LinkItem(forms.Reactive):
     def LinkInstanceId(self):
         return self._link_instance_id
 
+    def ToString(self):
+        """WPF ComboBox selection box / text search use .NET ToString when templates omit."""
+        return self._display_name or ""
+
 
 # =============================================================================
 # Main window
@@ -935,8 +1059,22 @@ class ClashViewsWindow(forms.WPFWindow):
                     link_categories=link_cats,
                 )
 
+            # #region agent log
+            _dlog("H", "script.py:createButton_Click.post_create",
+                  "before ActiveView assignment",
+                  {"created_sheets": int(len(self.created_sheets))})
+            # #endregion
             if self.created_sheets:
+                # #region agent log
+                _dlog("H", "script.py:createButton_Click.pre_ActiveView",
+                      "about to set uidoc.ActiveView = sheet",
+                      {"sheet_id": str(self.created_sheets[0].Id)})
+                # #endregion
                 uidoc.ActiveView = self.created_sheets[0]
+                # #region agent log
+                _dlog("H", "script.py:createButton_Click.after_ActiveView",
+                      "uidoc.ActiveView assigned", {})
+                # #endregion
 
         except Exception as ex:
             logger.error("Error creating clash views: {}".format(ex))
@@ -1004,6 +1142,8 @@ class ClashViewsWindow(forms.WPFWindow):
             else:
                 pair_key = "{} vs {}".format(name_a, name_b)
 
+            cat_a_id = _host_category_id(doc, bic_a)
+            cat_b_id = _host_category_id(doc, bic_b)
             by_level = OrderedDict()
             for (a, b) in pairs:
                 if group_by_level:
@@ -1011,7 +1151,13 @@ class ClashViewsWindow(forms.WPFWindow):
                 else:
                     level_key = "All"
                 if level_key not in by_level:
-                    by_level[level_key] = {"a_ids": set(), "b_ids": set(), "link_mode": link_mode}
+                    by_level[level_key] = {
+                        "a_ids": set(),
+                        "b_ids": set(),
+                        "link_mode": link_mode,
+                        "cat_a_id": cat_a_id,
+                        "cat_b_id": cat_b_id,
+                    }
                 by_level[level_key]["a_ids"].add(get_element_id_value(a.Id))
                 if link_mode:
                     by_level[level_key]["b_ids"].add(get_element_id_value(b.Id))
@@ -1107,6 +1253,19 @@ class ClashViewsWindow(forms.WPFWindow):
                 total_clashes, len(grouped), total_views_to_create,
                 max_dx, max_dy, max_dz))
 
+        # #region agent log
+        _dlog("ALL", "script.py:_create_clash_views.pre_tx", "view creation phase start", {
+            "link_mode": bool(link_mode),
+            "total_views_to_create": int(total_views_to_create),
+            "total_clashes": int(total_clashes),
+            "view_type_id": str(view_type_id),
+            "max_dx_ft": float(max_dx),
+            "max_dy_ft": float(max_dy),
+            "max_dz_ft": float(max_dz),
+            "scale": int(scale) if scale else None,
+        })
+        # #endregion
+
         solid_fill_id = _solid_fill_pattern_id(doc)
         ovr_a = _build_clash_override(CLASH_COLOR_A, solid_fill_id)
         ovr_b = _build_clash_override(CLASH_COLOR_B, solid_fill_id)
@@ -1155,15 +1314,40 @@ class ClashViewsWindow(forms.WPFWindow):
                         logger.warning(
                             "Failed to create view for {} / {}: {}".format(
                                 pair_key, level_name, ex))
+                # #region agent log
+                _dlog("ALL", "script.py:_create_clash_views.pre_t1_commit",
+                      "about to commit views transaction",
+                      {"views_created": int(len(self.clash_views))})
+                # #endregion
                 t.Commit()
+                # #region agent log
+                _dlog("ALL", "script.py:_create_clash_views.after_t1_commit",
+                      "views transaction committed", {})
+                # #endregion
 
             with Transaction(doc, "Create Sheet and Place Viewports") as t:
                 t.Start()
                 self._create_sheet_and_place_viewports(
                     grouped, sheet_prefix, iteration, sheet_name, scale)
+                # #region agent log
+                _dlog("ALL", "script.py:_create_clash_views.pre_t2_commit",
+                      "about to commit sheet transaction", {})
+                # #endregion
                 t.Commit()
+                # #region agent log
+                _dlog("ALL", "script.py:_create_clash_views.after_t2_commit",
+                      "sheet transaction committed", {})
+                # #endregion
 
+            # #region agent log
+            _dlog("ALL", "script.py:_create_clash_views.pre_assimilate",
+                  "about to Assimilate TG", {})
+            # #endregion
             tg.Assimilate()
+            # #region agent log
+            _dlog("ALL", "script.py:_create_clash_views.after_assimilate",
+                  "TG assimilated", {})
+            # #endregion
 
     # -------------------- View creation ----------------------------------
 
@@ -1199,15 +1383,40 @@ class ClashViewsWindow(forms.WPFWindow):
         if not a_eids and not b_eids:
             return None
 
+        # #region agent log
+        _dlog("ALL", "script.py:_create_clash_view.entry", "view creation start", {
+            "pair_key": str(pair_key),
+            "level_name": str(level_name),
+            "a_eids": int(len(a_eids)),
+            "b_eids": int(len(b_eids)),
+            "isolate_count": int(isolate_list.Count),
+            "is_link_mode": bool(is_link_mode),
+            "bbox_min": [float(uniform_bbox.Min.X), float(uniform_bbox.Min.Y), float(uniform_bbox.Min.Z)],
+            "bbox_max": [float(uniform_bbox.Max.X), float(uniform_bbox.Max.Y), float(uniform_bbox.Max.Z)],
+            "view_type_id": str(view_type_id),
+        })
+        # #endregion
+
         view = View3D.CreateIsometric(doc, view_type_id)
+        # #region agent log
+        _dlog("A", "script.py:_create_clash_view.after_CreateIsometric",
+              "CreateIsometric returned", {"view_is_none": view is None,
+                                             "view_id": str(view.Id) if view is not None else None})
+        # #endregion
         if view is None:
             return None
 
         try:
             view.SetSectionBox(uniform_bbox)
+            # #region agent log
+            _dlog("B", "script.py:_create_clash_view.after_SetSectionBox", "ok", {})
+            # #endregion
         except Exception as ex:
             logger.debug("SetSectionBox failed for {} / {}: {}".format(
                 pair_key, level_name, ex))
+            # #region agent log
+            _dlog("B", "script.py:_create_clash_view.after_SetSectionBox", "failed", {"error": str(ex)})
+            # #endregion
 
         try:
             view.Scale = scale
@@ -1215,44 +1424,87 @@ class ClashViewsWindow(forms.WPFWindow):
             pass
 
         if iteration:
-            base_name = "{0}[{1}] {2} - {3}".format(
+            raw_name = "{0}[{1}] {2} - {3}".format(
                 name_prefix, iteration, pair_key, level_name)
         else:
-            base_name = "{0}{1} - {2}".format(name_prefix, pair_key, level_name)
+            raw_name = "{0}{1} - {2}".format(name_prefix, pair_key, level_name)
+        base_name = _sanitize_revit_name(raw_name)
+        _name_assigned = False
         try:
             view.Name = base_name
-        except Exception:
+            _name_assigned = True
+            # #region agent log
+            _dlog("D", "script.py:_create_clash_view.after_SetName", "ok",
+                  {"name": base_name, "raw_name": raw_name})
+            # #endregion
+        except Exception as ex:
+            # #region agent log
+            _dlog("D", "script.py:_create_clash_view.after_SetName",
+                  "sanitized base_name failed, entering fallback loop",
+                  {"error": str(ex), "name": base_name, "raw_name": raw_name})
+            # #endregion
             for i in range(1, 100):
                 try:
-                    view.Name = "{} ({})".format(base_name, i)
+                    view.Name = u"{} ({})".format(base_name, i)
+                    _name_assigned = True
                     break
                 except Exception:
                     continue
+        # #region agent log
+        _dlog("D", "script.py:_create_clash_view.after_SetName_fallback_loop",
+              "fallback loop exited",
+              {"assigned": bool(_name_assigned),
+               "final_name": str(view.Name) if view is not None else None})
+        # #endregion
 
         if isolate_list.Count > 0:
             try:
                 view.IsolateElementsTemporary(isolate_list)
+                # #region agent log
+                _dlog("C", "script.py:_create_clash_view.after_IsolateTemporary", "ok",
+                      {"count": int(isolate_list.Count)})
+                # #endregion
             except Exception as ex:
                 if DEBUG_MODE:
                     logger.debug("IsolateElementsTemporary failed: {}".format(ex))
+                # #region agent log
+                _dlog("C", "script.py:_create_clash_view.after_IsolateTemporary", "failed", {"error": str(ex)})
+                # #endregion
 
             try:
                 view.ConvertTemporaryHideIsolateToPermanent()
-            except Exception:
-                pass
+                # #region agent log
+                _dlog("C", "script.py:_create_clash_view.after_ConvertTempToPermanent", "ok", {})
+                # #endregion
+            except Exception as ex:
+                # #region agent log
+                _dlog("C", "script.py:_create_clash_view.after_ConvertTempToPermanent", "failed", {"error": str(ex)})
+                # #endregion
 
         # Color overrides
+        _ovr_errors = 0
         for eid in a_eids:
             try:
                 view.SetElementOverrides(eid, ovr_a)
             except Exception:
+                _ovr_errors += 1
                 continue
         for eid in b_eids:
             try:
                 view.SetElementOverrides(eid, ovr_b)
             except Exception:
+                _ovr_errors += 1
                 continue
+        # #region agent log
+        _dlog("E", "script.py:_create_clash_view.after_SetElementOverrides", "done",
+              {"a_count": int(len(a_eids)), "b_count": int(len(b_eids)), "errors": int(_ovr_errors)})
+        # #endregion
 
+        # #region agent log
+        _dlog("ALL", "script.py:_create_clash_view.exit", "view complete", {
+            "view_id": str(view.Id),
+        })
+        # #endregion
         return view
 
     # -------------------- Grid layout ------------------------------------
@@ -1354,7 +1606,23 @@ class ClashViewsWindow(forms.WPFWindow):
             logger.warning("No positions calculated for clash viewports")
             return
 
+        # #region agent log
+        _dlog("F", "script.py:_create_sheet_and_place_viewports.pre_sheet_create",
+              "about to ViewSheet.Create", {
+                  "positions": int(len(positions)),
+                  "clash_views": int(len(self.clash_views)),
+                  "cols": int(cols),
+                  "row_count": int(row_count),
+                  "sheet_width_ft": float(sheet_width),
+                  "sheet_height_ft": float(sheet_height),
+              })
+        # #endregion
         sheet = ViewSheet.Create(doc, ElementId.InvalidElementId)
+        # #region agent log
+        _dlog("F", "script.py:_create_sheet_and_place_viewports.after_sheet_create",
+              "ViewSheet.Create returned",
+              {"sheet_id": str(sheet.Id) if sheet is not None else None})
+        # #endregion
         num_prefix = sheet_prefix + (iteration + "-" if iteration else "")
         assigned = False
         for i in range(1, 1000):
@@ -1378,15 +1646,42 @@ class ClashViewsWindow(forms.WPFWindow):
             pass
         self.created_sheets.append(sheet)
 
+        _vp_placed = 0
+        _vp_failed = 0
         for pair_key, level_name, x, y in positions:
             view = self.clash_views.get((pair_key, level_name))
             if view is None:
                 continue
             try:
+                # #region agent log
+                _dlog("G", "script.py:_create_sheet_and_place_viewports.pre_viewport",
+                      "about to Viewport.Create",
+                      {"idx": int(_vp_placed + _vp_failed),
+                       "pair_key": str(pair_key),
+                       "level_name": str(level_name),
+                       "view_id": str(view.Id),
+                       "x": float(x), "y": float(y)})
+                # #endregion
                 Viewport.Create(doc, sheet.Id, view.Id, XYZ(x, y, 0))
+                _vp_placed += 1
+                # #region agent log
+                _dlog("G", "script.py:_create_sheet_and_place_viewports.after_viewport",
+                      "Viewport.Create ok", {"placed": int(_vp_placed)})
+                # #endregion
             except Exception as ex:
+                _vp_failed += 1
                 logger.warning("Could not place viewport for {} / {}: {}".format(
                     pair_key, level_name, ex))
+                # #region agent log
+                _dlog("G", "script.py:_create_sheet_and_place_viewports.viewport_failed",
+                      "exception placing viewport",
+                      {"error": str(ex), "idx": int(_vp_placed + _vp_failed)})
+                # #endregion
+        # #region agent log
+        _dlog("F", "script.py:_create_sheet_and_place_viewports.exit",
+              "viewports placement done",
+              {"placed": int(_vp_placed), "failed": int(_vp_failed)})
+        # #endregion
 
 
 # =============================================================================

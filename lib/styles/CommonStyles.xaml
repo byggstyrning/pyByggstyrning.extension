@@ -1162,6 +1162,26 @@
         </Setter>
     </Style>
     
+    <!-- ListBox: framework default leaves ScrollViewer chrome light; bind chrome to Background -->
+    <ControlTemplate x:Key="StandardListBoxTemplate" TargetType="ListBox">
+        <Border x:Name="Bd"
+                Background="{TemplateBinding Background}"
+                BorderBrush="{TemplateBinding BorderBrush}"
+                BorderThickness="{TemplateBinding BorderThickness}"
+                SnapsToDevicePixels="True">
+            <ScrollViewer Padding="{TemplateBinding Padding}"
+                          Background="{TemplateBinding Background}"
+                          Focusable="False">
+                <ItemsPresenter SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
+            </ScrollViewer>
+        </Border>
+        <ControlTemplate.Triggers>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="Bd" Property="Opacity" Value="0.56"/>
+            </Trigger>
+        </ControlTemplate.Triggers>
+    </ControlTemplate>
+
     <!-- ListBox Style -->
     <Style x:Key="StandardListBoxStyle" TargetType="ListBox">
         <Setter Property="Margin" Value="{DynamicResource DefaultMargin}"/>
@@ -1169,13 +1189,19 @@
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="Background" Value="{DynamicResource ControlBackgroundBrush}"/>
         <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+        <Setter Property="ScrollViewer.CanContentScroll" Value="True"/>
+        <Setter Property="Template" Value="{StaticResource StandardListBoxTemplate}"/>
     </Style>
     
     <!-- Default ListBox Style -->
     <Style TargetType="ListBox">
         <Setter Property="Margin" Value="{DynamicResource DefaultMargin}"/>
         <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Background" Value="{DynamicResource ControlBackgroundBrush}"/>
         <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+        <Setter Property="ScrollViewer.CanContentScroll" Value="True"/>
+        <Setter Property="Template" Value="{StaticResource StandardListBoxTemplate}"/>
     </Style>
     
     <!-- ListView Style -->
@@ -1688,14 +1714,15 @@
                         <ContentPresenter Grid.Row="1" 
                                           Margin="{TemplateBinding Padding}"
                                           Content="{TemplateBinding Content}"/>
-                        <TextBlock Grid.Row="0" 
-                                  Text="{TemplateBinding Header}" 
-                                  Foreground="{TemplateBinding Foreground}"
-                                  FontWeight="SemiBold"
-                                  FontSize="13"
-                                  Margin="5,0,5,-8"
-                                  Background="{DynamicResource WindowBackgroundBrush}"
-                                  Padding="5,0"/>
+                        <!-- ContentSource=Header supports string or UIElement (e.g. CheckBox); TextBlock only showed string headers -->
+                        <Border Grid.Row="0"
+                                HorizontalAlignment="Left"
+                                Margin="5,0,5,-8"
+                                Background="{DynamicResource WindowBackgroundBrush}"
+                                Padding="5,0">
+                            <ContentPresenter ContentSource="Header"
+                                                RecognizesAccessKey="True"/>
+                        </Border>
                     </Grid>
                 </ControlTemplate>
             </Setter.Value>
@@ -1726,14 +1753,14 @@
                         <ContentPresenter Grid.Row="1" 
                                           Margin="{TemplateBinding Padding}"
                                           Content="{TemplateBinding Content}"/>
-                        <TextBlock Grid.Row="0" 
-                                  Text="{TemplateBinding Header}" 
-                                  Foreground="{TemplateBinding Foreground}"
-                                  FontWeight="SemiBold"
-                                  FontSize="13"
-                                  Margin="5,0,5,-8"
-                                  Background="{DynamicResource WindowBackgroundBrush}"
-                                  Padding="5,0"/>
+                        <Border Grid.Row="0"
+                                HorizontalAlignment="Left"
+                                Margin="5,0,5,-8"
+                                Background="{DynamicResource WindowBackgroundBrush}"
+                                Padding="5,0">
+                            <ContentPresenter ContentSource="Header"
+                                                RecognizesAccessKey="True"/>
+                        </Border>
                     </Grid>
                 </ControlTemplate>
             </Setter.Value>

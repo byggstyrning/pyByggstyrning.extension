@@ -5,11 +5,18 @@
         Background="{DynamicResource WindowBackgroundBrush}">
     <!-- Styles will be loaded programmatically -->
     <Grid Margin="15">
+        <Grid.Resources>
+            <!-- DisplayMemberPath does not resolve IronPython Reactive types; ItemTemplate uses Binding -->
+            <DataTemplate x:Key="LinkModelComboItemTemplate">
+                <TextBlock Text="{Binding DisplayName}"
+                           Foreground="{DynamicResource TextBrush}"
+                           TextTrimming="CharacterEllipsis"/>
+            </DataTemplate>
+        </Grid.Resources>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*" MinHeight="180"/>
-            <RowDefinition Height="*" MinHeight="180"/>
+            <RowDefinition Height="*" MinHeight="240"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
@@ -68,8 +75,16 @@
             </Grid>
         </GroupBox>
 
+        <!-- Host + link categories (side by side so link GroupBox header toggle stays visible) -->
+        <Grid Grid.Row="2" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="10"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
         <!-- Host Categories -->
-        <GroupBox Grid.Row="2" Header="Host categories" Margin="0,0,0,6">
+        <GroupBox Grid.Column="0" Header="Host categories" Margin="0,0,0,0">
             <Grid Margin="10">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -116,11 +131,12 @@
         </GroupBox>
 
         <!-- Link Categories -->
-        <GroupBox Grid.Row="3" Margin="0,0,0,10">
+        <GroupBox Grid.Column="2" Margin="0,0,0,0">
             <GroupBox.Header>
                 <CheckBox x:Name="againstLinkToggle" Content="Against link model"
                           IsChecked="False"
-                          Style="{DynamicResource StandardCheckBoxStyle}"
+                          Style="{DynamicResource ToggleSwitchStyle}"
+                          VerticalAlignment="Center"
                           Checked="againstLinkToggle_Changed" Unchecked="againstLinkToggle_Changed"/>
             </GroupBox.Header>
             <Grid Margin="10">
@@ -138,7 +154,7 @@
                                IsEnabled="{Binding IsChecked, ElementName=againstLinkToggle}"/>
                     <ComboBox x:Name="linkSelectorComboBox" Height="28"
                               IsEnabled="{Binding IsChecked, ElementName=againstLinkToggle}"
-                              DisplayMemberPath="DisplayName"
+                              ItemTemplate="{StaticResource LinkModelComboItemTemplate}"
                               SelectionChanged="linkSelectorComboBox_SelectionChanged"
                               Style="{DynamicResource StandardComboBoxStyle}"/>
                 </StackPanel>
@@ -181,9 +197,10 @@
                            Style="{DynamicResource SecondaryTextBlockStyle}" Text="Select a link model above"/>
             </Grid>
         </GroupBox>
+        </Grid>
 
         <!-- Status and Buttons -->
-        <Border Grid.Row="4" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0"
+        <Border Grid.Row="3" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0"
                 Background="{DynamicResource BackgroundLightBrush}" Margin="-15,10,-15,-15" Padding="15,10">
             <Grid>
                 <Grid.ColumnDefinitions>

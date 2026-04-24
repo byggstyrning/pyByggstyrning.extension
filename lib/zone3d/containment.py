@@ -2,6 +2,7 @@
 """Spatial containment detection for 3D Zone parameter mapping."""
 
 from collections import defaultdict
+import math
 from Autodesk.Revit.DB import (
     FilteredElementCollector, BuiltInCategory, XYZ, UV,
     SpatialElementBoundaryOptions, SpatialElementBoundaryLocation,
@@ -12,7 +13,7 @@ from Autodesk.Revit.DB import (
     BoundingBoxXYZ, BuiltInParameter, Phase, ElementId, FamilyInstance,
     HostObject, HostObjectUtils, ShellLayerType, PlanarFace
 )
-from Autodesk.Revit.DB.Architecture import Room
+from Autodesk.Revit.DB.Architecture import Room, FootPrintRoof
 from Autodesk.Revit.DB.Mechanical import Space
 from pyrevit import script
 
@@ -78,6 +79,11 @@ def get_phase_map_for_link(host_doc, link_instance):
 # Used when no level above is found for Area solid creation
 # 10 feet ≈ 3.05 meters (typical storey height)
 DEFAULT_STOREY_HEIGHT_FEET = 10.0
+
+# Roof footprint sampling + plurality containment (internal feet)
+ROOF_FOOTPRINT_SAMPLE_SPACING_FT = 1.5
+ROOF_FOOTPRINT_MAX_POINTS = 56
+ROOF_CONTAINMENT_VOTE_MIN_FRACTION = 0.5
 
 # Cache for geometry calculations (Mass/Generic Model)
 # Structure: element_id -> {"solids": [Solid, ...], "bbox": BoundingBox}
@@ -604,6 +610,262 @@ def get_element_test_points(element, doc=None):
     except Exception as e:
         logger.debug("Error getting element test points: {}".format(str(e)))
         return points
+
+
+def _is_roof_element(element):
+    try:
+        cat = element.Category
+        if cat is None or cat.Id is None:
+            return False
+        return get_element_id_value(cat.Id) == int(BuiltInCategory.OST_Roofs)
+    except Exception:
+        return False
+
+
+def _is_floor_element(element):
+    try:
+        cat = element.Category
+        if cat is None or cat.Id is None:
+            return False
+        return get_element_id_value(cat.Id) == int(BuiltInCategory.OST_Floors)
+    except Exception:
+        return False
+
+
+def _is_3d_zone_vote_target(element):
+    """Roof or floor: use extra footprint samples + plurality for element (3D zone) strategy."""
+    return _is_roof_element(element) or _is_floor_element(element)
+
+
+def _append_curve_samples_along_length(curve, spacing_ft, points, max_total):
+    """Append sample points along a curve by arc length (Revit internal feet)."""
+    if len(points) >= max_total:
+        return
+    try:
+        length = curve.Length
+    except Exception:
+        return
+    if length < 1e-9:
+        try:
+            pt = curve.Evaluate(0.5, True)
+            if pt is not None:
+                points.append(pt)
+        except Exception:
+            try:
+                pt = curve.Evaluate(0.5, False)
+                if pt is not None:
+                    points.append(pt)
+            except Exception:
+                pass
+        return
+    n = int(math.ceil(float(length) / float(spacing_ft)))
+    n = max(n, 2)
+    for i in range(n):
+        if len(points) >= max_total:
+            return
+        t = float(i) / float(n - 1) if n > 1 else 0.5
+        try:
+            pt = curve.Evaluate(t, True)
+            if pt is not None:
+                points.append(pt)
+        except Exception:
+            try:
+                pt = curve.Evaluate(t, False)
+                if pt is not None:
+                    points.append(pt)
+            except Exception:
+                pass
+
+
+def _get_roof_footprint_test_points(element, doc=None):
+    """Sample points along roof footprint boundary (best-effort).
+
+    Primary: FootPrintRoof sketch curves via GetFootprint().
+    Fallback: denser samples along Location.Curve (e.g. ExtrusionRoof).
+    """
+    points = []
+    max_total = ROOF_FOOTPRINT_MAX_POINTS
+    spacing = ROOF_FOOTPRINT_SAMPLE_SPACING_FT
+    try:
+        if isinstance(element, FootPrintRoof):
+            try:
+                fca = element.GetFootprint()
+                if fca is not None:
+                    for mc_arr in fca:
+                        for mc in mc_arr:
+                            if len(points) >= max_total:
+                                return points[:max_total]
+                            try:
+                                c = mc.GeometryCurve
+                            except Exception:
+                                c = None
+                            if c is not None:
+                                _append_curve_samples_along_length(c, spacing, points, max_total)
+            except Exception as ex:
+                logger.debug("FootPrintRoof.GetFootprint: {}".format(str(ex)))
+    except Exception as ex:
+        logger.debug("_get_roof_footprint_test_points FootPrintRoof: {}".format(str(ex)))
+
+    if len(points) < 4:
+        try:
+            loc = element.Location
+            if loc is not None and hasattr(loc, "Curve"):
+                curve = loc.Curve
+                if curve is not None:
+                    try:
+                        length = curve.Length
+                    except Exception:
+                        length = 0.0
+                    if length > 1e-9:
+                        n = max(8, min(28, int(math.ceil(float(length) / float(spacing)))))
+                    else:
+                        n = 1
+                    for i in range(n):
+                        if len(points) >= max_total:
+                            break
+                        t = float(i) / float(n - 1) if n > 1 else 0.5
+                        try:
+                            pt = curve.Evaluate(t, True)
+                            if pt is not None:
+                                points.append(pt)
+                        except Exception:
+                            try:
+                                pt = curve.Evaluate(t, False)
+                                if pt is not None:
+                                    points.append(pt)
+                            except Exception:
+                                pass
+        except Exception as ex:
+            logger.debug("_get_roof_footprint_test_points LocationCurve: {}".format(str(ex)))
+
+    return points[:max_total]
+
+
+def _get_floor_footprint_test_points(element, doc=None):
+    """Sample points on floor lower face (footprint proxy) and/or boundary curve.
+
+    Primary: HostObjectUtils.GetBottomFaces + UV grid on each PlanarFace.
+    Fallback: dense Location.Curve (same pattern as roof sketch fallback).
+    """
+    points = []
+    max_total = ROOF_FOOTPRINT_MAX_POINTS
+    spacing = ROOF_FOOTPRINT_SAMPLE_SPACING_FT
+    try:
+        if isinstance(element, HostObject) and _is_floor_element(element) and not hasattr(element, "WallType"):
+            try:
+                face_refs = HostObjectUtils.GetBottomFaces(element)
+                if face_refs:
+                    for ref in face_refs:
+                        if len(points) >= max_total:
+                            return points[:max_total]
+                        try:
+                            face = element.GetGeometryObjectFromReference(ref)
+                            if face and isinstance(face, PlanarFace):
+                                face_points = _generate_grid_points_on_face(face, grid_size=4)
+                                for p in face_points:
+                                    if len(points) >= max_total:
+                                        return points[:max_total]
+                                    points.append(p)
+                        except Exception as face_err:
+                            logger.debug("GetBottomFaces face: {}".format(str(face_err)))
+                            continue
+            except Exception as ex:
+                logger.debug("GetBottomFaces floor: {}".format(str(ex)))
+    except Exception as ex:
+        logger.debug("_get_floor_footprint_test_points: {}".format(str(ex)))
+
+    if len(points) < 4:
+        try:
+            loc = element.Location
+            if loc is not None and hasattr(loc, "Curve"):
+                curve = loc.Curve
+                if curve is not None:
+                    try:
+                        length = curve.Length
+                    except Exception:
+                        length = 0.0
+                    if length > 1e-9:
+                        n = max(8, min(28, int(math.ceil(float(length) / float(spacing)))))
+                    else:
+                        n = 1
+                    for i in range(n):
+                        if len(points) >= max_total:
+                            break
+                        t = float(i) / float(n - 1) if n > 1 else 0.5
+                        try:
+                            pt = curve.Evaluate(t, True)
+                            if pt is not None:
+                                points.append(pt)
+                        except Exception:
+                            try:
+                                pt = curve.Evaluate(t, False)
+                                if pt is not None:
+                                    points.append(pt)
+                            except Exception:
+                                pass
+        except Exception as ex:
+            logger.debug("_get_floor_footprint_test_points LocationCurve: {}".format(str(ex)))
+
+    return points[:max_total]
+
+
+def _merge_3d_zone_vote_test_points(element, doc):
+    """Combine get_element_test_points with roof/floor footprint samples for 3D zone voting."""
+    pts = list(get_element_test_points(element, doc))
+    if _is_roof_element(element):
+        fp = _get_roof_footprint_test_points(element, doc)
+        if fp:
+            pts.extend(fp)
+    if _is_floor_element(element):
+        ff = _get_floor_footprint_test_points(element, doc)
+        if ff:
+            pts.extend(ff)
+    return pts
+
+
+def _pick_containing_zone_by_vote(test_points, candidates, is_inside_fn, min_fraction, sort_candidates_by_id=True):
+    """Pick single zone by plurality: first stable-order hit per point tallies votes.
+
+    Winner must have vote count >= ceil(min_fraction * len(test_points)).
+    Ties: highest vote count, then lowest ElementId.
+
+    Args:
+        test_points: iterable of XYZ
+        candidates: iterable of spatial elements (rooms, spaces, areas, ...)
+        is_inside_fn: callable(candidate, point) -> bool
+        min_fraction: float in (0, 1]
+        sort_candidates_by_id: If True (default), sort candidates by ElementId before
+            first-hit-per-point. If False, use given list order (e.g. user sort_property).
+
+    Returns:
+        Winning element or None
+    """
+    if not test_points or not candidates:
+        return None
+    n_pts = len(test_points)
+    threshold = max(1, int(math.ceil(float(n_pts) * float(min_fraction))))
+    if sort_candidates_by_id:
+        ordered = sorted(candidates, key=lambda c: get_element_id_value(c.Id))
+    else:
+        ordered = list(candidates)
+    votes = defaultdict(int)
+    for pt in test_points:
+        for cand in ordered:
+            try:
+                if is_inside_fn(cand, pt):
+                    votes[cand] += 1
+                    break
+            except Exception:
+                continue
+    if not votes:
+        return None
+    max_votes = max(votes[c] for c in votes)
+    if max_votes < threshold:
+        return None
+    tied = [c for c in votes if votes[c] == max_votes]
+    tied.sort(key=lambda c: get_element_id_value(c.Id))
+    return tied[0]
+
 
 def is_point_in_room(room, point):
     """Check if a point is inside a room (fastest method).
@@ -1285,6 +1547,10 @@ def get_containing_room_phase_aware(element, doc, rooms_by_phase_by_level, order
         # Get multiple test points for better detection
         # Pass doc for in-place family handling (uses geometry extraction)
         test_points = get_element_test_points(element, element_doc)
+        if _is_roof_element(element):
+            fp_pts = _get_roof_footprint_test_points(element, element_doc)
+            if fp_pts:
+                test_points = list(test_points) + list(fp_pts)
         if not test_points:
             return None
         
@@ -1464,14 +1730,22 @@ def get_containing_room_phase_aware(element, doc, rooms_by_phase_by_level, order
                     rooms_to_check = filtered_rooms
             
             # Check containment in this phase
-            for point in test_points:
-                for room in rooms_to_check:
-                    if is_point_in_room(room, point):
-                        # Add to matching rooms if not already added
-                        if room not in matching_rooms:
-                            matching_rooms.append(room)
-                        break  # Found containment for this point, move to next point
-                # Continue checking all points even if we found a match
+            use_roof_vote = _is_roof_element(element)
+            if use_roof_vote:
+                level_sorted = sorted(rooms_to_check, key=lambda r: get_element_id_value(r.Id))
+                w_room = _pick_containing_zone_by_vote(
+                    test_points, level_sorted, is_point_in_room, ROOF_CONTAINMENT_VOTE_MIN_FRACTION)
+                if w_room is not None and w_room not in matching_rooms:
+                    matching_rooms.append(w_room)
+            else:
+                for point in test_points:
+                    for room in rooms_to_check:
+                        if is_point_in_room(room, point):
+                            # Add to matching rooms if not already added
+                            if room not in matching_rooms:
+                                matching_rooms.append(room)
+                            break  # Found containment for this point, move to next point
+                    # Continue checking all points even if we found a match
             
             # If not found on same level, check other levels (fallback)
             if not matching_rooms:
@@ -1502,13 +1776,20 @@ def get_containing_room_phase_aware(element, doc, rooms_by_phase_by_level, order
                     other_level_rooms = filtered_other
                 
                 # Check containment in other levels
-                for point in test_points:
-                    for room in other_level_rooms:
-                        if is_point_in_room(room, point):
-                            # Add to matching rooms if not already added
-                            if room not in matching_rooms:
-                                matching_rooms.append(room)
-                            break  # Found containment for this point, move to next point
+                if use_roof_vote:
+                    other_sorted = sorted(other_level_rooms, key=lambda r: get_element_id_value(r.Id))
+                    w_other = _pick_containing_zone_by_vote(
+                        test_points, other_sorted, is_point_in_room, ROOF_CONTAINMENT_VOTE_MIN_FRACTION)
+                    if w_other is not None and w_other not in matching_rooms:
+                        matching_rooms.append(w_other)
+                else:
+                    for point in test_points:
+                        for room in other_level_rooms:
+                            if is_point_in_room(room, point):
+                                # Add to matching rooms if not already added
+                                if room not in matching_rooms:
+                                    matching_rooms.append(room)
+                                break  # Found containment for this point, move to next point
         
         # Return room with lowest ElementId if multiple matches found
         if matching_rooms:
@@ -1526,6 +1807,7 @@ def get_containing_room(element, doc, rooms_by_level=None):
     
     Uses multiple test points for better detection of walls and doors.
     Optimized with early exit - stops checking once containment is found.
+    Roofs (OST_Roofs): merge footprint samples with face/location points and pick room by vote.
     
     Args:
         element: Target element
@@ -1536,9 +1818,14 @@ def get_containing_room(element, doc, rooms_by_level=None):
         Room: Containing room or None
     """
     try:
-        # Get multiple test points for better detection
-        # Pass doc for in-place family handling (uses geometry extraction)
-        test_points = get_element_test_points(element, doc)
+        use_roof_vote = _is_roof_element(element)
+        if use_roof_vote:
+            test_points = list(get_element_test_points(element, doc))
+            fp_pts = _get_roof_footprint_test_points(element, doc)
+            if fp_pts:
+                test_points.extend(fp_pts)
+        else:
+            test_points = get_element_test_points(element, doc)
         if not test_points:
             return None
         
@@ -1563,9 +1850,67 @@ def get_containing_room(element, doc, rooms_by_level=None):
             if level_param:
                 element_level_id = level_param.AsElementId()
         
+        element_bbox = element.get_BoundingBox(None)
+        
+        if use_roof_vote:
+            def bboxes_overlap_rf(bbox1_min, bbox1_max, bbox2_min, bbox2_max):
+                return (bbox1_min.X <= bbox2_max.X and bbox1_max.X >= bbox2_min.X and
+                        bbox1_min.Y <= bbox2_max.Y and bbox1_max.Y >= bbox2_min.Y and
+                        bbox1_min.Z <= bbox2_max.Z and bbox1_max.Z >= bbox2_min.Z)
+            
+            if element_level_id:
+                level_rooms = list(rooms_by_level.get(element_level_id, []))
+                if element_bbox and len(level_rooms) > 50:
+                    expanded_min = XYZ(element_bbox.Min.X - 0.5, element_bbox.Min.Y - 0.5, element_bbox.Min.Z - 0.5)
+                    expanded_max = XYZ(element_bbox.Max.X + 0.5, element_bbox.Max.Y + 0.5, element_bbox.Max.Z + 0.5)
+                    filtered_level_rooms = []
+                    for room in level_rooms:
+                        room_bbox = room.get_BoundingBox(None)
+                        if room_bbox and bboxes_overlap_rf(expanded_min, expanded_max, room_bbox.Min, room_bbox.Max):
+                            filtered_level_rooms.append(room)
+                    if len(filtered_level_rooms) < len(level_rooms) * 0.8:
+                        level_rooms = filtered_level_rooms
+                level_sorted = sorted(level_rooms, key=lambda r: get_element_id_value(r.Id))
+                w_room = _pick_containing_zone_by_vote(
+                    test_points, level_sorted, is_point_in_room, ROOF_CONTAINMENT_VOTE_MIN_FRACTION)
+                if w_room is not None:
+                    return w_room
+            
+            if element_bbox:
+                expanded_min = XYZ(element_bbox.Min.X - 0.5, element_bbox.Min.Y - 0.5, element_bbox.Min.Z - 0.5)
+                expanded_max = XYZ(element_bbox.Max.X + 0.5, element_bbox.Max.Y + 0.5, element_bbox.Max.Z + 0.5)
+                filtered_rooms = []
+                MAX_FALLBACK_ROOMS = 200
+                for room_list in rooms_by_level.values():
+                    for room in room_list:
+                        if element_level_id and room.LevelId == element_level_id:
+                            continue
+                        room_bbox = room.get_BoundingBox(None)
+                        if room_bbox and bboxes_overlap_rf(expanded_min, expanded_max, room_bbox.Min, room_bbox.Max):
+                            filtered_rooms.append(room)
+                            if len(filtered_rooms) >= MAX_FALLBACK_ROOMS:
+                                break
+                    if len(filtered_rooms) >= MAX_FALLBACK_ROOMS:
+                        break
+                if filtered_rooms:
+                    fr_sorted = sorted(filtered_rooms, key=lambda r: get_element_id_value(r.Id))
+                    w_fb = _pick_containing_zone_by_vote(
+                        test_points, fr_sorted, is_point_in_room, ROOF_CONTAINMENT_VOTE_MIN_FRACTION)
+                    if w_fb is not None:
+                        return w_fb
+            else:
+                all_rooms = []
+                for room_list in rooms_by_level.values():
+                    all_rooms.extend(room_list)
+                ar_sorted = sorted(all_rooms, key=lambda r: get_element_id_value(r.Id))
+                w_all = _pick_containing_zone_by_vote(
+                    test_points, ar_sorted, is_point_in_room, ROOF_CONTAINMENT_VOTE_MIN_FRACTION)
+                if w_all is not None:
+                    return w_all
+            return None
+        
         # Try each test point with early exit
         # OPTIMIZATION: Pre-filter rooms by bounding box even for level-based search
-        element_bbox = element.get_BoundingBox(None)
         if element_level_id:
             level_rooms = rooms_by_level.get(element_level_id, [])
             
@@ -1656,6 +2001,7 @@ def get_containing_space(element, doc, spaces_by_level=None):
     
     Uses multiple test points for better detection of walls and doors.
     Optimized with early exit - stops checking once containment is found.
+    Roofs: footprint + top/location samples, plurality vote over candidate spaces.
     
     Args:
         element: Target element
@@ -1666,9 +2012,14 @@ def get_containing_space(element, doc, spaces_by_level=None):
         Space: Containing space or None
     """
     try:
-        # Get multiple test points for better detection
-        # Pass doc for in-place family handling (uses geometry extraction)
-        test_points = get_element_test_points(element, doc)
+        use_roof_vote = _is_roof_element(element)
+        if use_roof_vote:
+            test_points = list(get_element_test_points(element, doc))
+            fp_pts = _get_roof_footprint_test_points(element, doc)
+            if fp_pts:
+                test_points.extend(fp_pts)
+        else:
+            test_points = get_element_test_points(element, doc)
         if not test_points:
             return None
         
@@ -1692,6 +2043,48 @@ def get_containing_space(element, doc, spaces_by_level=None):
             if level_param:
                 element_level_id = level_param.AsElementId()
         
+        element_bbox = element.get_BoundingBox(None)
+        
+        if use_roof_vote:
+            if element_level_id:
+                level_spaces = list(spaces_by_level.get(element_level_id, []))
+                ls_sorted = sorted(level_spaces, key=lambda s: get_element_id_value(s.Id))
+                w_sp = _pick_containing_zone_by_vote(
+                    test_points, ls_sorted, is_point_in_space, ROOF_CONTAINMENT_VOTE_MIN_FRACTION)
+                if w_sp is not None:
+                    return w_sp
+            if element_bbox:
+                expanded_min = XYZ(element_bbox.Min.X - 1.0, element_bbox.Min.Y - 1.0, element_bbox.Min.Z - 1.0)
+                expanded_max = XYZ(element_bbox.Max.X + 1.0, element_bbox.Max.Y + 1.0, element_bbox.Max.Z + 1.0)
+                
+                def bboxes_overlap_sp(bbox1_min, bbox1_max, bbox2_min, bbox2_max):
+                    return (bbox1_min.X <= bbox2_max.X and bbox1_max.X >= bbox2_min.X and
+                            bbox1_min.Y <= bbox2_max.Y and bbox1_max.Y >= bbox2_min.Y and
+                            bbox1_min.Z <= bbox2_max.Z and bbox1_max.Z >= bbox2_min.Z)
+                
+                filtered_spaces = []
+                for space_list in spaces_by_level.values():
+                    for space in space_list:
+                        space_bbox = space.get_BoundingBox(None)
+                        if space_bbox and bboxes_overlap_sp(expanded_min, expanded_max, space_bbox.Min, space_bbox.Max):
+                            filtered_spaces.append(space)
+                if filtered_spaces:
+                    fs_sorted = sorted(filtered_spaces, key=lambda s: get_element_id_value(s.Id))
+                    w_fb = _pick_containing_zone_by_vote(
+                        test_points, fs_sorted, is_point_in_space, ROOF_CONTAINMENT_VOTE_MIN_FRACTION)
+                    if w_fb is not None:
+                        return w_fb
+            else:
+                all_sp = []
+                for space_list in spaces_by_level.values():
+                    all_sp.extend(space_list)
+                all_sorted = sorted(all_sp, key=lambda s: get_element_id_value(s.Id))
+                w_all = _pick_containing_zone_by_vote(
+                    test_points, all_sorted, is_point_in_space, ROOF_CONTAINMENT_VOTE_MIN_FRACTION)
+                if w_all is not None:
+                    return w_all
+            return None
+        
         # Try each test point with early exit
         if element_level_id:
             for point in test_points:
@@ -1701,7 +2094,6 @@ def get_containing_space(element, doc, spaces_by_level=None):
         
         # Fallback: check all spaces with all test points (with early exit)
         # OPTIMIZATION: Use bounding box pre-filtering to reduce spaces to check
-        element_bbox = element.get_BoundingBox(None)
         if element_bbox:
             # Expand bounding box slightly (1 foot in Revit units) to account for edge cases
             expanded_min = XYZ(element_bbox.Min.X - 1.0, element_bbox.Min.Y - 1.0, element_bbox.Min.Z - 1.0)
@@ -1745,6 +2137,7 @@ def get_containing_area(element, doc, areas_by_level=None):
     
     Uses multiple test points for better detection of walls and doors.
     Optimized with early exit - stops checking once containment is found.
+    Roofs: footprint + top/location samples, plurality vote over candidate areas.
     
     Args:
         element: Target element
@@ -1755,9 +2148,14 @@ def get_containing_area(element, doc, areas_by_level=None):
         Area: Containing area or None
     """
     try:
-        # Get multiple test points for better detection
-        # Pass doc for in-place family handling (uses geometry extraction)
-        test_points = get_element_test_points(element, doc)
+        use_roof_vote = _is_roof_element(element)
+        if use_roof_vote:
+            test_points = list(get_element_test_points(element, doc))
+            fp_pts = _get_roof_footprint_test_points(element, doc)
+            if fp_pts:
+                test_points.extend(fp_pts)
+        else:
+            test_points = get_element_test_points(element, doc)
         if not test_points:
             # Reduced logging - only log if debug mode is very verbose
             return None
@@ -1785,6 +2183,34 @@ def get_containing_area(element, doc, areas_by_level=None):
             level_param = element.get_Parameter("Level")
             if level_param:
                 element_level_id = level_param.AsElementId()
+        
+        if use_roof_vote:
+            def is_area_pt_vote(area, pt):
+                area_id = get_element_id_value(area.Id)
+                if area_id in _geometry_cache and _geometry_cache[area_id].get("failed", False):
+                    return False
+                return is_point_in_area(area, pt, doc)
+            
+            if element_level_id:
+                level_areas = list(areas_by_level.get(element_level_id, []))
+                la_sorted = sorted(level_areas, key=lambda a: get_element_id_value(a.Id))
+                w_ar = _pick_containing_zone_by_vote(
+                    test_points, la_sorted, is_area_pt_vote, ROOF_CONTAINMENT_VOTE_MIN_FRACTION)
+                if w_ar is not None:
+                    return w_ar
+            
+            all_areas = []
+            for area_list in areas_by_level.values():
+                for ar in area_list:
+                    if element_level_id and hasattr(ar, "LevelId") and ar.LevelId == element_level_id:
+                        continue
+                    all_areas.append(ar)
+            aa_sorted = sorted(all_areas, key=lambda a: get_element_id_value(a.Id))
+            w_all = _pick_containing_zone_by_vote(
+                test_points, aa_sorted, is_area_pt_vote, ROOF_CONTAINMENT_VOTE_MIN_FRACTION)
+            if w_all is not None:
+                return w_all
+            return None
         
         # Try each test point with early exit
         areas_checked = 0
@@ -1917,6 +2343,8 @@ def get_containing_element_indexed(target_el, doc, element_index, cell_size_feet
     Uses spatial hash lookup instead of database queries. Checks a 3x3 cell
     neighborhood around the target point to handle boundary cases.
     Uses multiple test points for elements with vertical extent (columns).
+    For roofs and floors (3D zone targets), merges footprint/bottom-face samples,
+    unions spatial-index neighborhoods over all samples, then plurality vote.
     
     When source elements are in a linked document (link_instance is not None),
     target test points are transformed from host to link coordinates so
@@ -1935,7 +2363,10 @@ def get_containing_element_indexed(target_el, doc, element_index, cell_size_feet
     try:
         # Get test points in target element's document (host when using link)
         target_doc = target_el.Document
-        test_points = get_element_test_points(target_el, target_doc)
+        if _is_3d_zone_vote_target(target_el):
+            test_points = _merge_3d_zone_vote_test_points(target_el, target_doc)
+        else:
+            test_points = get_element_test_points(target_el, target_doc)
         if not test_points:
             return None
         
@@ -1954,21 +2385,28 @@ def get_containing_element_indexed(target_el, doc, element_index, cell_size_feet
             except Exception as tx_err:
                 logger.debug("Error transforming target points to link coordinates: {}".format(str(tx_err)))
         
-        # Use first point for spatial index lookup (X/Y position)
-        primary_point = test_points[0]
+        use_vote = _is_3d_zone_vote_target(target_el)
         
-        # Calculate grid cell for target point
-        ix = int(primary_point.X / cell_size_feet)
-        iy = int(primary_point.Y / cell_size_feet)
-        
-        # Check 3x3 neighborhood to handle boundary cases
-        # Collect all candidates from all cells, allowing duplicates
+        # Collect candidates from spatial index (3x3 around each sample cell for roofs/floors)
         all_candidates = []
-        for di in [-1, 0, 1]:
-            for dj in [-1, 0, 1]:
-                cell_key = (ix + di, iy + dj)
-                if cell_key in element_index:
-                    all_candidates.extend(element_index[cell_key])
+        if use_vote:
+            for pt in test_points:
+                ix = int(pt.X / cell_size_feet)
+                iy = int(pt.Y / cell_size_feet)
+                for di in [-1, 0, 1]:
+                    for dj in [-1, 0, 1]:
+                        cell_key = (ix + di, iy + dj)
+                        if cell_key in element_index:
+                            all_candidates.extend(element_index[cell_key])
+        else:
+            primary_point = test_points[0]
+            ix = int(primary_point.X / cell_size_feet)
+            iy = int(primary_point.Y / cell_size_feet)
+            for di in [-1, 0, 1]:
+                for dj in [-1, 0, 1]:
+                    cell_key = (ix + di, iy + dj)
+                    if cell_key in element_index:
+                        all_candidates.extend(element_index[cell_key])
         
         if not all_candidates:
             return None
@@ -1995,25 +2433,37 @@ def get_containing_element_indexed(target_el, doc, element_index, cell_size_feet
                 # Fallback to ElementId sorting if import fails
                 candidates.sort(key=lambda el: get_element_id_value(el.Id), reverse=sort_descending)
         
-        # Check candidates in user's configured sort order (preserved from spatial index)
-        # Elements are already sorted in the index, and deduplication preserves sort order
-        for source_el in candidates:
-            # Check each test point against this candidate
-            for point in test_points:
-                # Fast bounding box rejection
+        if use_vote:
+            def _zone_inside(source_el, point):
                 try:
                     element_id = get_element_id_value(source_el.Id)
                     if element_id in _geometry_cache:
                         cached = _geometry_cache[element_id]
                         bbox = cached.get("bbox")
                         if bbox and not is_point_in_bbox(point, bbox):
-                            continue  # This point not in bbox, try next point
-                except Exception as e:
+                            return False
+                except Exception:
+                    pass
+                return is_point_in_element(source_el, point, doc)
+            
+            return _pick_containing_zone_by_vote(
+                test_points, candidates, _zone_inside, ROOF_CONTAINMENT_VOTE_MIN_FRACTION,
+                sort_candidates_by_id=False)
+        
+        for source_el in candidates:
+            for point in test_points:
+                try:
+                    element_id = get_element_id_value(source_el.Id)
+                    if element_id in _geometry_cache:
+                        cached = _geometry_cache[element_id]
+                        bbox = cached.get("bbox")
+                        if bbox and not is_point_in_bbox(point, bbox):
+                            continue
+                except Exception:
                     continue
                 
-                # Final point-in-solid check
                 if is_point_in_element(source_el, point, doc):
-                    return source_el  # Found containment - return first match respecting user's sort order
+                    return source_el
         
         return None
     except Exception as e:
@@ -2028,6 +2478,7 @@ def get_containing_element(element, doc, source_categories):
     
     FIXED: Now uses ElementMulticategoryFilter for multiple categories (OR logic)
     instead of chaining OfCategory() which creates AND logic.
+    Roofs and floors: multiple sample points + union of quick-filter hits, then plurality vote.
     
     Args:
         element: Target element
@@ -2038,6 +2489,44 @@ def get_containing_element(element, doc, source_categories):
         Element: Containing element or None
     """
     try:
+        if _is_3d_zone_vote_target(element):
+            test_points = _merge_3d_zone_vote_test_points(element, doc)
+            if not test_points:
+                return None
+            element_ids = {}
+            for pt in test_points:
+                point_filter = BoundingBoxContainsPointFilter(pt)
+                if source_categories:
+                    for category in source_categories:
+                        category_elements = FilteredElementCollector(doc)\
+                            .WhereElementIsNotElementType()\
+                            .OfCategory(category)\
+                            .WherePasses(point_filter)\
+                            .ToElements()
+                        for el in category_elements:
+                            el_id = get_element_id_value(el.Id)
+                            if el_id not in element_ids:
+                                element_ids[el_id] = el
+                else:
+                    for el in FilteredElementCollector(doc)\
+                            .WhereElementIsNotElementType()\
+                            .WherePasses(point_filter)\
+                            .ToElements():
+                        el_id = get_element_id_value(el.Id)
+                        if el_id not in element_ids:
+                            element_ids[el_id] = el
+            candidate_elements = sorted(
+                element_ids.values(), key=lambda el: get_element_id_value(el.Id))
+            if not candidate_elements:
+                return None
+            
+            def _zone_inside_fb(source_el, p):
+                return is_point_in_element(source_el, p, doc)
+            
+            return _pick_containing_zone_by_vote(
+                test_points, candidate_elements, _zone_inside_fb,
+                ROOF_CONTAINMENT_VOTE_MIN_FRACTION, sort_candidates_by_id=True)
+        
         # Pass doc for in-place family handling (uses geometry extraction)
         point = get_element_representative_point(element, doc)
         if not point:
