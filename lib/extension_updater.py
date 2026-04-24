@@ -154,8 +154,34 @@ def list_remote_branches(remote=DEFAULT_REMOTE):
     return sorted(set(branches), key=lambda s: s.lower())
 
 
+def list_branches_with_source(remote=DEFAULT_REMOTE):
+    """Return a combined, sorted list of branch descriptors.
+
+    Each item is a dict:
+        {
+            'name':   'feature/foo',
+            'local':  True|False,   # exists under refs/heads
+            'remote': True|False,   # exists under refs/remotes/<remote>
+        }
+
+    The union includes branches that exist locally only (not yet pushed)
+    as well as branches available on ``remote`` (from the last fetch).
+    """
+    local = set(list_local_branches())
+    remote_names = set(list_remote_branches(remote))
+    names = sorted(local | remote_names, key=lambda s: s.lower())
+    return [
+        {'name': n, 'local': n in local, 'remote': n in remote_names}
+        for n in names
+    ]
+
+
 def checkout_branch(branch_name, remote=DEFAULT_REMOTE):
-    """Check out a branch that exists on the remote (see ``list_remote_branches``).
+    """Check out a branch that exists locally or on ``remote``.
+
+    Accepts branches from either ``list_local_branches`` or
+    ``list_remote_branches`` to avoid blocking checkout of branches
+    that were created locally but not yet pushed.
 
     Returns (success, message).
     """
@@ -164,30 +190,35 @@ def checkout_branch(branch_name, remote=DEFAULT_REMOTE):
         return False, 'Extension directory is not a git repository.'
     if not branch_name:
         return False, 'No branch selected.'
-    allowed = list_remote_branches(remote)
-    if branch_name not in allowed:
+
+    local_set = set(list_local_branches())
+    remote_set = set(list_remote_branches(remote))
+    if branch_name not in local_set and branch_name not in remote_set:
         return False, (
-            'Branch is not listed for remote "{}". '
+            'Branch "{}" is not known locally or on remote "{}". '
             'Fetch the remote (e.g. pyRevit Reload) and try again.'
-        ).format(remote)
+        ).format(branch_name, remote)
 
     code, out, err = _run_git(['checkout', branch_name], extension_dir)
     if code == 0:
         return True, 'OK'
 
-    _run_git(['fetch', remote, branch_name], extension_dir)
-    code, out, err = _run_git(['checkout', branch_name], extension_dir)
-    if code == 0:
-        return True, 'OK'
+    # Only attempt to pull the branch from the remote when it actually exists there.
+    if branch_name in remote_set:
+        _run_git(['fetch', remote, branch_name], extension_dir)
+        code, out, err = _run_git(['checkout', branch_name], extension_dir)
+        if code == 0:
+            return True, 'OK'
 
-    ref = '{}/{}'.format(remote, branch_name)
-    code, out, err = _run_git(['checkout', '-b', branch_name, ref], extension_dir)
-    if code != 0:
-        detail = (err or out or '').strip()
-        if not detail:
-            detail = 'git checkout failed (exit code {})'.format(code)
-        return False, detail
-    return True, 'OK'
+        ref = '{}/{}'.format(remote, branch_name)
+        code, out, err = _run_git(['checkout', '-b', branch_name, ref], extension_dir)
+        if code == 0:
+            return True, 'OK'
+
+    detail = (err or out or '').strip()
+    if not detail:
+        detail = 'git checkout failed (exit code {})'.format(code)
+    return False, detail
 
 
 def get_version_string(repo_info):
