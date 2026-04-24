@@ -55,28 +55,6 @@ from revit.compat import get_element_id_value, make_element_id
 
 logger = script.get_logger()
 
-# #region agent log
-import json as _dbg_json
-import time as _dbg_time
-_DBG_LOG_PATH = op.join(extension_dir, 'debug-64b963.log')
-
-def _dlog(hypothesis_id, location, message, data=None):
-    try:
-        payload = {
-            "sessionId": "64b963",
-            "runId": "clashviews",
-            "hypothesisId": hypothesis_id,
-            "timestamp": int(_dbg_time.time() * 1000),
-            "location": location,
-            "message": message,
-            "data": data or {},
-        }
-        with open(_DBG_LOG_PATH, 'a') as _f:
-            _f.write(_dbg_json.dumps(payload) + "\n")
-    except Exception:
-        pass
-# #endregion
-
 DEBUG_MODE = False
 
 doc = __revit__.ActiveUIDocument.Document
@@ -1059,22 +1037,8 @@ class ClashViewsWindow(forms.WPFWindow):
                     link_categories=link_cats,
                 )
 
-            # #region agent log
-            _dlog("H", "script.py:createButton_Click.post_create",
-                  "before ActiveView assignment",
-                  {"created_sheets": int(len(self.created_sheets))})
-            # #endregion
             if self.created_sheets:
-                # #region agent log
-                _dlog("H", "script.py:createButton_Click.pre_ActiveView",
-                      "about to set uidoc.ActiveView = sheet",
-                      {"sheet_id": str(self.created_sheets[0].Id)})
-                # #endregion
                 uidoc.ActiveView = self.created_sheets[0]
-                # #region agent log
-                _dlog("H", "script.py:createButton_Click.after_ActiveView",
-                      "uidoc.ActiveView assigned", {})
-                # #endregion
 
         except Exception as ex:
             logger.error("Error creating clash views: {}".format(ex))
@@ -1226,6 +1190,8 @@ class ClashViewsWindow(forms.WPFWindow):
                     "a_ids": a_ids,
                     "b_ids": b_ids,
                     "link_mode": is_link,
+                    "cat_a_id": ids_map.get("cat_a_id"),
+                    "cat_b_id": ids_map.get("cat_b_id"),
                     "center": XYZ(
                         (bbox.Min.X + bbox.Max.X) / 2.0,
                         (bbox.Min.Y + bbox.Max.Y) / 2.0,
@@ -1307,6 +1273,11 @@ class ClashViewsWindow(forms.WPFWindow):
                             view_type_id, scale, name_prefix, iteration,
                             ovr_a, ovr_b,
                             is_link_mode=info.get("link_mode", False),
+                            link_instance_id=(link_instance.Id
+                                              if link_instance is not None
+                                              else None),
+                            cat_a_id=info.get("cat_a_id"),
+                            cat_b_id=info.get("cat_b_id"),
                         )
                         if view:
                             self.clash_views[(pair_key, level_name)] = view
@@ -1354,12 +1325,16 @@ class ClashViewsWindow(forms.WPFWindow):
     def _create_clash_view(self, pair_key, level_name,
                            a_id_values, b_id_values, uniform_bbox,
                            view_type_id, scale, name_prefix, iteration,
-                           ovr_a, ovr_b, is_link_mode=False):
+                           ovr_a, ovr_b, is_link_mode=False,
+                           link_instance_id=None,
+                           cat_a_id=None, cat_b_id=None):
         """Create an isolated isometric 3D view.
 
         Host mode: isolate A+B, color A=red, B=green.
-        Link mode: isolate host (A) elements only (link elements cannot be isolated
-        in host views), color A=red. Section box scopes the view to the clash area.
+        Link mode: isolate host (A) elements + the link instance itself (so
+        linked content stays visible), color A=red. After isolation is
+        converted to permanent, hide all non-target Model categories so only
+        the host and link categories being clashed remain visible.
         """
         isolate_list = List[ElementId]()
         a_eids = []
@@ -1379,6 +1354,13 @@ class ClashViewsWindow(forms.WPFWindow):
                     continue
                 b_eids.append(eid)
                 isolate_list.Add(eid)
+        else:
+            if link_instance_id is not None:
+                try:
+                    if doc.GetElement(link_instance_id) is not None:
+                        isolate_list.Add(link_instance_id)
+                except Exception:
+                    pass
 
         if not a_eids and not b_eids:
             return None
@@ -1479,6 +1461,34 @@ class ClashViewsWindow(forms.WPFWindow):
             except Exception as ex:
                 # #region agent log
                 _dlog("C", "script.py:_create_clash_view.after_ConvertTempToPermanent", "failed", {"error": str(ex)})
+                # #endregion
+
+        if is_link_mode:
+            keep_values = []
+            if cat_a_id is not None:
+                try:
+                    keep_values.append(get_element_id_value(cat_a_id))
+                except Exception:
+                    pass
+            if cat_b_id is not None:
+                try:
+                    keep_values.append(get_element_id_value(cat_b_id))
+                except Exception:
+                    pass
+            try:
+                hidden, skipped = _hide_non_target_model_categories(
+                    view, keep_values)
+                # #region agent log
+                _dlog("I", "script.py:_create_clash_view.after_HideOtherCategories",
+                      "non-target model categories hidden",
+                      {"hidden": int(hidden),
+                       "skipped": int(skipped),
+                       "keep_values": [int(k) for k in keep_values]})
+                # #endregion
+            except Exception as ex:
+                # #region agent log
+                _dlog("I", "script.py:_create_clash_view.after_HideOtherCategories",
+                      "failed", {"error": str(ex)})
                 # #endregion
 
         # Color overrides

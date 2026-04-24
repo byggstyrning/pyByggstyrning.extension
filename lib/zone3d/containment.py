@@ -13,8 +13,21 @@ from Autodesk.Revit.DB import (
     BoundingBoxXYZ, BuiltInParameter, Phase, ElementId, FamilyInstance,
     HostObject, HostObjectUtils, ShellLayerType, PlanarFace
 )
-from Autodesk.Revit.DB.Architecture import Room, FootPrintRoof
+from Autodesk.Revit.DB.Architecture import Room
 from Autodesk.Revit.DB.Mechanical import Space
+
+# FootPrintRoof: keep separate from Room import. Some IronPython/Revit combinations
+# raise "Cannot import name FootPrintRoof" on combined import and break entire
+# containment load (startup ifc_export -> core -> containment; Write -> core).
+_FootPrintRoof_type = None
+try:
+    from Autodesk.Revit.DB.Architecture import FootPrintRoof as _FootPrintRoof_type
+except Exception:
+    try:
+        import Autodesk.Revit.DB.Architecture as _revit_architecture
+        _FootPrintRoof_type = getattr(_revit_architecture, "FootPrintRoof", None)
+    except Exception:
+        _FootPrintRoof_type = None
 from pyrevit import script
 
 try:
@@ -687,7 +700,7 @@ def _get_roof_footprint_test_points(element, doc=None):
     max_total = ROOF_FOOTPRINT_MAX_POINTS
     spacing = ROOF_FOOTPRINT_SAMPLE_SPACING_FT
     try:
-        if isinstance(element, FootPrintRoof):
+        if _FootPrintRoof_type is not None and isinstance(element, _FootPrintRoof_type):
             try:
                 fca = element.GetFootprint()
                 if fca is not None:
