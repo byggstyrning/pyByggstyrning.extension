@@ -11,7 +11,8 @@ end-to-end on a single sheet in a grid layout.
 
 Optionally clash against a linked model: enable "Against link model", pick a link,
 select link categories. Pairs are then host-category x link-category (cross-product).
-Cross-doc clash uses bbox-only intersection (no geometric confirmation across docs)."""
+Cross-doc clash uses bbox prefilter + solid-solid intersection (link solids transformed
+to host coordinate space for geometric confirmation)."""
 
 import clr
 clr.AddReference("System")
@@ -32,11 +33,15 @@ from Autodesk.Revit.DB import (
     Color as RevitColor,
     RevitLinkInstance, RevitLinkType,
     Category, CategoryType,
+    Reference,
+    BooleanOperationsUtils, BooleanOperationsType, Solid, SolidUtils,
+    Options, GeometryInstance, ViewDetailLevel,
 )
+from Autodesk.Revit.UI import RevitCommandId, PostableCommand
 
 import sys
 import os.path as op
-from collections import OrderedDict
+from collections import OrderedDict, namedtuple
 from itertools import combinations
 
 from pyrevit import revit, DB
@@ -311,6 +316,87 @@ def _transform_bbox_to_host(bbox, transform):
     return bb
 
 
+def _iter_element_solids(element):
+    """Yield Solid objects with Volume > 1e-9 from an element's geometry.
+
+    Recurses through GeometryInstance.GetInstanceGeometry(). Uses options that
+    skip references and non-visible geometry for speed.
+    """
+    if element is None:
+        return
+    opts = Options()
+    opts.ComputeReferences = False
+    opts.IncludeNonVisibleObjects = False
+    opts.DetailLevel = ViewDetailLevel.Fine
+    try:
+        geom = element.get_Geometry(opts)
+    except Exception:
+        return
+    if geom is None:
+        return
+    stack = list(geom)
+    while stack:
+        obj = stack.pop()
+        if obj is None:
+            continue
+        if isinstance(obj, Solid):
+            try:
+                if obj.Volume > 1e-9:
+                    yield obj
+            except Exception:
+                pass
+        elif isinstance(obj, GeometryInstance):
+            try:
+                inst_geom = obj.GetInstanceGeometry()
+                if inst_geom:
+                    stack.extend(inst_geom)
+            except Exception:
+                pass
+
+
+def _transform_solids(solids, transform):
+    """Transform solids to a new coordinate space using SolidUtils.CreateTransformed.
+
+    Returns list of transformed solids; drops any that fail.
+    """
+    result = []
+    for s in solids:
+        try:
+            if s is None:
+                continue
+            ts = SolidUtils.CreateTransformed(s, transform)
+            if ts is not None:
+                result.append(ts)
+        except Exception:
+            pass
+    return result
+
+
+def _solids_intersect(solids_a, solids_b, tol=1e-9):
+    """Return True if any solid from A intersects any solid from B.
+
+    Uses BooleanOperationsUtils.ExecuteBooleanOperation with BooleanOperationsType.Intersect.
+    Per-pair try/except so a bad solid doesn't kill the whole pair.
+    """
+    for sa in solids_a:
+        if sa is None:
+            continue
+        for sb in solids_b:
+            if sb is None:
+                continue
+            try:
+                inter = BooleanOperationsUtils.ExecuteBooleanOperation(sa, sb, BooleanOperationsType.Intersect)
+                if inter is not None:
+                    try:
+                        if inter.Volume > tol:
+                            return True
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+    return False
+
+
 def _element_level_name(document, element):
     """Best-effort level name for an element; 'No Level' if unknown."""
     try:
@@ -394,6 +480,8 @@ def _hide_non_target_model_categories(view, keep_cat_id_values):
     link uses the "By host view" display mode (the Revit default), so hiding
     non-target categories here scopes both host AND link content to the two
     clashing categories.
+
+    OST_RvtLinks is always exempt — hiding it would suppress all linked models.
     """
     keep_set = set()
     for v in keep_cat_id_values:
@@ -404,6 +492,21 @@ def _hide_non_target_model_categories(view, keep_cat_id_values):
         except Exception:
             continue
     document = view.Document
+    # Always exempt OST_RvtLinks regardless of caller's keep set
+    try:
+        rvtlinks_cat = Category.GetCategory(document, BuiltInCategory.OST_RvtLinks)
+        if rvtlinks_cat is not None:
+            keep_set.add(int(get_element_id_value(rvtlinks_cat.Id)))
+    except Exception:
+        pass
+    # #region agent log
+    import json as _j, time as _t
+    try:
+        with open(op.join(extension_dir, 'debug-822ea8.log'), 'a') as _f:
+            _f.write(_j.dumps({"sessionId": "822ea8", "hypothesisId": "H1", "location": "script.py:_hide_non_target_model_categories", "message": "keep_set computed", "data": {"keep_set": sorted(list(keep_set))}, "timestamp": int(_t.time() * 1000)}) + "\n")
+    except Exception:
+        pass
+    # #endregion
     hidden = 0
     skipped = 0
     try:
@@ -428,6 +531,19 @@ def _hide_non_target_model_categories(view, keep_cat_id_values):
             except Exception:
                 continue
         if cid_val in keep_set:
+            # #region agent log
+            import json as _j, time as _t
+            try:
+                with open(op.join(extension_dir, 'debug-822ea8.log'), 'a') as _f:
+                    _f.write(_j.dumps({"sessionId": "822ea8", "hypothesisId": "H1", "location": "script.py:_hide_non_target_model_categories", "message": "unhiding kept category", "data": {"cid_val": cid_val, "cat_name": str(cat.Name)}, "timestamp": int(_t.time() * 1000)}) + "\n")
+            except Exception:
+                pass
+            # #endregion
+            try:
+                if view.CanCategoryBeHidden(cid):
+                    view.SetCategoryHidden(cid, False)
+            except Exception:
+                pass
             continue
         try:
             if not view.CanCategoryBeHidden(cid):
@@ -444,12 +560,345 @@ def _hide_non_target_model_categories(view, keep_cat_id_values):
     return (hidden, skipped)
 
 
+def _ensure_link_instance_visible(view, link_instance_id, document):
+    """Defensive visibility restore for a link instance after category hiding.
+
+    After ConvertTemporaryHideIsolateToPermanent the OST_RvtLinks category can
+    still be hidden (e.g. by a view-family default), suppressing the link even
+    though the instance was in the isolate set.  This helper corrects that.
+    Idempotent — safe to call unconditionally.
+    """
+    try:
+        if view.AreModelCategoriesHidden:
+            view.AreModelCategoriesHidden = False
+    except Exception:
+        pass
+    try:
+        rvtlinks_cat_id = _host_category_id(document, BuiltInCategory.OST_RvtLinks)
+        if rvtlinks_cat_id is not None:
+            if view.CanCategoryBeHidden(rvtlinks_cat_id):
+                view.SetCategoryHidden(rvtlinks_cat_id, False)
+    except Exception:
+        pass
+    try:
+        li = document.GetElement(link_instance_id)
+        if li is not None and li.IsHidden(view):
+            unhide = List[ElementId]()
+            unhide.Add(link_instance_id)
+            view.UnhideElements(unhide)
+    except Exception:
+        pass
+
+
+# =============================================================================
+# Refinement pipeline (per-element complement hiding via Idling + PostCommand)
+# =============================================================================
+
+RefinementJob = namedtuple("RefinementJob", [
+    "view_id",           # ElementId of the created View3D (in host doc)
+    "link_instance_id",  # ElementId of RevitLinkInstance (in host doc)
+    "a_cat_id",          # ElementId of the A (host) category — hide ALL in link
+    "b_cat_id",          # ElementId of the B (link) category
+    "b_clash_link_eids", # list[int] — linked-doc ElementId integers that ARE clash B
+    "bbox_min",          # XYZ — host-space section-box min
+    "bbox_max",          # XYZ — host-space section-box max
+])
+
+# Stored on sys so it survives script scope cleanup between pushbutton runs.
+# pyRevit disposes the script module after execution, which would GC module-level
+# lists; sys persists for the AppDomain (Revit session) lifetime.
+_SYS_KEY = '_pyBS_clash_refinement_drivers'
+
+
+class LinkVisibilityRefinementDriver(object):
+    """Idling-event state machine that hides unwanted elements from the link
+    in each created clash view, one view per idle tick.
+
+    Two kinds of elements are hidden per view:
+      1. All link-A-category elements (same category as host A, e.g. Walls in
+         the link that are visible because ByHostView inherits host VG).
+      2. Non-clash link-B-category elements (structural columns that don't clash).
+
+    Workaround for View.HideElements rejecting linked element ids (forum-validated):
+      build Reference.CreateLinkReference, set as uidoc.Selection, post HideElements.
+    """
+
+    MAX_COMPLEMENT_SIZE = 500
+
+    def __init__(self, uiapp, jobs, document, log_path, return_to_sheet_id=None,
+                 summary_data=None, show_summary_callback=None, progress_close_callback=None,
+                 progress_update_callback=None):
+        self._uiapp = uiapp
+        self._jobs = list(jobs)
+        self._idx = 0
+        self._doc = document
+        self._log_path = log_path   # stored on instance — survives scope cleanup
+        self._handler = None
+        self._return_to_sheet_id = return_to_sheet_id  # ElementId to return to after all jobs
+        self._summary_data = summary_data  # Dict with sheet, view_names, clashes info
+        self._show_summary_callback = show_summary_callback  # Function to show summary dialog
+        self._progress_close_callback = progress_close_callback  # Function to close progress window
+        self._progress_update_callback = progress_update_callback  # Function to update progress
+        # Capture all module-level names needed by _process at init-time.
+        # pyRevit disposes the script module after the pushbutton returns, so
+        # bare module names are unavailable when the Idling callback fires.
+        self._ElementId = ElementId
+        self._FilteredElementCollector = FilteredElementCollector
+        self._BoundingBoxIntersectsFilter = BoundingBoxIntersectsFilter
+        self._Outline = Outline
+        self._XYZ = XYZ
+        self._Reference = Reference
+        self._List = List
+        self._get_element_id_value = get_element_id_value
+        self._RevitCommandId = RevitCommandId
+        self._PostableCommand = PostableCommand
+
+    def start(self):
+        if not self._jobs:
+            return
+        self._handler = self._on_idling
+        self._uiapp.Idling += self._handler
+        import sys
+        if not hasattr(sys, _SYS_KEY):
+            setattr(sys, _SYS_KEY, [])
+        getattr(sys, _SYS_KEY).append(self)
+        # #region agent log
+        import json as _j, time as _t
+        with open(self._log_path, 'a') as _f:
+            _f.write(_j.dumps({"sessionId": "64b963", "hypothesisId": "A", "location": "script.py:driver.start", "message": "driver started (sys-stored)", "data": {"jobs": len(self._jobs)}, "timestamp": int(_t.time() * 1000)}) + "\n")
+        # #endregion
+
+    def stop(self):
+        if self._handler is not None:
+            try:
+                self._uiapp.Idling -= self._handler
+            except Exception:
+                pass
+            self._handler = None
+        import sys
+        try:
+            getattr(sys, _SYS_KEY).remove(self)
+        except (AttributeError, ValueError):
+            pass
+
+    def _on_idling(self, sender, e):
+        # #region agent log
+        import json as _j, time as _t
+        with open(self._log_path, 'a') as _f:
+            _f.write(_j.dumps({"sessionId": "64b963", "hypothesisId": "B", "location": "script.py:_on_idling", "message": "idling fired", "data": {"idx": self._idx, "total": len(self._jobs)}, "timestamp": int(_t.time() * 1000)}) + "\n")
+        # #endregion
+        if self._idx >= len(self._jobs):
+            # All jobs done — close progress bar first
+            if self._progress_close_callback is not None:
+                try:
+                    self._progress_close_callback()
+                except Exception as ex:
+                    logger.debug("Failed to close progress window: {}".format(ex))
+            # Return to sheet if specified
+            if self._return_to_sheet_id is not None:
+                try:
+                    uidoc = self._uiapp.ActiveUIDocument
+                    if uidoc is not None:
+                        sheet = self._doc.GetElement(self._return_to_sheet_id)
+                        if sheet is not None:
+                            uidoc.RequestViewChange(sheet)
+                            # Show summary dialog after returning to sheet
+                            if self._show_summary_callback is not None and self._summary_data is not None:
+                                try:
+                                    self._show_summary_callback(self._summary_data)
+                                except Exception as ex:
+                                    logger.debug("Failed to show summary dialog: {}".format(ex))
+                except Exception:
+                    pass
+            self.stop()
+            return
+        job = self._jobs[self._idx]
+        uidoc = self._uiapp.ActiveUIDocument
+        if uidoc is None:
+            self.stop()
+            return
+        # Two-phase per job:
+        #   Phase 1 — active view ≠ target: call RequestViewChange and return WITHOUT
+        #             advancing idx so next Idling tick finds the view active.
+        #   Phase 2 — active view = target: build refs, PostCommand, advance idx.
+        current = uidoc.ActiveView
+        if current is None or current.Id != job.view_id:
+            view = self._doc.GetElement(job.view_id)
+            if view is None:
+                self._idx += 1  # skip bad job
+                return
+            try:
+                uidoc.RequestViewChange(view)
+                # #region agent log
+                with open(self._log_path, 'a') as _f:
+                    _f.write(_j.dumps({"sessionId": "64b963", "hypothesisId": "D", "location": "script.py:_on_idling.RequestViewChange", "message": "view change requested", "data": {"view_id": str(job.view_id)}, "timestamp": int(_t.time() * 1000)}) + "\n")
+                # #endregion
+            except Exception as ex:
+                import json as _j, time as _t
+                with open(self._log_path, 'a') as _f:
+                    _f.write(_j.dumps({"sessionId": "64b963", "hypothesisId": "D", "location": "script.py:_on_idling.RequestViewChange.except", "message": str(ex), "data": {}, "timestamp": int(_t.time() * 1000)}) + "\n")
+                self._idx += 1  # can't activate — skip
+            return  # wait for view to actually activate
+        # View is active — proceed with hiding
+        self._idx += 1
+        # Update progress window
+        if self._progress_update_callback is not None:
+            try:
+                self._progress_update_callback(self._idx)
+            except Exception:
+                pass
+        try:
+            self._process(job, uidoc)
+        except Exception as ex:
+            import json as _j, time as _t
+            with open(self._log_path, 'a') as _f:
+                _f.write(_j.dumps({"sessionId": "64b963", "hypothesisId": "B", "location": "script.py:_on_idling.except", "message": str(ex), "data": {}, "timestamp": int(_t.time() * 1000)}) + "\n")
+
+    def _process(self, job, uidoc):
+        view = self._doc.GetElement(job.view_id)
+        if view is None:
+            return
+        link_instance = self._doc.GetElement(job.link_instance_id)
+        if link_instance is None:
+            return
+        linked_doc = link_instance.GetLinkDocument()
+        if linked_doc is None:
+            return
+        # Collect refs to hide: all link-A elements + non-clash link-B elements
+        refs = []
+        a_found = 0
+        a_ref_err = None
+        b_found = 0
+        b_complement = 0
+        b_ref_err = None
+        # (1) All link-A-category elements (e.g. walls in structural link that
+        #     show via ByHostView because OST_Walls must stay visible in host VG)
+        _EId = self._ElementId
+        _FEC = self._FilteredElementCollector
+        _BBF = self._BoundingBoxIntersectsFilter
+        _Ol  = self._Outline
+        _XYZ = self._XYZ
+        _Ref = self._Reference
+        _giv = self._get_element_id_value
+        if job.a_cat_id is not None:
+            a_cat_fresh = _EId(_giv(job.a_cat_id))
+            try:
+                a_eids = list(_FEC(linked_doc)
+                              .OfCategoryId(a_cat_fresh)
+                              .WhereElementIsNotElementType()
+                              .ToElementIds())
+                a_found = len(a_eids)
+                for eid in a_eids:
+                    el = linked_doc.GetElement(eid)
+                    if el is None:
+                        continue
+                    try:
+                        refs.append(_Ref(el).CreateLinkReference(link_instance))
+                    except Exception as _ex:
+                        if a_ref_err is None:
+                            a_ref_err = str(_ex)
+                        continue
+            except Exception as _ex:
+                a_ref_err = str(_ex)
+        # (2) Non-clash link-B-category elements within section-box area
+        b_primary_err = None
+        b_fallback_err = None
+        if job.b_cat_id is not None:
+            all_b_eids = []
+            b_cat_fresh = _EId(_giv(job.b_cat_id))
+            try:
+                transform = link_instance.GetTotalTransform()
+                inv = transform.Inverse
+                p1 = inv.OfPoint(job.bbox_min)
+                p2 = inv.OfPoint(job.bbox_max)
+                link_min = _XYZ(min(p1.X, p2.X), min(p1.Y, p2.Y), min(p1.Z, p2.Z))
+                link_max = _XYZ(max(p1.X, p2.X), max(p1.Y, p2.Y), max(p1.Z, p2.Z))
+                all_b_eids = list(_FEC(linked_doc)
+                                  .OfCategoryId(b_cat_fresh)
+                                  .WhereElementIsNotElementType()
+                                  .WherePasses(_BBF(_Ol(link_min, link_max)))
+                                  .ToElementIds())
+            except Exception as _ex:
+                b_primary_err = str(_ex)
+                try:
+                    all_b_eids = list(_FEC(linked_doc)
+                                      .OfCategoryId(b_cat_fresh)
+                                      .WhereElementIsNotElementType()
+                                      .ToElementIds())
+                except Exception as _ex2:
+                    b_fallback_err = str(_ex2)
+                    all_b_eids = []
+            b_found = len(all_b_eids)
+            clash_set = set(job.b_clash_link_eids)
+            for eid in all_b_eids:
+                if _giv(eid) in clash_set:
+                    continue
+                b_complement += 1
+                el = linked_doc.GetElement(eid)
+                if el is None:
+                    continue
+                try:
+                    refs.append(_Ref(el).CreateLinkReference(link_instance))
+                except Exception as _ex:
+                    if b_ref_err is None:
+                        b_ref_err = str(_ex)
+                    continue
+        # #region agent log
+        import json as _j, time as _t
+        with open(self._log_path, 'a') as _f:
+            _f.write(_j.dumps({"sessionId": "64b963", "hypothesisId": "C-E", "location": "script.py:_process.refs", "message": "refs built", "data": {"refs_count": len(refs), "view_id": str(job.view_id), "a_cat_id": str(job.a_cat_id), "b_cat_id": str(job.b_cat_id), "a_found": a_found, "a_ref_err": a_ref_err, "b_found": b_found, "b_complement": b_complement, "b_ref_err": b_ref_err, "b_primary_err": b_primary_err, "b_fallback_err": b_fallback_err, "clash_set_size": len(clash_set) if job.b_cat_id is not None else 0}, "timestamp": int(_t.time() * 1000)}) + "\n")
+        # #endregion
+        if not refs:
+            return
+        if len(refs) > self.MAX_COMPLEMENT_SIZE:
+            logger.warning(
+                "Link refinement: too many refs ({}) for view '{}', skipping.".format(
+                    len(refs), view.Name))
+            return
+        _L = self._List
+        try:
+            uidoc.Selection.SetReferences(_L[_Ref](refs))
+        except Exception as ex:
+            logger.warning("Link refinement: SetReferences failed: {}".format(ex))
+            return
+        try:
+            cmd_id = self._RevitCommandId.LookupPostableCommandId(
+                self._PostableCommand.HideElements)
+            can_post = bool(self._uiapp.CanPostCommand(cmd_id))
+            # #region agent log
+            with open(self._log_path, 'a') as _f:
+                _f.write(_j.dumps({"sessionId": "64b963", "hypothesisId": "C", "location": "script.py:_process.PostCommand", "message": "CanPostCommand result", "data": {"can_post": can_post, "active_view_id": str(uidoc.ActiveView.Id) if uidoc.ActiveView else None}, "timestamp": int(_t.time() * 1000)}) + "\n")
+            # #endregion
+            if can_post:
+                self._uiapp.PostCommand(cmd_id)
+        except Exception as ex:
+            logger.warning("Link refinement: PostCommand failed: {}".format(ex))
+
+
 # =============================================================================
 # Color overrides
 # =============================================================================
 
 CLASH_COLOR_A = RevitColor(230, 50, 50)
 CLASH_COLOR_B = RevitColor(40, 170, 70)
+
+
+def _darken_color(color, factor=0.7):
+    """Return a darkened RevitColor by multiplying RGB values by factor (0.0-1.0).
+
+    Default factor 0.7 makes lines ~30% darker than fill.
+    """
+    try:
+        r = int(color.Red * factor)
+        g = int(color.Green * factor)
+        b = int(color.Blue * factor)
+        # Clamp to valid range
+        r = max(0, min(255, r))
+        g = max(0, min(255, g))
+        b = max(0, min(255, b))
+        return RevitColor(r, g, b)
+    except Exception:
+        return color
 
 
 def _solid_fill_pattern_id(document):
@@ -467,11 +916,16 @@ def _solid_fill_pattern_id(document):
 
 
 def _build_clash_override(color, solid_fill_id):
-    """Build an OverrideGraphicSettings that paints the element solid with color."""
+    """Build an OverrideGraphicSettings that paints the element solid with color.
+
+    Lines (projection/cut) use a darkened shade (~30% darker) for visual distinction.
+    Surfaces and cut patterns use the full-brightness color.
+    """
     ogs = OverrideGraphicSettings()
+    line_color = _darken_color(color, 0.7)
     try:
-        ogs.SetProjectionLineColor(color)
-        ogs.SetCutLineColor(color)
+        ogs.SetProjectionLineColor(line_color)
+        ogs.SetCutLineColor(line_color)
     except Exception:
         pass
     try:
@@ -585,14 +1039,14 @@ def _clash_pairs(document, bic_a, bic_b):
 
 
 # =============================================================================
-# Clash detection – host vs linked model (bbox only)
+# Clash detection – host vs linked model (bbox prefilter + solid intersection)
 # =============================================================================
 
 def _clash_pairs_with_link(document, bic_host, link_instance, link_doc, bic_link):
     """Detect clashing element pairs between host category and linked-model category.
 
-    ElementIntersectsElementFilter cannot cross documents, so this uses
-    bounding-box intersection only (transformed to host coordinate space).
+    Uses bounding-box prefilter to find candidates, then real solid-solid intersection
+    in host coordinate space (link solids transformed via SolidUtils.CreateTransformed).
 
     Returns list of (host_element, link_element) tuples.
     """
@@ -661,12 +1115,30 @@ def _clash_pairs_with_link(document, bic_host, link_instance, link_doc, bic_link
                 logger.debug("bbox filter failed for link elem {}: {}".format(link_el.Id, ex))
             continue
 
+        # Cache link solids once per link element and transform to host space
+        link_solids = list(_iter_element_solids(link_el))
+        transformed_link_solids = _transform_solids(link_solids, transform)
+        has_link_solids = len(transformed_link_solids) > 0
+
         for host_el in candidates:
             link_id_val = get_element_id_value(link_el.Id)
             host_id_val = get_element_id_value(host_el.Id)
             key = (host_id_val, link_id_val)
             if key in seen:
                 continue
+
+            # If we have transformed link solids, do real solid-solid intersection
+            if has_link_solids:
+                host_solids = list(_iter_element_solids(host_el))
+                if host_solids:
+                    if not _solids_intersect(host_solids, transformed_link_solids):
+                        continue
+                else:
+                    # Host element has no extractable solids (lines, etc.)
+                    # Fall back to bbox match so we don't silently drop clashes
+                    pass
+            # If no link solids, fall back to bbox match (non-solid link elements)
+
             seen.add(key)
             pairs.append((host_el, link_el))
 
@@ -818,6 +1290,7 @@ class ClashViewsWindow(forms.WPFWindow):
 
         self.clash_views = {}
         self.created_sheets = []
+        self._refinement_driver = None
 
         self._populate_category_filters()
         self._sync_category_list_display()
@@ -1219,22 +1692,11 @@ class ClashViewsWindow(forms.WPFWindow):
                 total_clashes, len(grouped), total_views_to_create,
                 max_dx, max_dy, max_dz))
 
-        # #region agent log
-        _dlog("ALL", "script.py:_create_clash_views.pre_tx", "view creation phase start", {
-            "link_mode": bool(link_mode),
-            "total_views_to_create": int(total_views_to_create),
-            "total_clashes": int(total_clashes),
-            "view_type_id": str(view_type_id),
-            "max_dx_ft": float(max_dx),
-            "max_dy_ft": float(max_dy),
-            "max_dz_ft": float(max_dz),
-            "scale": int(scale) if scale else None,
-        })
-        # #endregion
-
         solid_fill_id = _solid_fill_pattern_id(doc)
         ovr_a = _build_clash_override(CLASH_COLOR_A, solid_fill_id)
         ovr_b = _build_clash_override(CLASH_COLOR_B, solid_fill_id)
+
+        refinement_queue = []
 
         with TransactionGroup(doc, "Create Category Clash Views") as tg:
             tg.Start()
@@ -1281,44 +1743,101 @@ class ClashViewsWindow(forms.WPFWindow):
                         )
                         if view:
                             self.clash_views[(pair_key, level_name)] = view
+                            if info.get("link_mode") and link_instance is not None:
+                                refinement_queue.append(RefinementJob(
+                                    view_id=view.Id,
+                                    link_instance_id=link_instance.Id,
+                                    a_cat_id=info.get("cat_a_id"),
+                                    b_cat_id=info.get("cat_b_id"),
+                                    b_clash_link_eids=list(info["b_ids"]),
+                                    bbox_min=uniform.Min,
+                                    bbox_max=uniform.Max,
+                                ))
                     except Exception as ex:
                         logger.warning(
                             "Failed to create view for {} / {}: {}".format(
                                 pair_key, level_name, ex))
-                # #region agent log
-                _dlog("ALL", "script.py:_create_clash_views.pre_t1_commit",
-                      "about to commit views transaction",
-                      {"views_created": int(len(self.clash_views))})
-                # #endregion
                 t.Commit()
-                # #region agent log
-                _dlog("ALL", "script.py:_create_clash_views.after_t1_commit",
-                      "views transaction committed", {})
-                # #endregion
 
             with Transaction(doc, "Create Sheet and Place Viewports") as t:
                 t.Start()
                 self._create_sheet_and_place_viewports(
                     grouped, sheet_prefix, iteration, sheet_name, scale)
-                # #region agent log
-                _dlog("ALL", "script.py:_create_clash_views.pre_t2_commit",
-                      "about to commit sheet transaction", {})
-                # #endregion
                 t.Commit()
-                # #region agent log
-                _dlog("ALL", "script.py:_create_clash_views.after_t2_commit",
-                      "sheet transaction committed", {})
-                # #endregion
 
-            # #region agent log
-            _dlog("ALL", "script.py:_create_clash_views.pre_assimilate",
-                  "about to Assimilate TG", {})
-            # #endregion
             tg.Assimilate()
-            # #region agent log
-            _dlog("ALL", "script.py:_create_clash_views.after_assimilate",
-                  "TG assimilated", {})
-            # #endregion
+
+        # Build summary data for the results dialog
+        view_names = []
+        clash_pairs = []
+        for pair_key, by_level in grouped.items():
+            pair_count = 0
+            for level_name, ids_map in by_level.items():
+                if (pair_key, level_name) in self.clash_views:
+                    view = self.clash_views[(pair_key, level_name)]
+                    try:
+                        view_names.append(view.Name)
+                    except Exception:
+                        view_names.append(pair_key + " - " + level_name)
+                    pair_count += len(ids_map.get("a_ids", set()))
+            clash_pairs.append((pair_key, pair_count))
+
+        summary_data = {
+            'sheet': self.created_sheets[0] if self.created_sheets else None,
+            'view_names': view_names,
+            'total_clashes': total_clashes,
+            'clash_pairs': clash_pairs,
+        }
+
+        # Callback to show summary dialog (called after refinement completes)
+        def _show_summary(data):
+            try:
+                summary_window = ClashViewsSummaryWindow(
+                    data['sheet'], data['view_names'], data['total_clashes'], data['clash_pairs'])
+                summary_window.ShowDialog()
+            except Exception as ex:
+                logger.debug("Failed to show summary window: {}".format(ex))
+
+        # Start the per-element link refinement pipeline after the transaction
+        # group has been committed (elements exist in the model)
+        if refinement_queue:
+            # Get the first created sheet to return to after refinement
+            return_sheet_id = None
+            if self.created_sheets:
+                return_sheet_id = self.created_sheets[0].Id
+
+            # Create and show progress window
+            progress_window = RefinementProgressWindow(len(refinement_queue))
+            progress_window.Show()
+
+            # Callback to update progress from driver
+            def _update_progress(current):
+                try:
+                    progress_window.update_progress(current)
+                except Exception:
+                    pass
+
+            # Callback to close progress when done
+            def _close_progress():
+                try:
+                    progress_window.Close()
+                except Exception:
+                    pass
+
+            driver = LinkVisibilityRefinementDriver(
+                __revit__, refinement_queue, doc,
+                op.join(extension_dir, 'debug-64b963.log'),
+                return_to_sheet_id=return_sheet_id,
+                summary_data=summary_data,
+                show_summary_callback=_show_summary,
+                progress_close_callback=_close_progress,
+                progress_update_callback=_update_progress)
+            self._refinement_driver = driver
+            driver.start()
+        else:
+            # No refinement needed - show summary immediately
+            if self.created_sheets:
+                _show_summary(summary_data)
 
     # -------------------- View creation ----------------------------------
 
@@ -1331,10 +1850,10 @@ class ClashViewsWindow(forms.WPFWindow):
         """Create an isolated isometric 3D view.
 
         Host mode: isolate A+B, color A=red, B=green.
-        Link mode: isolate host (A) elements + the link instance itself (so
-        linked content stays visible), color A=red. After isolation is
-        converted to permanent, hide all non-target Model categories so only
-        the host and link categories being clashed remain visible.
+        Link mode: isolate host (A) elements + the link instance itself, color
+        A=red, link instance=green (tints all visible link geometry).  After
+        isolation is made permanent, non-target Model categories are hidden so
+        host and link VG both scope to the two clashing categories.
         """
         isolate_list = List[ElementId]()
         a_eids = []
@@ -1365,40 +1884,15 @@ class ClashViewsWindow(forms.WPFWindow):
         if not a_eids and not b_eids:
             return None
 
-        # #region agent log
-        _dlog("ALL", "script.py:_create_clash_view.entry", "view creation start", {
-            "pair_key": str(pair_key),
-            "level_name": str(level_name),
-            "a_eids": int(len(a_eids)),
-            "b_eids": int(len(b_eids)),
-            "isolate_count": int(isolate_list.Count),
-            "is_link_mode": bool(is_link_mode),
-            "bbox_min": [float(uniform_bbox.Min.X), float(uniform_bbox.Min.Y), float(uniform_bbox.Min.Z)],
-            "bbox_max": [float(uniform_bbox.Max.X), float(uniform_bbox.Max.Y), float(uniform_bbox.Max.Z)],
-            "view_type_id": str(view_type_id),
-        })
-        # #endregion
-
         view = View3D.CreateIsometric(doc, view_type_id)
-        # #region agent log
-        _dlog("A", "script.py:_create_clash_view.after_CreateIsometric",
-              "CreateIsometric returned", {"view_is_none": view is None,
-                                             "view_id": str(view.Id) if view is not None else None})
-        # #endregion
         if view is None:
             return None
 
         try:
             view.SetSectionBox(uniform_bbox)
-            # #region agent log
-            _dlog("B", "script.py:_create_clash_view.after_SetSectionBox", "ok", {})
-            # #endregion
         except Exception as ex:
             logger.debug("SetSectionBox failed for {} / {}: {}".format(
                 pair_key, level_name, ex))
-            # #region agent log
-            _dlog("B", "script.py:_create_clash_view.after_SetSectionBox", "failed", {"error": str(ex)})
-            # #endregion
 
         try:
             view.Scale = scale
@@ -1411,110 +1905,109 @@ class ClashViewsWindow(forms.WPFWindow):
         else:
             raw_name = "{0}{1} - {2}".format(name_prefix, pair_key, level_name)
         base_name = _sanitize_revit_name(raw_name)
-        _name_assigned = False
         try:
             view.Name = base_name
-            _name_assigned = True
-            # #region agent log
-            _dlog("D", "script.py:_create_clash_view.after_SetName", "ok",
-                  {"name": base_name, "raw_name": raw_name})
-            # #endregion
-        except Exception as ex:
-            # #region agent log
-            _dlog("D", "script.py:_create_clash_view.after_SetName",
-                  "sanitized base_name failed, entering fallback loop",
-                  {"error": str(ex), "name": base_name, "raw_name": raw_name})
-            # #endregion
+        except Exception:
             for i in range(1, 100):
                 try:
                     view.Name = u"{} ({})".format(base_name, i)
-                    _name_assigned = True
                     break
                 except Exception:
                     continue
-        # #region agent log
-        _dlog("D", "script.py:_create_clash_view.after_SetName_fallback_loop",
-              "fallback loop exited",
-              {"assigned": bool(_name_assigned),
-               "final_name": str(view.Name) if view is not None else None})
-        # #endregion
 
         if isolate_list.Count > 0:
+            _iso_err = None
+            _conv_err = None
             try:
                 view.IsolateElementsTemporary(isolate_list)
-                # #region agent log
-                _dlog("C", "script.py:_create_clash_view.after_IsolateTemporary", "ok",
-                      {"count": int(isolate_list.Count)})
-                # #endregion
             except Exception as ex:
+                _iso_err = str(ex)
                 if DEBUG_MODE:
                     logger.debug("IsolateElementsTemporary failed: {}".format(ex))
-                # #region agent log
-                _dlog("C", "script.py:_create_clash_view.after_IsolateTemporary", "failed", {"error": str(ex)})
-                # #endregion
-
             try:
                 view.ConvertTemporaryHideIsolateToPermanent()
-                # #region agent log
-                _dlog("C", "script.py:_create_clash_view.after_ConvertTempToPermanent", "ok", {})
-                # #endregion
             except Exception as ex:
-                # #region agent log
-                _dlog("C", "script.py:_create_clash_view.after_ConvertTempToPermanent", "failed", {"error": str(ex)})
-                # #endregion
+                _conv_err = str(ex)
+            # #region agent log
+            import json as _j, time as _t
+            try:
+                with open(op.join(extension_dir, 'debug-822ea8.log'), 'a') as _f:
+                    _f.write(_j.dumps({"sessionId": "822ea8", "hypothesisId": "I1", "location": "script.py:isolation", "message": "host isolation result", "data": {"is_link_mode": is_link_mode, "isolate_count": isolate_list.Count, "a_eids_count": len(a_eids), "cat_a_id": str(cat_a_id), "cat_b_id": str(cat_b_id), "iso_err": _iso_err, "conv_err": _conv_err}, "timestamp": int(_t.time() * 1000)}) + "\n")
+            except Exception:
+                pass
+            # #endregion
+
+        # Hide all annotation categories by default for clean clash views
+        try:
+            _set_annotation_categories_visible(view, False)
+        except Exception as ex:
+            logger.debug("Failed to hide annotations: {}".format(ex))
 
         if is_link_mode:
             keep_values = []
-            if cat_a_id is not None:
-                try:
-                    keep_values.append(get_element_id_value(cat_a_id))
-                except Exception:
-                    pass
-            if cat_b_id is not None:
-                try:
-                    keep_values.append(get_element_id_value(cat_b_id))
-                except Exception:
-                    pass
+            for cid in (cat_a_id, cat_b_id):
+                if cid is not None:
+                    try:
+                        keep_values.append(get_element_id_value(cid))
+                    except Exception:
+                        pass
+            # #region agent log
+            import json as _j, time as _t
             try:
-                hidden, skipped = _hide_non_target_model_categories(
-                    view, keep_values)
+                with open(op.join(extension_dir, 'debug-822ea8.log'), 'a') as _f:
+                    _f.write(_j.dumps({"sessionId": "822ea8", "hypothesisId": "H1", "location": "script.py:before_category_hide", "message": "about to call _hide_non_target_model_categories", "data": {"is_link_mode": is_link_mode, "keep_values": keep_values, "cat_a_id": str(cat_a_id), "cat_b_id": str(cat_b_id)}, "timestamp": int(_t.time() * 1000)}) + "\n")
+            except Exception:
+                pass
+            # #endregion
+            try:
+                _hidden, _skipped = _hide_non_target_model_categories(view, keep_values)
                 # #region agent log
-                _dlog("I", "script.py:_create_clash_view.after_HideOtherCategories",
-                      "non-target model categories hidden",
-                      {"hidden": int(hidden),
-                       "skipped": int(skipped),
-                       "keep_values": [int(k) for k in keep_values]})
+                import json as _j, time as _t
+                try:
+                    with open(op.join(extension_dir, 'debug-822ea8.log'), 'a') as _f:
+                        _f.write(_j.dumps({"sessionId": "822ea8", "hypothesisId": "H1", "location": "script.py:after_category_hide", "message": "_hide_non_target_model_categories result", "data": {"hidden": _hidden, "skipped": _skipped, "keep_values": keep_values}, "timestamp": int(_t.time() * 1000)}) + "\n")
+                except Exception:
+                    pass
                 # #endregion
             except Exception as ex:
-                # #region agent log
-                _dlog("I", "script.py:_create_clash_view.after_HideOtherCategories",
-                      "failed", {"error": str(ex)})
-                # #endregion
+                logger.debug("_hide_non_target_model_categories failed: {}".format(ex))
+            # Defensive: ensure link instance and OST_RvtLinks are visible
+            # (category hider now always exempts OST_RvtLinks, but this guard
+            #  handles unexpected view-family defaults and re-entrancy)
+            if link_instance_id is not None:
+                _ensure_link_instance_visible(view, link_instance_id, doc)
+            # Phase 4: set Custom basics override so the Basics tab is explicit
+            if link_instance_id is not None:
+                try:
+                    from Autodesk.Revit.DB import RevitLinkGraphicsSettings, LinkVisibility
+                    revit_ver = int(__revit__.Application.VersionNumber)
+                    if revit_ver >= 2025:
+                        gs = RevitLinkGraphicsSettings()
+                        gs.LinkVisibilityType = LinkVisibility.Custom
+                        view.SetLinkOverrides(link_instance_id, gs)
+                except Exception:
+                    pass
 
-        # Color overrides
-        _ovr_errors = 0
+        # Color overrides — host A elements red
         for eid in a_eids:
             try:
                 view.SetElementOverrides(eid, ovr_a)
             except Exception:
-                _ovr_errors += 1
                 continue
+        # Host-mode: B elements green
         for eid in b_eids:
             try:
                 view.SetElementOverrides(eid, ovr_b)
             except Exception:
-                _ovr_errors += 1
                 continue
-        # #region agent log
-        _dlog("E", "script.py:_create_clash_view.after_SetElementOverrides", "done",
-              {"a_count": int(len(a_eids)), "b_count": int(len(b_eids)), "errors": int(_ovr_errors)})
-        # #endregion
+        # Link-mode: tint the whole link instance green so link geometry reads
+        # with the B colour (category filter already limits what is visible)
+        if is_link_mode and link_instance_id is not None:
+            try:
+                view.SetElementOverrides(link_instance_id, ovr_b)
+            except Exception:
+                pass
 
-        # #region agent log
-        _dlog("ALL", "script.py:_create_clash_view.exit", "view complete", {
-            "view_id": str(view.Id),
-        })
-        # #endregion
         return view
 
     # -------------------- Grid layout ------------------------------------
@@ -1616,23 +2109,7 @@ class ClashViewsWindow(forms.WPFWindow):
             logger.warning("No positions calculated for clash viewports")
             return
 
-        # #region agent log
-        _dlog("F", "script.py:_create_sheet_and_place_viewports.pre_sheet_create",
-              "about to ViewSheet.Create", {
-                  "positions": int(len(positions)),
-                  "clash_views": int(len(self.clash_views)),
-                  "cols": int(cols),
-                  "row_count": int(row_count),
-                  "sheet_width_ft": float(sheet_width),
-                  "sheet_height_ft": float(sheet_height),
-              })
-        # #endregion
         sheet = ViewSheet.Create(doc, ElementId.InvalidElementId)
-        # #region agent log
-        _dlog("F", "script.py:_create_sheet_and_place_viewports.after_sheet_create",
-              "ViewSheet.Create returned",
-              {"sheet_id": str(sheet.Id) if sheet is not None else None})
-        # #endregion
         num_prefix = sheet_prefix + (iteration + "-" if iteration else "")
         assigned = False
         for i in range(1, 1000):
@@ -1663,35 +2140,281 @@ class ClashViewsWindow(forms.WPFWindow):
             if view is None:
                 continue
             try:
-                # #region agent log
-                _dlog("G", "script.py:_create_sheet_and_place_viewports.pre_viewport",
-                      "about to Viewport.Create",
-                      {"idx": int(_vp_placed + _vp_failed),
-                       "pair_key": str(pair_key),
-                       "level_name": str(level_name),
-                       "view_id": str(view.Id),
-                       "x": float(x), "y": float(y)})
-                # #endregion
                 Viewport.Create(doc, sheet.Id, view.Id, XYZ(x, y, 0))
                 _vp_placed += 1
-                # #region agent log
-                _dlog("G", "script.py:_create_sheet_and_place_viewports.after_viewport",
-                      "Viewport.Create ok", {"placed": int(_vp_placed)})
-                # #endregion
             except Exception as ex:
                 _vp_failed += 1
                 logger.warning("Could not place viewport for {} / {}: {}".format(
                     pair_key, level_name, ex))
-                # #region agent log
-                _dlog("G", "script.py:_create_sheet_and_place_viewports.viewport_failed",
-                      "exception placing viewport",
-                      {"error": str(ex), "idx": int(_vp_placed + _vp_failed)})
-                # #endregion
+
+
+# =============================================================================
+# Annotation categories (for hide/show toggle)
+# =============================================================================
+
+_ANNOTATION_CATEGORIES = {
+    "OST_Dimensions", "OST_TextNotes", "OST_Tags", "OST_SpotElevations",
+    "OST_SpotCoordinates", "OST_SpotSlopes", "OST_AnnotationCrop",
+    "OST_AnnotationCutlines", "OST_AnnotationObjects", "OST_ReferenceViewer",
+    "OST_ReferenceViewerSymbol", "OST_Viewports", "OST_TitleBlocks",
+    "OST_GridHeads", "OST_LevelHeads", "OST_SectionHeads", "OST_ElevationMarks",
+    "OST_CalloutHeads", "OST_CropBoundary", "OST_CropRegions",
+    "OST_Annotation_SketchLines", "OST_Annotation_Lines", "OST_CenterLines",
+    "OST_HiddenLines", "OST_DemolishedLines", "OST_OverheadLines",
+    "OST_Lines", "OST_Curves", "OST_CurveGroups",
+}
+
+
+def _set_annotation_categories_visible(view, visible):
+    """Show or hide all annotation categories in the given view.
+
+    Returns (shown_count, hidden_count).
+    """
+    document = view.Document
+    shown = 0
+    hidden = 0
+    checked = 0
+    matched = 0
+    # #region agent log
+    import json as _j, time as _t
+    try:
+        with open(op.join(extension_dir, 'debug-822ea8.log'), 'a') as _f:
+            _f.write(_j.dumps({"sessionId": "822ea8", "hypothesisId": "ANNOT", "location": "_set_annotation_categories_visible:start", "message": "hiding annotations", "data": {"view_name": str(view.Name), "visible": visible}, "timestamp": int(_t.time() * 1000)}) + "\n")
+    except Exception:
+        pass
+    # #endregion
+    for cat in document.Settings.Categories:
+        try:
+            bic = cat.BuiltInCategory
+            bic_str = str(bic)
+        except Exception:
+            continue
+        checked += 1
+        if bic_str not in _ANNOTATION_CATEGORIES:
+            continue
+        matched += 1
         # #region agent log
-        _dlog("F", "script.py:_create_sheet_and_place_viewports.exit",
-              "viewports placement done",
-              {"placed": int(_vp_placed), "failed": int(_vp_failed)})
+        try:
+            with open(op.join(extension_dir, 'debug-822ea8.log'), 'a') as _f:
+                _f.write(_j.dumps({"sessionId": "822ea8", "hypothesisId": "ANNOT", "location": "_set_annotation_categories_visible:match", "message": "matched annotation category", "data": {"cat_name": str(cat.Name), "bic": bic_str}, "timestamp": int(_t.time() * 1000)}) + "\n")
+        except Exception:
+            pass
         # #endregion
+        try:
+            if not view.CanCategoryBeHidden(cat.Id):
+                continue
+        except Exception:
+            continue
+        try:
+            view.SetCategoryHidden(cat.Id, not visible)
+            if visible:
+                shown += 1
+            else:
+                hidden += 1
+        except Exception as ex:
+            # #region agent log
+            try:
+                with open(op.join(extension_dir, 'debug-822ea8.log'), 'a') as _f:
+                    _f.write(_j.dumps({"sessionId": "822ea8", "hypothesisId": "ANNOT", "location": "_set_annotation_categories_visible:error", "message": "SetCategoryHidden failed", "data": {"cat_name": str(cat.Name), "error": str(ex)}, "timestamp": int(_t.time() * 1000)}) + "\n")
+            except Exception:
+                pass
+            # #endregion
+            pass
+    # #region agent log
+    try:
+        with open(op.join(extension_dir, 'debug-822ea8.log'), 'a') as _f:
+            _f.write(_j.dumps({"sessionId": "822ea8", "hypothesisId": "ANNOT", "location": "_set_annotation_categories_visible:done", "message": "annotation hiding complete", "data": {"checked": checked, "matched": matched, "shown": shown, "hidden": hidden}, "timestamp": int(_t.time() * 1000)}) + "\n")
+    except Exception:
+        pass
+    # #endregion
+    return (shown, hidden)
+
+
+# =============================================================================
+# Refinement progress dialog
+# =============================================================================
+
+class RefinementProgressWindow(forms.WPFWindow):
+    """Indeterminate progress window shown during link refinement."""
+
+    def __init__(self, total_views):
+        xaml_content = '''<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Refining Clash Views" Width="480" Height="200"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource WindowBackgroundBrush}"
+        ResizeMode="NoResize">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="Optimizing view visibility..."
+                   Style="{DynamicResource HeaderTextBlockStyle}" Margin="0,0,0,10"/>
+
+        <TextBlock Grid.Row="1" x:Name="statusText"
+                   Text="Processing 0 of 0 views"
+                   Style="{DynamicResource BodyTextBlockStyle}"
+                   Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,15"/>
+
+        <ProgressBar Grid.Row="2" x:Name="progressBar" Height="16"
+                     IsIndeterminate="True"
+                     Background="{DynamicResource ControlBackgroundBrush}"
+                     Foreground="{DynamicResource AccentBrush}"/>
+
+        <TextBlock Grid.Row="3" TextWrapping="Wrap" Margin="0,15,0,0"
+                   Style="{DynamicResource SecondaryTextBlockStyle}" FontSize="11" LineHeight="16">
+            <Run FontWeight="SemiBold">What's happening:</Run>
+            <LineBreak/>
+            Revit is hiding non-clashing elements from the linked model in each view.
+            This ensures only the elements that actually clash are visible.
+            The process switches between views automatically.
+        </TextBlock>
+    </Grid>
+</Window>'''
+        # Write XAML to temp file
+        import tempfile
+        xaml_path = tempfile.mktemp(suffix='.xaml')
+        with open(xaml_path, 'w') as f:
+            f.write(xaml_content)
+        forms.WPFWindow.__init__(self, xaml_path)
+        self._total_views = total_views
+        self._update_status(0)
+
+        try:
+            from styles import load_styles_to_window
+            load_styles_to_window(self)
+        except Exception:
+            pass
+
+    def _update_status(self, current):
+        try:
+            if hasattr(self, 'statusText') and self.statusText:
+                self.statusText.Text = "Processing view {} of {}".format(current, self._total_views)
+        except Exception:
+            pass
+
+    def update_progress(self, current):
+        """Update the status text with current progress."""
+        self._update_status(current)
+
+
+# =============================================================================
+# Summary dialog
+# =============================================================================
+
+class ClashViewsSummaryWindow(forms.WPFWindow):
+    """Summary dialog shown after clash views are created."""
+
+    def __init__(self, sheet, view_names, total_clashes, clash_pairs):
+        """
+        Args:
+            sheet: The created ViewSheet
+            view_names: List of created view names
+            total_clashes: Total number of clash pairs detected
+            clash_pairs: List of (pair_key, count) tuples
+        """
+        xaml_file = op.join(pushbutton_dir, "ClashViewsSummary.xaml")
+        forms.WPFWindow.__init__(self, xaml_file)
+
+        try:
+            from styles import load_styles_to_window
+            load_styles_to_window(self)
+        except Exception as ex:
+            logger.debug("Could not load styles: {}".format(ex))
+
+        self._sheet = sheet
+        self._view_names = view_names
+        self._total_clashes = total_clashes
+        self._clash_pairs = clash_pairs
+
+        # Populate header info
+        try:
+            sheet_num = sheet.SheetNumber
+        except Exception:
+            sheet_num = "-"
+        try:
+            sheet_name = sheet.Name
+        except Exception:
+            sheet_name = "-"
+        self.sheetInfoText.Text = "{} - {}".format(sheet_num, sheet_name)
+        self.viewsCountText.Text = str(len(view_names))
+        self.clashesCountText.Text = str(total_clashes)
+
+        # Build summary header
+        mode_text = "cross-document (host vs link)" if any("[Link:" in p for p, _ in clash_pairs) else "host-only"
+        self.summaryHeaderText.Text = (
+            "Created {} clash view(s) in {} mode. "
+            "{} unique element pair(s) detected across {} category combination(s).".format(
+                len(view_names), mode_text, total_clashes, len(clash_pairs)))
+
+        # Populate views list
+        self._populate_views_list()
+
+        # Initially hide annotations
+        self._annotations_visible = False
+        self.annotationsToggle.IsChecked = False
+
+    def _populate_views_list(self):
+        """Add view entries to the scrollable list."""
+        import clr
+        clr.AddReference("PresentationFramework")
+        from System.Windows.Controls import TextBlock, Separator
+        from System.Windows import Thickness
+        from System.Windows.Media import FontWeights
+
+        self.viewsListPanel.Children.Clear()
+
+        for i, name in enumerate(self._view_names, 1):
+            # View name with number
+            tb = TextBlock()
+            tb.Text = "{}. {}".format(i, name)
+            tb.TextWrapping = True
+            tb.Margin = Thickness(0, 2, 0, 2)
+            tb.FontSize = 12
+            self.viewsListPanel.Children.Add(tb)
+
+            # Add separator except for last item
+            if i < len(self._view_names):
+                sep = Separator()
+                sep.Margin = Thickness(0, 4, 0, 4)
+                self.viewsListPanel.Children.Add(sep)
+
+    def AnnotationsToggle_Changed(self, sender, args):
+        """Handle annotation visibility toggle."""
+        is_checked = bool(self.annotationsToggle.IsChecked)
+        if is_checked == self._annotations_visible:
+            return
+        self._annotations_visible = is_checked
+
+        # Update all created views
+        with Transaction(doc, "Toggle Annotations Visibility") as t:
+            t.Start()
+            try:
+                viewport_ids = self._sheet.GetAllViewports()
+                for vp_id in viewport_ids:
+                    try:
+                        viewport = doc.GetElement(vp_id)
+                        if viewport is not None:
+                            view_id = viewport.ViewId
+                            view_obj = doc.GetElement(view_id)
+                            if view_obj is not None:
+                                _set_annotation_categories_visible(view_obj, is_checked)
+                    except Exception as ex:
+                        logger.debug("Failed to toggle annotations for viewport: {}".format(ex))
+            except Exception as ex:
+                logger.debug("Failed to get viewports: {}".format(ex))
+            t.Commit()
+
+        status = "shown" if is_checked else "hidden"
+        logger.debug("Annotations {} in all clash views".format(status))
+
+    def closeButton_Click(self, sender, args):
+        """Close the dialog."""
+        self.Close()
 
 
 # =============================================================================
