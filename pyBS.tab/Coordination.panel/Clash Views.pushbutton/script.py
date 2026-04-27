@@ -2162,6 +2162,7 @@ _ANNOTATION_CATEGORIES = {
     "OST_Annotation_SketchLines", "OST_Annotation_Lines", "OST_CenterLines",
     "OST_HiddenLines", "OST_DemolishedLines", "OST_OverheadLines",
     "OST_Lines", "OST_Curves", "OST_CurveGroups",
+    "OST_Levels", "OST_ScopeBoxes",
 }
 
 
