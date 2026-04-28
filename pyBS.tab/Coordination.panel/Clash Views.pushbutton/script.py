@@ -1909,6 +1909,12 @@ class ClashViewsWindow(forms.WPFWindow):
         except Exception:
             pass
 
+        try:
+            view.DetailLevel = ViewDetailLevel.Fine
+        except Exception as ex:
+            logger.debug("Set DetailLevel Fine failed for {} / {}: {}".format(
+                pair_key, level_name, ex))
+
         if iteration:
             raw_name = "{0}[{1}] {2} - {3}".format(
                 name_prefix, iteration, pair_key, level_name)
