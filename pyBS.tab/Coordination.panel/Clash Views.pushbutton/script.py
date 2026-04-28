@@ -1767,6 +1767,13 @@ class ClashViewsWindow(forms.WPFWindow):
 
             tg.Assimilate()
 
+        # Show progress window immediately if link refinement is needed
+        # This gives user feedback during the summary data building and before idling
+        progress_window = None
+        if refinement_queue:
+            progress_window = RefinementProgressWindow(len(refinement_queue))
+            progress_window.Show()
+
         # Build summary data for the results dialog
         view_names = []
         clash_pairs = []
@@ -1806,21 +1813,19 @@ class ClashViewsWindow(forms.WPFWindow):
             if self.created_sheets:
                 return_sheet_id = self.created_sheets[0].Id
 
-            # Create and show progress window
-            progress_window = RefinementProgressWindow(len(refinement_queue))
-            progress_window.Show()
-
             # Callback to update progress from driver
             def _update_progress(current):
                 try:
-                    progress_window.update_progress(current)
+                    if progress_window:
+                        progress_window.update_progress(current)
                 except Exception:
                     pass
 
             # Callback to close progress when done
             def _close_progress():
                 try:
-                    progress_window.Close()
+                    if progress_window:
+                        progress_window.Close()
                 except Exception:
                     pass
 
@@ -1835,7 +1840,12 @@ class ClashViewsWindow(forms.WPFWindow):
             self._refinement_driver = driver
             driver.start()
         else:
-            # No refinement needed - show summary immediately
+            # No refinement needed - close progress if shown and show summary
+            if progress_window:
+                try:
+                    progress_window.Close()
+                except Exception:
+                    pass
             if self.created_sheets:
                 _show_summary(summary_data)
 
