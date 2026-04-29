@@ -41,7 +41,6 @@ clr.AddReference('WindowsBase')
 clr.AddReference('System')
 
 import System
-from System import Object
 from System.Windows.Threading import DispatcherPriority
 from System.Collections.Generic import Dictionary
 from System.Windows import (
@@ -187,7 +186,7 @@ class CategoryInfo(object):
         return self.name
 
 # Category View Model for XAML binding
-class CategoryItem(Object, INotifyPropertyChanged):
+class CategoryItem(System.Object, INotifyPropertyChanged):
     """View model for a category with property change notifications."""
     
     def __init__(self, category_info):
@@ -469,9 +468,11 @@ class RevitColorizerWindow(WPFWindow):
         # Initialize active_view to None to prevent AttributeError in OnClosing
         self.active_view = None
         try:
-# Create XAML file path
-            xaml_file = os.path.join(
-                os.path.dirname(__file__), 
+            import os
+            self._os = os
+            # Create XAML file path
+            xaml_file = self._os.path.join(
+                self._os.path.dirname(__file__),
                 "ColorElementsWindow.xaml"
             )
             
@@ -641,10 +642,10 @@ class RevitColorizerWindow(WPFWindow):
         """Show or hide the busy overlay indicator."""
         try:
             if is_busy:
-                self.busyOverlay.Visibility = Visibility.Visible
+                self.busyOverlay.Visibility = self.System.Windows.Visibility.Visible
                 self.busyTextBlock.Text = message
             else:
-                self.busyOverlay.Visibility = Visibility.Collapsed
+                self.busyOverlay.Visibility = self.System.Windows.Visibility.Collapsed
         except Exception as e:
             logger.debug("Error setting busy indicator: {}".format(str(e)))
     
@@ -653,6 +654,7 @@ class RevitColorizerWindow(WPFWindow):
         outer_self = self
         # Store reference to Media namespace for the inner class
         Media_ref = self.Media
+        DB_ref = outer_self.DB
         
         class CustomValuesInfo(object):
             """Simplified class to store parameter value information without accent stripping."""
@@ -674,9 +676,9 @@ class RevitColorizerWindow(WPFWindow):
                 # Add IsChecked property for checkbox binding
                 self._is_checked = False
                 
-                if para.StorageType == DB.StorageType.Double:
+                if para.StorageType == DB_ref.StorageType.Double:
                     self.values_double.append(para.AsDouble())
-                elif para.StorageType == DB.StorageType.ElementId:
+                elif para.StorageType == DB_ref.StorageType.ElementId:
                     self.values_double.append(para.AsElementId())
                 
                 # Add a method that mimics the Add method of List
@@ -709,7 +711,7 @@ class RevitColorizerWindow(WPFWindow):
         outer_self = self
         # Store reference to System.ComponentModel.PropertyChangedEventArgs for the inner class
         PropertyChangedEventArgs_ref = self.PropertyChangedEventArgs
-        Object_ref = Object
+        Object_ref = outer_self.System.Object
         INotifyPropertyChanged_ref = INotifyPropertyChanged
         
         class CustomCategoryItem(Object_ref, INotifyPropertyChanged_ref):
@@ -790,12 +792,12 @@ class RevitColorizerWindow(WPFWindow):
         self.refreshParametersButton.Click += self.on_refresh_parameters
         # Load refresh icon image
         try:
-            script_dir = os.path.dirname(__file__)
-            panel_dir = os.path.dirname(script_dir)
-            tab_dir = os.path.dirname(panel_dir)
-            extension_dir = os.path.dirname(tab_dir)
-            refresh_icon_path = os.path.join(extension_dir, 'lib', 'styles', 'icons', 'refresh.png')
-            if os.path.exists(refresh_icon_path):
+            script_dir = self._os.path.dirname(__file__)
+            panel_dir = self._os.path.dirname(script_dir)
+            tab_dir = self._os.path.dirname(panel_dir)
+            extension_dir = self._os.path.dirname(tab_dir)
+            refresh_icon_path = self._os.path.join(extension_dir, 'lib', 'styles', 'icons', 'refresh.png')
+            if self._os.path.exists(refresh_icon_path):
                 from System.Windows.Media.Imaging import BitmapImage
                 from System import Uri
                 bitmap = BitmapImage()
@@ -1139,7 +1141,6 @@ class RevitColorizerWindow(WPFWindow):
             preserve_param_type_is_instance: Whether the parameter to preserve is an instance parameter
         """
         try:
-            
             # Set flag to prevent on_parameter_selected from processing during programmatic loading
             self._loading_parameters = True
             
@@ -1235,7 +1236,7 @@ class RevitColorizerWindow(WPFWindow):
             # If ItemsSource was set, we need to use ItemsSource instead of Items
             # Create a new collection and set it as ItemsSource
             from System.Collections.ObjectModel import ObservableCollection
-            items_collection = ObservableCollection[Object]()
+            items_collection = ObservableCollection[self.System.Object]()
             
             for i, param_item in enumerate(self.all_parameters):
                 items_collection.Add(param_item)
@@ -1385,9 +1386,9 @@ class RevitColorizerWindow(WPFWindow):
                     # Temporarily hide values listbox to prevent showing wrong values during restoration
                     values_listbox_was_visible = True
                     if hasattr(self, 'valuesListBox') and self.valuesListBox:
-                        values_listbox_was_visible = self.valuesListBox.Visibility == System.Windows.Visibility.Visible
+                        values_listbox_was_visible = self.valuesListBox.Visibility == self.System.Windows.Visibility.Visible
                         if values_listbox_was_visible:
-                            self.valuesListBox.Visibility = System.Windows.Visibility.Hidden
+                            self.valuesListBox.Visibility = self.System.Windows.Visibility.Hidden
                     
                     # Clear search filter and restore all parameters
                     # Handle both ItemsSource and Items
@@ -1408,7 +1409,7 @@ class RevitColorizerWindow(WPFWindow):
                     
                     # Restore using ItemsSource (SearchableComboBox uses ItemsSource)
                     from System.Collections.ObjectModel import ObservableCollection
-                    items_collection = ObservableCollection[Object]()
+                    items_collection = ObservableCollection[self.System.Object]()
                     for param_item in self.all_parameters:
                         items_collection.Add(param_item)
                     self.parameterSelector.ItemsSource = items_collection
@@ -1444,7 +1445,7 @@ class RevitColorizerWindow(WPFWindow):
                                     self.valuesListBox.InvalidateVisual()
                                     # Restore visibility if it was hidden
                                     if values_listbox_was_visible:
-                                        self.valuesListBox.Visibility = Visibility.Visible
+                                        self.valuesListBox.Visibility = self.System.Windows.Visibility.Visible
                         except Exception as ex:
                             self.logger.debug("Error restoring selection: {}".format(str(ex)))
                             # Re-add handler even on error to prevent losing it
@@ -1454,7 +1455,7 @@ class RevitColorizerWindow(WPFWindow):
                                 pass
                             # Restore visibility even on error
                             if hasattr(self, 'valuesListBox') and self.valuesListBox and values_listbox_was_visible:
-                                self.valuesListBox.Visibility = Visibility.Visible
+                                self.valuesListBox.Visibility = self.System.Windows.Visibility.Visible
                     else:
                         # Re-add handler even if no selection to restore
                         try:
@@ -1463,7 +1464,7 @@ class RevitColorizerWindow(WPFWindow):
                             pass
                         # Restore visibility
                         if hasattr(self, 'valuesListBox') and self.valuesListBox and values_listbox_was_visible:
-                            self.valuesListBox.Visibility = Visibility.Visible
+                            self.valuesListBox.Visibility = self.System.Windows.Visibility.Visible
                     
                     # Clear restoration flag AFTER all restoration is complete
                     self._restoring_selection = False
@@ -1493,7 +1494,7 @@ class RevitColorizerWindow(WPFWindow):
             from System.Windows.Threading import DispatcherPriority
             self.parameterSelector.Dispatcher.BeginInvoke(
                 DispatcherPriority.Loaded,
-                System.Action(self._initialize_search_textbox)
+                self.System.Action(self._initialize_search_textbox)
             )
         except Exception as ex:
             self.logger.error("Error initializing search filter: %s", str(ex))
@@ -1578,7 +1579,7 @@ class RevitColorizerWindow(WPFWindow):
             
             # Use ItemsSource for SearchableComboBox
             from System.Collections.ObjectModel import ObservableCollection
-            filtered_collection = ObservableCollection[Object]()
+            filtered_collection = ObservableCollection[self.System.Object]()
             
             if not search_text:
                 # Show all parameters if search is empty
@@ -1618,7 +1619,7 @@ class RevitColorizerWindow(WPFWindow):
                 from System.Windows.Threading import DispatcherPriority
                 self.parameterSelector.Dispatcher.BeginInvoke(
                     DispatcherPriority.Input,
-                    System.Action(lambda: self._focus_first_item())
+                    self.System.Action(lambda: self._focus_first_item())
                 )
                 return
             
@@ -1629,7 +1630,7 @@ class RevitColorizerWindow(WPFWindow):
                     from System.Windows.Threading import DispatcherPriority
                     self.parameterSelector.Dispatcher.BeginInvoke(
                         DispatcherPriority.Input,
-                        System.Action(lambda: self._focus_last_item())
+                        self.System.Action(lambda: self._focus_last_item())
                     )
                 return
             
@@ -1868,7 +1869,7 @@ class RevitColorizerWindow(WPFWindow):
     def load_color_schema_from_file(self, file_path):
         """Load a color scheme from a file."""
         try:
-            if not os.path.exists(file_path):
+            if not self._os.path.exists(file_path):
                 return
             
             # Load the schema
@@ -1896,7 +1897,7 @@ class RevitColorizerWindow(WPFWindow):
                         
                         schema_data.append({
                             'value': value,
-                            'color': Media.Color.FromRgb(r, g, b)
+                            'color': self.Media.Color.FromRgb(r, g, b)
                         })
             
             # Apply to current values if any
@@ -1921,16 +1922,16 @@ class RevitColorizerWindow(WPFWindow):
     def get_available_schemas(self):
         """Get list of available color schemas in the coloringschemas folder."""
         schemas = []
-        script_dir = os.path.dirname(__file__)
-        schemas_dir = os.path.join(script_dir, "coloringschemas")
+        script_dir = self._os.path.dirname(__file__)
+        schemas_dir = self._os.path.join(script_dir, "coloringschemas")
         
-        if os.path.exists(schemas_dir):
-            for file in os.listdir(schemas_dir):
+        if self._os.path.exists(schemas_dir):
+            for file in self._os.listdir(schemas_dir):
                 if file.endswith(".cschn"):
-                    schema_name = os.path.splitext(file)[0]
+                    schema_name = self._os.path.splitext(file)[0]
                     schemas.append({
                         'name': schema_name,
-                        'path': os.path.join(schemas_dir, file)
+                        'path': self._os.path.join(schemas_dir, file)
                     })
         
         return schemas
@@ -2151,7 +2152,7 @@ class RevitColorizerWindow(WPFWindow):
             
             # Add parameters to dropdown using ItemsSource
             from System.Collections.ObjectModel import ObservableCollection
-            items_collection = ObservableCollection[Object]()
+            items_collection = ObservableCollection[self.System.Object]()
             selected_index = -1
             for i, param_item in enumerate(self.all_parameters):
                 items_collection.Add(param_item)
@@ -2482,7 +2483,7 @@ class RevitColorizerWindow(WPFWindow):
         for category in selected_categories:
             # Try to find BuiltInCategory if possible
             bic = None
-            for sample_bic in System.Enum.GetValues(DB.BuiltInCategory):
+            for sample_bic in self.System.Enum.GetValues(self.DB.BuiltInCategory):
                 if category.int_id == int(sample_bic):
                     bic = sample_bic
                     break
@@ -2494,7 +2495,7 @@ class RevitColorizerWindow(WPFWindow):
             for query_view in views_to_query:
                 try:
                     # Get all elements of this category in this view
-                    collector = DB.FilteredElementCollector(self.doc, query_view.Id) \
+                    collector = self.DB.FilteredElementCollector(self.doc, query_view.Id) \
                                 .OfCategory(bic) \
                                 .WhereElementIsNotElementType() \
                                 .WhereElementIsViewIndependent() \
@@ -2527,7 +2528,7 @@ class RevitColorizerWindow(WPFWindow):
                             if matching_items:
                                 # Add element ID to existing value
                                 matching_items[0].ele_id.append(element.Id)
-                                if parameter.StorageType == DB.StorageType.Double:
+                                if parameter.StorageType == self.DB.StorageType.Double:
                                     matching_items[0].values_double.append(parameter.AsDouble())
                             else:
                                 # Instead of picking a random color, create a placeholder for now
@@ -2572,7 +2573,7 @@ class RevitColorizerWindow(WPFWindow):
                 value_item.n2 = g
                 value_item.n3 = b
                 # Update the color property with a new WPF color object
-                value_item.color = Media.Color.FromRgb(r, g, b)
+                value_item.color = self.Media.Color.FromRgb(r, g, b)
                 
         # Always use gray for None values
         for value_item in none_values:
@@ -2580,7 +2581,7 @@ class RevitColorizerWindow(WPFWindow):
             value_item.n2 = 192
             value_item.n3 = 192
             # Update the color property with a new WPF color object
-            value_item.color = Media.Color.FromRgb(192, 192, 192)
+            value_item.color = self.Media.Color.FromRgb(192, 192, 192)
         
         return values
     
@@ -2600,20 +2601,20 @@ class RevitColorizerWindow(WPFWindow):
         if not para.HasValue:
             return "None"
         
-        if para.StorageType == DB.StorageType.Double:
+        if para.StorageType == self.DB.StorageType.Double:
             return para.AsValueString()
-        elif para.StorageType == DB.StorageType.ElementId:
+        elif para.StorageType == self.DB.StorageType.ElementId:
             id_val = para.AsElementId()
             if self.get_elementid_value(id_val) >= 0:
-                return DB.Element.Name.GetValue(self.doc.GetElement(id_val))
+                return self.DB.Element.Name.GetValue(self.doc.GetElement(id_val))
             else:
                 return "None"
-        elif para.StorageType == DB.StorageType.Integer:
+        elif para.StorageType == self.DB.StorageType.Integer:
             # Version-safe YesNo check via compat helper.
             if is_param_yesno(para.Definition):
                 return "True" if para.AsInteger() == 1 else "False"
             return para.AsValueString()
-        elif para.StorageType == DB.StorageType.String:
+        elif para.StorageType == self.DB.StorageType.String:
             return para.AsString() or "None"
         else:
             return "None"

@@ -2,6 +2,7 @@
 import clr
 clr.AddReference('RevitAPI')
 from Autodesk.Revit.DB import FilteredElementCollector, OverrideGraphicSettings, Transaction, ViewType, ViewSheet
+from pyrevit import forms
 
 __title__ = "Reset"
 __author__ = ""
@@ -132,21 +133,41 @@ if __name__ == '__main__':
     target_views = get_target_views(doc, active_view)
     
     if not target_views:
-        print("No views found that support color overrides.")
+        forms.show_balloon(
+            header="Reset colors",
+            text="No views found that support color overrides.",
+            is_new=True,
+        )
     else:
         with Transaction(doc, 'Reset Colors') as t:
             t.Start()
-            
+
             total_reset = 0
+            per_view_lines = []
             for view in target_views:
                 count = reset_colors_in_view(doc, view)
                 total_reset += count
-                print("Reset {} element(s) in view: {}".format(count, view.Name))
-            
+                per_view_lines.append(
+                    "Reset {} element(s) in view: {}".format(count, view.Name)
+                )
+
             t.Commit()
-            
-            if len(target_views) > 1:
-                print("\nTotal: Reset colors in {} views.".format(len(target_views)))
+
+            if len(target_views) == 1:
+                forms.show_balloon(
+                    header="Reset colors",
+                    text=per_view_lines[0],
+                    is_new=True,
+                )
+            else:
+                forms.show_balloon(
+                    header="Reset colors",
+                    text="Total: {} element(s) in {} views.".format(
+                        total_reset, len(target_views)
+                    ),
+                    tooltip="\n".join(per_view_lines),
+                    is_new=True,
+                )
 
 # --------------------------------------------------
 # 💡 pyRevit with VSCode: Use pyrvt or pyrvtmin snippet

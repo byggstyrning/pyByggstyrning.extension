@@ -45,8 +45,6 @@ Download and install pyRevit from the [GitHub releases](https://github.com/pyrev
 2. Go to **pyRevit tab** → **Extensions**
 3. Find **pyByggstyrning** in the list and click **Install Extension**
 
-
-
 For more details, see the [pyRevit Extensions Installation Guide](https://pyrevitlabs.notion.site/Install-Extensions-0753ab78c0ce46149f962acc50892491).
 
 ### Using pyRevit CLI
