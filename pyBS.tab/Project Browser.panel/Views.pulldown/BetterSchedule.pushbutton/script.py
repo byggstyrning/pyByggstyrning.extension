@@ -22,35 +22,46 @@ import sys
 
 logger = script.get_logger()
 
+_SHIM_FILE = os.path.abspath(__file__)
+_SHIM_DIR = os.path.dirname(_SHIM_FILE)
+_EXT_LIB = os.path.normpath(os.path.join(_SHIM_DIR, "..", "..", "..", "..", "lib"))
+if _EXT_LIB not in sys.path:
+    sys.path.insert(0, _EXT_LIB)
+
+from toolbox_probe import find_better_schedule_script
+
+_UNAVAILABLE_MSG = (
+    "Better Schedule is not available on this machine.\n\n"
+    "Install the restricted pyByggstyrning.toolbox lib extension if you have access, "
+    "then reload pyRevit."
+)
+
 try:
-    # Find paths to both the current location and target script
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    script_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', '..', 'pyByggstyrning.toolbox', 'pyBS.tab', 'Project Browser.panel', 'Views.pulldown', 'BetterSchedule.pushbutton', 'script.py')
-    
-    if os.path.exists(script_path):
-        
-        # Make the target script directory the first in sys.path so imports work
+    script_path = find_better_schedule_script(shim_file=_SHIM_FILE)
+
+    if script_path and os.path.isfile(script_path):
         target_dir = os.path.dirname(script_path)
         if target_dir not in sys.path:
             sys.path.insert(0, target_dir)
-        
-        # Create a globals dict with __file__ pointing to the original script
-        # This ensures that when the script looks for associated files, it finds them
+
+        toolbox_root = os.path.normpath(os.path.join(target_dir, ".."))
+        toolbox_lib = os.path.join(toolbox_root, "lib")
+        if os.path.isdir(toolbox_lib) and toolbox_lib not in sys.path:
+            sys.path.insert(0, toolbox_lib)
+
         globals_dict = globals().copy()
-        globals_dict['__file__'] = script_path
-        
-        # Read the script content
-        with open(script_path, 'r') as f:
+        globals_dict["__file__"] = script_path
+
+        with open(script_path, "r") as f:
             script_content = f.read()
-        
+
         exec(script_content, globals_dict)
-        
     else:
-        forms.alert("BetterSchedule script could not be found.\n\nChecked path:\n- {}".format(script_path), title="Script Not Found")
-        
+        forms.alert(_UNAVAILABLE_MSG, title="Better Schedule")
+
 except Exception as ex:
     logger.error("Error attempting to run BetterSchedule: {}".format(ex))
     import traceback
-    logger.error(traceback.format_exc())
-    forms.alert("Failed to run BetterSchedule: {}".format(ex), title="Error")
 
+    logger.error(traceback.format_exc())
+    forms.alert("Failed to run Better Schedule: {}".format(ex), title="Error")

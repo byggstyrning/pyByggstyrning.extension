@@ -251,6 +251,43 @@ def apply_theme_to_resources(resources, theme=None):
         return False
 
 
+_app_styles_loaded = False
+
+
+def ensure_styles_loaded(force_theme=None):
+    """
+    Load CommonStyles into Application.Resources before window XAML parse.
+    Safe to call multiple times; loads once per process.
+    """
+    global _app_styles_loaded
+    if _app_styles_loaded:
+        return True
+    try:
+        from System.Windows import Application, ResourceDictionary
+        from System.Windows.Markup import XamlReader
+        from System.IO import File
+
+        styles_path = get_common_styles_path()
+        if not op.exists(styles_path):
+            return False
+
+        app = Application.Current
+        if app is None:
+            return False
+
+        if app.Resources is None:
+            app.Resources = ResourceDictionary()
+
+        xaml_content = File.ReadAllText(styles_path)
+        styles_dict = XamlReader.Parse(xaml_content)
+        apply_theme_to_resources(styles_dict, force_theme)
+        app.Resources.MergedDictionaries.Add(styles_dict)
+        _app_styles_loaded = True
+        return True
+    except Exception:
+        return False
+
+
 def load_styles_to_window(window, force_theme=None):
     """
     Load styles directly into a window's Resources with theme support.
