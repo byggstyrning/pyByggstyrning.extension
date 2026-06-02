@@ -50,7 +50,6 @@ from Autodesk.Revit.DB import *
 
 from System import EventHandler
 from System.Collections.ObjectModel import ObservableCollection
-from System.Dynamic import ExpandoObject
 from System.Windows import MessageBox, MessageBoxButton, Visibility
 from System.Windows.Media import SolidColorBrush
 from System.Windows.Media.Animation import DoubleAnimation
