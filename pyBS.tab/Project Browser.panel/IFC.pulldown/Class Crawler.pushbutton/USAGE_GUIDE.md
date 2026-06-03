@@ -7,7 +7,7 @@ The Class Crawler now displays classification results in a **formatted table** w
 ## How to Use
 
 ### 1. Run the Tool
-- Click the **Class Crawler** button in the IFC Classification pulldown
+- Click the **Class Crawler** button in the **IFC** pulldown (Project Browser panel)
 - This opens the element type selection dialog
 
 ### 2. Select Element Types

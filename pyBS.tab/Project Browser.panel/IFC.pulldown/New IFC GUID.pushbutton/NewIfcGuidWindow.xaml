@@ -24,7 +24,7 @@
             <TextBlock Text="New IFC GUID"
                        Style="{DynamicResource HeaderTextBlockStyle}"
                        FontSize="16"/>
-            <TextBlock Text="Assign new IfcGUID values before IFC export (e.g. duplicated or split models)."
+            <TextBlock Text="Assign new IfcGUID values before IFC export (e.g. duplicated or split models). Links, views, and curtain walls are skipped automatically."
                        Style="{DynamicResource BodyTextBlockStyle}"
                        TextWrapping="Wrap"
                        Margin="0,6,0,0"/>
@@ -83,31 +83,5 @@
                     Style="{DynamicResource SecondaryButtonStyle}"
                     Click="cancelButton_Click"/>
         </StackPanel>
-
-        <Border x:Name="busyOverlay"
-                Grid.RowSpan="4"
-                Style="{DynamicResource BusyOverlayStyle}">
-            <Border Background="{DynamicResource WindowBackgroundBrush}"
-                    CornerRadius="5"
-                    Padding="24"
-                    BorderBrush="{DynamicResource BorderBrush}"
-                    BorderThickness="1"
-                    VerticalAlignment="Center"
-                    HorizontalAlignment="Center">
-                <StackPanel MinWidth="280">
-                    <ProgressBar x:Name="progressBar"
-                                 Height="22"
-                                 Minimum="0"
-                                 Maximum="100"
-                                 Value="0"
-                                 Margin="0,0,0,10"/>
-                    <TextBlock x:Name="progressTextBlock"
-                               Text="Preparing..."
-                               HorizontalAlignment="Center"
-                               Foreground="{DynamicResource TextBrush}"
-                               TextWrapping="Wrap"/>
-                </StackPanel>
-            </Border>
-        </Border>
     </Grid>
 </Window>
