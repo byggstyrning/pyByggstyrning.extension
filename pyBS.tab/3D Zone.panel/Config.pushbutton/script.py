@@ -132,6 +132,20 @@ class ConfigItem(INotifyPropertyChanged):
         return self.name
     
     @property
+    def LinkedModelDisplay(self):
+        """Display linked model filename when source uses a linked document."""
+        if self.use_linked_document and self.linked_document_name:
+            return format_linked_model_display_name(self.linked_document_name)
+        return ""
+    
+    @property
+    def LinkedModelTooltip(self):
+        """Full Revit link instance name for tooltip."""
+        if self.use_linked_document and self.linked_document_name:
+            return self.linked_document_name
+        return ""
+    
+    @property
     def Order(self):
         return self.order
     
@@ -515,6 +529,105 @@ class ParameterSelectorDialog(forms.WPFWindow):
 
 # --- Helper Functions ---
 
+def _measure_text_width(text, font_size=12.0, bold=False, italic=False, padding=20.0):
+    """Measure rendered text width for GridView column autosizing."""
+    text = str(text) if text is not None else ""
+    if not text:
+        return padding
+    try:
+        from System.Windows import FlowDirection, FontStyles, FontWeights
+        from System.Windows.Media import FormattedText, Typeface, Brushes
+        from System.Globalization import CultureInfo
+        weight = FontWeights.Bold if bold else FontWeights.Normal
+        style = FontStyles.Italic if italic else FontStyles.Normal
+        typeface = Typeface("Segoe UI", style, weight, False)
+        formatted = FormattedText(
+            text,
+            CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight,
+            typeface,
+            font_size,
+            Brushes.Black
+        )
+        return formatted.Width + padding
+    except Exception:
+        return max(len(text) * 7.0, padding)
+
+
+def autosize_configs_listview_columns(list_view, fill_mappings_column=True):
+    """Resize GridView columns to fit headers and cell content."""
+    grid_view = list_view.View
+    if grid_view is None:
+        return
+    
+    font_size = 12.0
+    padding = 20.0
+    checkbox_extra = 44.0
+    mappings_column_index = 3
+    
+    text_column_specs = [
+        ("Name", lambda item: item.Name, True, False, 80.0),
+        ("Linked Model", lambda item: item.LinkedModelDisplay, False, True, 70.0),
+        ("Source Categories", lambda item: item.SourceCategoriesDisplay, False, False, 100.0),
+        ("Mappings", lambda item: item.MappingsFormattedText, False, False, 160.0),
+    ]
+    checkbox_headers = ["Enabled", "On IFC Export", "Only Empty"]
+    
+    widths = []
+    for header, getter, bold, italic, min_width in text_column_specs:
+        max_width = _measure_text_width(header, font_size, bold=True, padding=padding)
+        for item in list_view.Items:
+            try:
+                value = getter(item)
+                if not value:
+                    continue
+                if header == "Mappings":
+                    for line in str(value).split("\n"):
+                        line = line.strip()
+                        if line:
+                            max_width = max(
+                                max_width,
+                                _measure_text_width(line, font_size, bold=bold, italic=italic, padding=padding)
+                            )
+                else:
+                    max_width = max(
+                        max_width,
+                        _measure_text_width(value, font_size, bold=bold, italic=italic, padding=padding)
+                    )
+            except Exception:
+                continue
+        widths.append(max(max_width, min_width))
+    
+    for header in checkbox_headers:
+        header_width = _measure_text_width(header, font_size, bold=True, padding=padding + checkbox_extra)
+        widths.append(max(header_width, 90.0))
+    
+    if fill_mappings_column and list_view.ActualWidth > 0 and len(widths) > mappings_column_index:
+        scrollbar_padding = 24.0
+        fixed_width = sum(widths) - widths[mappings_column_index] + scrollbar_padding
+        remaining = list_view.ActualWidth - fixed_width
+        if remaining > widths[mappings_column_index]:
+            widths[mappings_column_index] = remaining
+    
+    columns = list(grid_view.Columns)
+    for index, width in enumerate(widths):
+        if index < len(columns):
+            columns[index].Width = width
+
+
+def format_linked_model_display_name(link_name):
+    """Return the link filename from a Revit link instance display name.
+    
+    Revit link names look like: 'Model.rvt : 3 : location ...'
+    """
+    if not link_name:
+        return ""
+    name = str(link_name).strip()
+    if " : " in name:
+        return name.split(" : ")[0].strip()
+    return name
+
+
 def get_category_options(doc):
     """Get source category options: spatial types first, then all other model categories.
     
@@ -863,6 +976,8 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         # Set up event handlers
         self.configsListView.SelectionChanged += self.config_selection_changed
         self.configsListView.MouseDoubleClick += self.config_double_click
+        self.configsListView.Loaded += self.configs_list_view_loaded
+        self.configsListView.SizeChanged += self.configs_list_view_size_changed
         self.addButton.Click += self.add_button_click
         self.editButton.Click += self.edit_button_click
         self.deleteButton.Click += self.delete_button_click
@@ -1196,6 +1311,22 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         self.configsListView.ItemsSource = None
         self.configsListView.ItemsSource = self.configs
         self.configsListView.UpdateLayout()
+        self.autosize_configs_columns()
+    
+    def configs_list_view_loaded(self, sender, args):
+        """Autosize columns once the list view is rendered."""
+        self.autosize_configs_columns()
+    
+    def configs_list_view_size_changed(self, sender, args):
+        """Rebalance column widths when the list view is resized."""
+        self.autosize_configs_columns()
+    
+    def autosize_configs_columns(self):
+        """Autosize mappings table columns to content."""
+        try:
+            autosize_configs_listview_columns(self.configsListView)
+        except Exception as e:
+            logger.debug("Could not autosize mappings columns: {}".format(str(e)))
     
     def update_status(self, message):
         """Update the status display."""
