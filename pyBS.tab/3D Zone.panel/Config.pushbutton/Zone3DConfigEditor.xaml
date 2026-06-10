@@ -162,7 +162,7 @@
                                 <!-- Source Category Selection -->
                                 <StackPanel Margin="0,0,0,15">
                                     <TextBlock Text="Source Category" Style="{DynamicResource LabelTextBlockStyle}" Margin="0,0,0,5"/>
-                                    <TextBlock Text="Select the spatial element category to read parameters from" 
+                                    <TextBlock Text="Spatial categories (Rooms, Spaces, etc.) use containment. Other categories (e.g. Walls) use geometric overlap." 
                                                Style="{DynamicResource SecondaryTextBlockStyle}" Margin="0,0,0,8" FontStyle="Italic"/>
                                     <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="3">
                                         <ListBox x:Name="sourceCategoriesListBox" Height="140" SelectionMode="Single" 

@@ -59,6 +59,22 @@ except ImportError:
 # Initialize logger
 logger = script.get_logger()
 
+
+def _reload_containment_module():
+    """Reload containment module so lib/ edits apply without a full pyRevit restart."""
+    global containment
+    try:
+        import sys
+        module_name = None
+        if 'zone3d.containment' in sys.modules:
+            module_name = 'zone3d.containment'
+        elif 'containment' in sys.modules:
+            module_name = 'containment'
+        if module_name:
+            containment = reload(sys.modules[module_name])
+    except Exception as e:
+        logger.debug("Could not reload containment module: {}".format(str(e)))
+
 def copy_parameter_value(source_param, target_param, return_value=False):
     """Copy a parameter value from source to target.
     
@@ -660,6 +676,10 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
                 categories_for_strategy.append(cat)
         
         strategy = containment.detect_containment_strategy(categories_for_strategy)
+        if not strategy and categories_for_strategy:
+            # Fallback for stale cached containment modules during development
+            strategy = "overlap"
+            logger.debug("Using overlap strategy fallback for categories: {}".format(categories_for_strategy))
         
         if not strategy:
             error_msg = "Could not detect containment strategy for categories: {} (converted: {})".format(source_categories, categories_for_strategy)
@@ -1089,12 +1109,18 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
                         else:
                             categories_for_containment.append(cat)
                     
+                    # Same-doc overlap: exclude target itself when source/target share a category
+                    overlap_exclude_id = None
+                    if strategy == "overlap" and link_instance is None:
+                        overlap_exclude_id = get_element_id_value(target_el.Id)
+                    
                     containing_el = containment.get_containing_element_by_strategy(
                         target_el, source_doc, strategy, categories_for_containment,  # Use source_doc, not doc
                         rooms_by_level, spaces_by_level, areas_by_level,
                         element_index, element_index_cell_size,
                         sort_property=sort_property, sort_descending=sort_descending,
-                        link_instance=link_instance  # For element strategy: transform target points to link coords
+                        link_instance=link_instance,  # For element/overlap: transform target geometry to link coords
+                        exclude_element_id=overlap_exclude_id
                     )
                 
                 # Additional check: if using 3D Zone marker, verify family name matches
@@ -1323,6 +1349,8 @@ def execute_configuration(doc, zone_config, progress_bar=None, view_id=None, for
         dict: Results dictionary
     """
     config_name = zone_config.get("name", "Unknown")
+
+    _reload_containment_module()
 
     # Clear element type cache at start of each configuration
     global _element_type_cache
