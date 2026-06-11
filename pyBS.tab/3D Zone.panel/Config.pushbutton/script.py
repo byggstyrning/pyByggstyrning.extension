@@ -1020,6 +1020,7 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         # Initial UI state
         self.tabControl.SelectedItem = self.configsTab
         self.editConfigTab.IsEnabled = False
+        self.set_edit_tab_actions_visible(False)
         
         # Initialize validation state
         self._validation_errors = {
@@ -1332,6 +1333,12 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         """Update the status display."""
         self.statusTextBlock.Text = message
         self.process_ui_events()
+
+    def set_edit_tab_actions_visible(self, visible):
+        """Show or hide the edit-tab action buttons in the footer."""
+        self.editTabActionButtons.Visibility = (
+            Visibility.Visible if visible else Visibility.Collapsed
+        )
     
     def validate_form(self):
         """Validate all form fields and update Save button state."""
@@ -1595,6 +1602,7 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         # Switch to edit tab
         self.editConfigTab.IsEnabled = True
         self.tabControl.SelectedItem = self.editConfigTab
+        self.set_edit_tab_actions_visible(True)
         
         # Ensure parameter mapping buttons are enabled
         self.addParameterMappingButton.IsEnabled = True
@@ -1725,6 +1733,7 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         # Switch to edit tab
         self.editConfigTab.IsEnabled = True
         self.tabControl.SelectedItem = self.editConfigTab
+        self.set_edit_tab_actions_visible(True)
         
         # Ensure parameter mapping buttons are enabled
         self.addParameterMappingButton.IsEnabled = True
@@ -2045,6 +2054,7 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         # Update UI
         self.editConfigTab.IsEnabled = False
         self.tabControl.SelectedItem = self.configsTab
+        self.set_edit_tab_actions_visible(False)
         self.update_status("Returned to mappings list")
     
     def add_parameter_mapping_button_click(self, sender, args):

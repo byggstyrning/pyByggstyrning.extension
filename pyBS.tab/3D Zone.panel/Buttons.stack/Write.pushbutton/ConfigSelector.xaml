@@ -11,10 +11,11 @@
         </Grid.RowDefinitions>
 
         <!-- Active view toggle -->
-        <CheckBox x:Name="activeViewOnlyCheckBox" Grid.Row="0" 
-                  Content="Run only for elements in Active View" 
-                  Margin="0,0,0,10"
-                  Foreground="{DynamicResource TextBrush}"/>
+        <CheckBox x:Name="activeViewOnlyCheckBox" Grid.Row="0"
+                  Content="Run only for elements in Active View"
+                  Style="{DynamicResource ToggleSwitchStyle}"
+                  FontWeight="SemiBold"
+                  Margin="0,0,0,10"/>
 
         <ListBox x:Name="configsListView" Grid.Row="1" Margin="0,0,0,10"
                   Background="{DynamicResource ControlBackgroundBrush}"
