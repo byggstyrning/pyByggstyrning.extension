@@ -21,7 +21,7 @@
         </StackPanel>
 
         <!-- Views + sheet (compact) -->
-        <GroupBox Grid.Row="1" Header="Views and sheet" Margin="0,0,0,10" Padding="0,4,0,8">
+        <GroupBox Grid.Row="1" Header="Views and sheet" Margin="0,0,0,10" Padding="0,4,0,8" Style="{DynamicResource DefaultGroupBoxStyle}">
             <Grid Margin="10,4,10,6">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -51,7 +51,7 @@
                     <ComboBox x:Name="elevationTypeComboBox" Style="{DynamicResource StandardComboBoxStyle}" Height="28">
                         <ComboBox.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding Name}" Foreground="{DynamicResource TextBrush}"/>
+                                <TextBlock Text="{Binding Name}" Foreground="{DynamicResource TextBrush}" Style="{DynamicResource DefaultTextBlockStyle}"/>
                             </DataTemplate>
                         </ComboBox.ItemTemplate>
                     </ComboBox>
@@ -89,7 +89,7 @@
         </GroupBox>
 
         <!-- Categories + Instances: two vertical panels -->
-        <GroupBox Grid.Row="2" Header="Categories and instances" Margin="0,0,0,10">
+        <GroupBox Grid.Row="2" Header="Categories and instances" Margin="0,0,0,10" Style="{DynamicResource DefaultGroupBoxStyle}">
             <Grid Margin="10">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="1*" MinWidth="160"/>
@@ -125,7 +125,8 @@
                         <Border Grid.Row="0" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="3">
                             <ListBox x:Name="categoryListBox" Background="{DynamicResource ControlBackgroundBrush}"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                     ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                     Style="{DynamicResource DefaultListBoxStyle}">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
                                         <CheckBox Content="{Binding CategoryName}" 
@@ -172,6 +173,7 @@
                         </Grid.RowDefinitions>
                         <Border Grid.Row="0" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="3">
                             <DataGrid x:Name="instancesDataGrid"
+                                      Style="{DynamicResource DefaultDataGridStyle}"
                                       SelectionMode="Extended"
                                       SelectionChanged="instancesDataGrid_SelectionChanged"
                                       CanUserAddRows="False"

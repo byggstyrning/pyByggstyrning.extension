@@ -91,7 +91,7 @@
                     </Grid.ColumnDefinitions>
                     <ComboBox x:Name="parameterSelector" Style="{DynamicResource SearchableComboBoxStyle}" Tag="Select parameter...">
                     </ComboBox>
-                    <Button Grid.Column="1" Width="30" Height="30" Margin="4,0,0,0" Padding="0" ToolTip="Refresh Parameters" x:Name="refreshParametersButton" Background="Transparent" BorderThickness="0" Cursor="Hand">
+                    <Button Grid.Column="1" Width="30" Height="30" Margin="4,0,0,0" Padding="0" ToolTip="Refresh Parameters" x:Name="refreshParametersButton" Background="Transparent" BorderThickness="0" Cursor="Hand" Style="{DynamicResource DefaultButtonStyle}">
                         <Image x:Name="refreshParametersImage" Stretch="Uniform" Width="30" Height="30"/>
                     </Button>
                 </Grid>
@@ -128,8 +128,8 @@
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="70"/>
                                         </Grid.ColumnDefinitions>
-                                        <CheckBox Grid.Column="0" Margin="0,0" IsChecked="{Binding IsChecked, Mode=TwoWay}" Checked="ValueCheckbox_Changed" Unchecked="ValueCheckbox_Changed"/>
-                                        <TextBlock Grid.Column="1" Text="{Binding value}" VerticalAlignment="Center" Margin="5,0" Foreground="{DynamicResource TextBrush}"/>
+                                        <CheckBox Grid.Column="0" Margin="0,0" IsChecked="{Binding IsChecked, Mode=TwoWay}" Checked="ValueCheckbox_Changed" Unchecked="ValueCheckbox_Changed" Style="{DynamicResource DefaultCheckBoxStyle}"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding value}" VerticalAlignment="Center" Margin="5,0" Foreground="{DynamicResource TextBrush}" Style="{DynamicResource DefaultTextBlockStyle}"/>
                                         <Border Grid.Column="2" Width="50" Height="20" Background="{Binding color}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" HorizontalAlignment="Center"/>
                                     </Grid>
                                 </DataTemplate>
@@ -146,7 +146,7 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="Override Projection/Cut Lines" VerticalAlignment="Center" Foreground="{DynamicResource TextBrush}"/>
+                        <TextBlock Text="Override Projection/Cut Lines" VerticalAlignment="Center" Foreground="{DynamicResource TextBrush}" Style="{DynamicResource DefaultTextBlockStyle}"/>
                         <CheckBox Grid.Column="1" Style="{DynamicResource ToggleSwitchStyle}" x:Name="overrideProjectionCheckbox"/>
                     </Grid>
                     
@@ -155,7 +155,7 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="Select Elements in Properties" VerticalAlignment="Center" Foreground="{DynamicResource TextBrush}"/>
+                        <TextBlock Text="Select Elements in Properties" VerticalAlignment="Center" Foreground="{DynamicResource TextBrush}" Style="{DynamicResource DefaultTextBlockStyle}"/>
                         <CheckBox Grid.Column="1" Style="{DynamicResource ToggleSwitchStyle}" x:Name="showElementsCheckbox"/>
                     </Grid>
 

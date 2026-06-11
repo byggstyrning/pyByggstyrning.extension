@@ -14,13 +14,15 @@
         <!-- Tag Type Selector -->
         <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
             <TextBlock Text="Space Tag Type:" VerticalAlignment="Center" Margin="0,0,10,0"
-                       Foreground="{DynamicResource TextBrush}"/>
+                       Foreground="{DynamicResource TextBrush}"
+                       Style="{DynamicResource DefaultTextBlockStyle}"/>
             <ComboBox x:Name="tagTypeComboBox" Width="300" 
                       Style="{DynamicResource StandardComboBoxStyle}">
                 <ComboBox.ItemTemplate>
                     <DataTemplate>
                         <TextBlock Text="{Binding display_name}" 
-                                   Foreground="{DynamicResource TextBrush}"/>
+                                   Foreground="{DynamicResource TextBrush}"
+                                   Style="{DynamicResource DefaultTextBlockStyle}"/>
                     </DataTemplate>
                 </ComboBox.ItemTemplate>
             </ComboBox>
@@ -34,6 +36,7 @@
 
         <!-- DataGrid -->
         <DataGrid x:Name="viewsDataGrid" Grid.Row="2" Margin="0,0,0,10"
+                  Style="{DynamicResource DefaultDataGridStyle}"
                   SelectionMode="Extended"
                   CanUserAddRows="False"
                   CanUserDeleteRows="False"
@@ -89,7 +92,8 @@
             
             <TextBlock x:Name="statusText" Grid.Column="0" VerticalAlignment="Center"
                        Foreground="{DynamicResource TextSecondaryBrush}"
-                       Text="Select views to tag spaces"/>
+                       Text="Select views to tag spaces"
+                       Style="{DynamicResource DefaultTextBlockStyle}"/>
             
             <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button x:Name="tagButton" Content="Tag Spaces" Width="120" IsDefault="True" 

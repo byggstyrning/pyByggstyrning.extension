@@ -28,78 +28,92 @@
                        TextWrapping="Wrap"
                        FontSize="13"
                        Foreground="{DynamicResource TextBrush}"
-                       Margin="0,8,0,0"/>
+                       Margin="0,8,0,0"
+                       Style="{DynamicResource DefaultTextBlockStyle}"/>
         </StackPanel>
 
         <GroupBox Grid.Row="1"
                   Header="Scope"
                   Margin="0,12,0,0"
-                  Foreground="{DynamicResource TextBrush}">
+                  Foreground="{DynamicResource TextBrush}"
+                  Style="{DynamicResource DefaultGroupBoxStyle}">
             <StackPanel Margin="4,8,4,4">
                 <RadioButton x:Name="selectionModeRadio"
                              Content="Current selection — instances only"
                              IsChecked="True"
                              Margin="0,0,0,8"
                              FontSize="13"
-                             Foreground="{DynamicResource TextBrush}"/>
+                             Foreground="{DynamicResource TextBrush}"
+                             Style="{DynamicResource DefaultRadioButtonStyle}"/>
                 <RadioButton x:Name="wholeModelModeRadio"
                              Content="Whole model — all instances and element types"
                              FontSize="13"
-                             Foreground="{DynamicResource TextBrush}"/>
+                             Foreground="{DynamicResource TextBrush}"
+                             Style="{DynamicResource DefaultRadioButtonStyle}"/>
                 <TextBlock Text="Whole model rewrites IfcGUID on every eligible element in the project. Use on a copy first if unsure. You will be asked to confirm before changes run."
                            TextWrapping="Wrap"
                            FontSize="12"
                            Foreground="{DynamicResource WarningBrush}"
-                           Margin="4,10,0,0"/>
+                           Margin="4,10,0,0"
+                           Style="{DynamicResource DefaultTextBlockStyle}"/>
             </StackPanel>
         </GroupBox>
 
         <GroupBox Grid.Row="2"
                   Header="What this tool does"
                   Margin="0,12,0,0"
-                  Foreground="{DynamicResource TextBrush}">
+                  Foreground="{DynamicResource TextBrush}"
+                  Style="{DynamicResource DefaultGroupBoxStyle}">
             <ScrollViewer VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled"
-                          MaxHeight="280">
+                          MaxHeight="280"
+                          Style="{DynamicResource CustomScrollViewerStyle}">
                 <StackPanel Margin="4,8,8,8">
                     <TextBlock TextWrapping="Wrap"
                                FontSize="13"
                                Foreground="{DynamicResource TextBrush}"
                                LineHeight="20"
+                               Style="{DynamicResource DefaultTextBlockStyle}"
                                Text="For each eligible element, the tool generates a new IFC GlobalId via Revit’s ExporterIFCUtils.CreateGUID(), then writes it to the built-in IfcGUID parameter (IFC_GUID on instances, IFC_TYPE_GUID on types). Existing parameters are updated with Parameter.Set when possible; otherwise ExporterIFCUtils.AddValueString is used."/>
 
                     <TextBlock Text="Excluded automatically"
                                FontWeight="SemiBold"
                                FontSize="13"
                                Foreground="{DynamicResource TextBrush}"
-                               Margin="0,14,0,6"/>
+                               Margin="0,14,0,6"
+                               Style="{DynamicResource DefaultTextBlockStyle}"/>
                     <TextBlock TextWrapping="Wrap"
                                FontSize="13"
                                Foreground="{DynamicResource TextBrush}"
                                LineHeight="20"
-                               Text="• Revit links and elements not in the active document&#x0a;• Views, sheets, schedules, legends, drafting views, cameras&#x0a;• Curtain walls (exporter does not store IfcGUID on these)&#x0a;• Elements without a category&#x0a;• Element types when using selection mode only&#x0a;• Workshared elements owned by another user&#x0a;• Family (.rfa) edit mode — project documents only"/>
+                               Text="• Revit links and elements not in the active document&#x0a;• Views, sheets, schedules, legends, drafting views, cameras&#x0a;• Curtain walls (exporter does not store IfcGUID on these)&#x0a;• Elements without a category&#x0a;• Element types when using selection mode only&#x0a;• Workshared elements owned by another user&#x0a;• Family (.rfa) edit mode — project documents only"
+                               Style="{DynamicResource DefaultTextBlockStyle}"/>
 
                     <TextBlock Text="Whole model — important"
                                FontWeight="SemiBold"
                                FontSize="13"
                                Foreground="{DynamicResource WarningBrush}"
-                               Margin="0,14,0,6"/>
+                               Margin="0,14,0,6"
+                               Style="{DynamicResource DefaultTextBlockStyle}"/>
                     <TextBlock TextWrapping="Wrap"
                                FontSize="13"
                                Foreground="{DynamicResource TextBrush}"
                                LineHeight="20"
-                               Text="This mode can touch thousands of elements in one Undo step. Old IfcGUID values are replaced and will no longer match IFC files, BCF topics, or external databases that still reference the previous GlobalIds. Coordination with other models copied from the same source is the intended scenario: each file gets its own unique GlobalIds before export. This tool does not change relationship/property-set GUIDs created only at IFC export (e.g. some IfcRelDefinesByProperties)."/>
+                               Text="This mode can touch thousands of elements in one Undo step. Old IfcGUID values are replaced and will no longer match IFC files, BCF topics, or external databases that still reference the previous GlobalIds. Coordination with other models copied from the same source is the intended scenario: each file gets its own unique GlobalIds before export. This tool does not change relationship/property-set GUIDs created only at IFC export (e.g. some IfcRelDefinesByProperties)."
+                               Style="{DynamicResource DefaultTextBlockStyle}"/>
 
                     <TextBlock Text="IFC export"
                                FontWeight="SemiBold"
                                FontSize="13"
                                Foreground="{DynamicResource TextBrush}"
-                               Margin="0,14,0,6"/>
+                               Margin="0,14,0,6"
+                               Style="{DynamicResource DefaultTextBlockStyle}"/>
                     <TextBlock TextWrapping="Wrap"
                                FontSize="13"
                                Foreground="{DynamicResource TextBrush}"
                                LineHeight="20"
-                               Text="In your IFC export settings, enable storing and using IfcGUID from element parameters so the values written here become GlobalId in the exported IFC. Without that option, export may still derive GlobalIds from element identity instead of the parameter."/>
+                               Text="In your IFC export settings, enable storing and using IfcGUID from element parameters so the values written here become GlobalId in the exported IFC. Without that option, export may still derive GlobalIds from element identity instead of the parameter."
+                               Style="{DynamicResource DefaultTextBlockStyle}"/>
                 </StackPanel>
             </ScrollViewer>
         </GroupBox>

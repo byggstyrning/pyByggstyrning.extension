@@ -37,12 +37,13 @@
                                   BorderThickness="0"
                                   Style="{DynamicResource StandardListViewStyle}">
                             <ListView.View>
-                                <GridView>
+                                <GridView ColumnHeaderContainerStyle="{DynamicResource DefaultGridViewColumnHeaderStyle}">
                                     <GridViewColumn Header="Name" Width="80">
                                         <GridViewColumn.CellTemplate>
                                             <DataTemplate>
                                                 <TextBlock Text="{Binding Name}" VerticalAlignment="Center" Margin="5,0"
-                                                          Foreground="{DynamicResource TextBrush}" FontWeight="SemiBold"/>
+                                                          Foreground="{DynamicResource TextBrush}" FontWeight="SemiBold"
+                                                          Style="{DynamicResource DefaultTextBlockStyle}"/>
                                             </DataTemplate>
                                         </GridViewColumn.CellTemplate>
                                     </GridViewColumn>
@@ -53,7 +54,8 @@
                                                           TextTrimming="CharacterEllipsis"
                                                           ToolTip="{Binding LinkedModelTooltip}"
                                                           Foreground="{DynamicResource TextSecondaryBrush}"
-                                                          FontStyle="Italic"/>
+                                                          FontStyle="Italic"
+                                                          Style="{DynamicResource DefaultTextBlockStyle}"/>
                                             </DataTemplate>
                                         </GridViewColumn.CellTemplate>
                                     </GridViewColumn>
@@ -61,7 +63,8 @@
                                         <GridViewColumn.CellTemplate>
                                             <DataTemplate>
                                                 <TextBlock Text="{Binding SourceCategoriesDisplay}" VerticalAlignment="Center" Margin="5,0"
-                                                          Foreground="{DynamicResource TextBrush}"/>
+                                                          Foreground="{DynamicResource TextBrush}"
+                                                          Style="{DynamicResource DefaultTextBlockStyle}"/>
                                             </DataTemplate>
                                         </GridViewColumn.CellTemplate>
                                     </GridViewColumn>
@@ -69,7 +72,8 @@
                                         <GridViewColumn.CellTemplate>
                                             <DataTemplate>
                                                 <TextBlock x:Name="mappingsTextBlock" TextWrapping="Wrap" VerticalAlignment="Center" Margin="5,0"
-                                                          Foreground="{DynamicResource TextBrush}" Loaded="MappingsTextBlock_Loaded"/>
+                                                          Foreground="{DynamicResource TextBrush}" Loaded="MappingsTextBlock_Loaded"
+                                                          Style="{DynamicResource DefaultTextBlockStyle}"/>
                                             </DataTemplate>
                                         </GridViewColumn.CellTemplate>
                                     </GridViewColumn>
@@ -136,7 +140,7 @@
                         </StackPanel.Resources>
                         
                         <!-- Step 1: Basic Information -->
-                        <GroupBox Header="Step 1: Basic Information">
+                        <GroupBox Header="Step 1: Basic Information" Style="{DynamicResource DefaultGroupBoxStyle}">
                             <StackPanel>
                                 <StackPanel Margin="0,0,0,10">
                                     <TextBlock Text="Mapping Name" Style="{DynamicResource LabelTextBlockStyle}" Margin="0,0,0,5"/>
@@ -150,7 +154,7 @@
                         </GroupBox>
 
                         <!-- Step 2: Source Configuration -->
-                        <GroupBox Header="Step 2: Source Configuration">
+                        <GroupBox Header="Step 2: Source Configuration" Style="{DynamicResource DefaultGroupBoxStyle}">
                             <StackPanel>
                                 <!-- Linked Document Option -->
                                 <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" 
@@ -207,7 +211,7 @@
                         </GroupBox>
 
                         <!-- Step 3: Target Filter (Optional) -->
-                        <GroupBox Header="Step 3: Target Filter (Optional)">
+                        <GroupBox Header="Step 3: Target Filter (Optional)" Style="{DynamicResource DefaultGroupBoxStyle}">
                             <StackPanel>
                                 <TextBlock TextWrapping="Wrap" Style="{DynamicResource BodyTextBlockStyle}" Margin="0,0,0,10">
                                     <Run Text="By default, parameters will be written to "/>
@@ -242,7 +246,7 @@
                         </GroupBox>
 
                         <!-- Step 4: Parameter Mappings -->
-                        <GroupBox Header="Step 4: Parameter Mappings">
+                        <GroupBox Header="Step 4: Parameter Mappings" Style="{DynamicResource DefaultGroupBoxStyle}">
                             <StackPanel>
                                 <TextBlock TextWrapping="Wrap" Style="{DynamicResource BodyTextBlockStyle}" Margin="0,0,0,12">
                                     <Run Text="Define which source parameters map to which target parameters. "/>
@@ -289,7 +293,8 @@
                                                         <TextBlock Text="→" FontSize="16" FontWeight="Bold"
                                                                    Foreground="{DynamicResource AccentBrush}"
                                                                    HorizontalAlignment="Center" 
-                                                                   VerticalAlignment="Center"/>
+                                                                   VerticalAlignment="Center"
+                                                                   Style="{DynamicResource DefaultTextBlockStyle}"/>
                                                     </DataTemplate>
                                                 </DataGridTemplateColumn.CellTemplate>
                                             </DataGridTemplateColumn>

@@ -251,62 +251,6 @@ def apply_theme_to_resources(resources, theme=None):
         return False
 
 
-_app_styles_loaded = False
-_loaded_styles_dict = None
-
-
-def ensure_styles_loaded(force_theme=None):
-    """
-    Load CommonStyles into Application.Resources before window XAML parse.
-    Safe to call multiple times; loads once per process.
-    """
-    global _app_styles_loaded, _loaded_styles_dict
-    if _app_styles_loaded:
-        return True
-    try:
-        from System.Windows import Application, ResourceDictionary
-        from System.Windows.Markup import XamlReader
-        from System.IO import File
-
-        styles_path = get_common_styles_path()
-        if not op.exists(styles_path):
-            return False
-
-        app = Application.Current
-        if app is None:
-            return False
-
-        if app.Resources is None:
-            app.Resources = ResourceDictionary()
-
-        xaml_content = File.ReadAllText(styles_path)
-        _loaded_styles_dict = XamlReader.Parse(xaml_content)
-        apply_theme_to_resources(_loaded_styles_dict, force_theme)
-        app.Resources.MergedDictionaries.Add(_loaded_styles_dict)
-        _app_styles_loaded = True
-        return True
-    except Exception:
-        return False
-
-
-def unload_styles_from_app():
-    """
-    Remove CommonStyles from Application.Resources to prevent style leakage.
-    Should be called immediately after the window XAML is parsed.
-    """
-    global _app_styles_loaded, _loaded_styles_dict
-    try:
-        from System.Windows import Application
-        app = Application.Current
-        if app and app.Resources and _loaded_styles_dict is not None:
-            app.Resources.MergedDictionaries.Remove(_loaded_styles_dict)
-        _app_styles_loaded = False
-        _loaded_styles_dict = None
-        return True
-    except Exception:
-        return False
-
-
 def load_styles_to_window(window, force_theme=None):
     """
     Load styles directly into a window's Resources with theme support.

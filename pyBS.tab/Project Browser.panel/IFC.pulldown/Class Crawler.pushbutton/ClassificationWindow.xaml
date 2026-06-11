@@ -72,6 +72,7 @@
         <!-- DataGrid -->
         <DataGrid x:Name="elementTypesDataGrid" 
                  Grid.Row="2"
+                 Style="{DynamicResource DefaultDataGridStyle}"
                  Margin="10,0"
                  AutoGenerateColumns="False"
                  CanUserAddRows="False"
@@ -148,7 +149,8 @@
                                 <TextBlock Grid.Column="0" 
                                           Text="Category" 
                                           VerticalAlignment="Center"
-                                          Margin="0,0,5,0"/>
+                                          Margin="0,0,5,0"
+                                          Style="{DynamicResource DefaultTextBlockStyle}"/>
                                 <StackPanel Grid.Column="1" Orientation="Vertical" VerticalAlignment="Center">
                                     <Button x:Name="SortAscButton"
                                            Content="▲"
@@ -233,7 +235,8 @@
                                 <TextBlock Grid.Column="0" 
                                           Text="Family" 
                                           VerticalAlignment="Center"
-                                          Margin="0,0,5,0"/>
+                                          Margin="0,0,5,0"
+                                          Style="{DynamicResource DefaultTextBlockStyle}"/>
                                 <StackPanel Grid.Column="1" Orientation="Vertical" VerticalAlignment="Center">
                                     <Button x:Name="SortAscButton"
                                            Content="▲"
@@ -318,7 +321,8 @@
                                 <TextBlock Grid.Column="0" 
                                           Text="Type" 
                                           VerticalAlignment="Center"
-                                          Margin="0,0,5,0"/>
+                                          Margin="0,0,5,0"
+                                          Style="{DynamicResource DefaultTextBlockStyle}"/>
                                 <StackPanel Grid.Column="1" Orientation="Vertical" VerticalAlignment="Center">
                                     <Button x:Name="SortAscButton"
                                            Content="▲"
@@ -403,7 +407,8 @@
                                 <TextBlock Grid.Column="0" 
                                           Text="Manufacturer" 
                                           VerticalAlignment="Center"
-                                          Margin="0,0,5,0"/>
+                                          Margin="0,0,5,0"
+                                          Style="{DynamicResource DefaultTextBlockStyle}"/>
                                 <StackPanel Grid.Column="1" Orientation="Vertical" VerticalAlignment="Center">
                                     <Button x:Name="SortAscButton"
                                            Content="▲"
@@ -486,7 +491,8 @@
                                 <TextBlock Grid.Column="0" 
                                           Text="IFC Class" 
                                           VerticalAlignment="Center"
-                                          Margin="0,0,5,0"/>
+                                          Margin="0,0,5,0"
+                                          Style="{DynamicResource DefaultTextBlockStyle}"/>
                                 <StackPanel Grid.Column="1" Orientation="Vertical" VerticalAlignment="Center">
                                     <Button x:Name="SortAscButton"
                                            Content="▲"
@@ -554,7 +560,8 @@
                                 <TextBlock x:Name="ifcClassText" 
                                           Text="{Binding IfcClass}" 
                                           VerticalAlignment="Center" 
-                                          Margin="5,0"/>
+                                          Margin="5,0"
+                                          Style="{DynamicResource DefaultTextBlockStyle}"/>
                                 <StackPanel x:Name="processingSpinner" 
                                            Orientation="Horizontal" 
                                            VerticalAlignment="Center" 
@@ -564,12 +571,14 @@
                                     <TextBlock Text="⏳" 
                                               FontSize="14" 
                                               VerticalAlignment="Center" 
-                                              Margin="0,0,5,0"/>
+                                              Margin="0,0,5,0"
+                                              Style="{DynamicResource DefaultTextBlockStyle}"/>
                                     <TextBlock x:Name="processingText"
                                               Text="Processing..." 
                                               FontSize="11" 
                                               Foreground="{DynamicResource TextSecondaryBrush}"
-                                              VerticalAlignment="Center"/>
+                                              VerticalAlignment="Center"
+                                              Style="{DynamicResource DefaultTextBlockStyle}"/>
                                 </StackPanel>
                                 <StackPanel x:Name="queuedSpinner" 
                                            Orientation="Horizontal" 
@@ -580,11 +589,13 @@
                                     <TextBlock Text="⏳" 
                                               FontSize="14" 
                                               VerticalAlignment="Center" 
-                                              Margin="0,0,5,0"/>
+                                              Margin="0,0,5,0"
+                                              Style="{DynamicResource DefaultTextBlockStyle}"/>
                                     <TextBlock Text="In processing queue..." 
                                               FontSize="11" 
                                               Foreground="{DynamicResource TextSecondaryBrush}"
-                                              VerticalAlignment="Center"/>
+                                              VerticalAlignment="Center"
+                                              Style="{DynamicResource DefaultTextBlockStyle}"/>
                                 </StackPanel>
                             </Grid>
                             <DataTemplate.Triggers>
@@ -655,7 +666,8 @@
                                 <TextBlock Grid.Column="0" 
                                           Text="Predefined Type" 
                                           VerticalAlignment="Center"
-                                          Margin="0,0,5,0"/>
+                                          Margin="0,0,5,0"
+                                          Style="{DynamicResource DefaultTextBlockStyle}"/>
                                 <StackPanel Grid.Column="1" Orientation="Vertical" VerticalAlignment="Center">
                                     <Button x:Name="SortAscButton"
                                            Content="▲"
@@ -719,7 +731,7 @@
                     </DataGridTemplateColumn.HeaderTemplate>
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
-                            <TextBlock Text="{Binding PredefinedType}" VerticalAlignment="Center" Margin="5,0"/>
+                            <TextBlock Text="{Binding PredefinedType}" VerticalAlignment="Center" Margin="5,0" Style="{DynamicResource DefaultTextBlockStyle}"/>
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                     <DataGridTemplateColumn.CellEditingTemplate>
@@ -842,7 +854,8 @@
                     <ComboBox x:Name="schemaVersionComboBox"
                              Grid.Column="1"
                              SelectedIndex="0"
-                             MinWidth="100">
+                             MinWidth="100"
+                             Style="{DynamicResource DefaultComboBoxStyle}">
                         <ComboBoxItem Content="IFC2X3"/>
                         <ComboBoxItem Content="IFC4"/>
                         <ComboBoxItem Content="IFC4X3"/>

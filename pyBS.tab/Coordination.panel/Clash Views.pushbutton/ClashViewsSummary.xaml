@@ -36,19 +36,19 @@
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <TextBlock Grid.Row="0" Grid.Column="0" Text="Sheet: " FontWeight="SemiBold" Margin="0,0,5,4"/>
-                <TextBlock Grid.Row="0" Grid.Column="1" x:Name="sheetInfoText" Text="-" TextWrapping="Wrap"/>
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Sheet: " Style="{DynamicResource DefaultTextBlockStyle}" FontWeight="SemiBold" Margin="0,0,5,4"/>
+                <TextBlock Grid.Row="0" Grid.Column="1" x:Name="sheetInfoText" Style="{DynamicResource DefaultTextBlockStyle}" Text="-" TextWrapping="Wrap"/>
 
-                <TextBlock Grid.Row="1" Grid.Column="0" Text="Views created: " FontWeight="SemiBold" Margin="0,0,5,4"/>
-                <TextBlock Grid.Row="1" Grid.Column="1" x:Name="viewsCountText" Text="-"/>
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="Views created: " Style="{DynamicResource DefaultTextBlockStyle}" FontWeight="SemiBold" Margin="0,0,5,4"/>
+                <TextBlock Grid.Row="1" Grid.Column="1" x:Name="viewsCountText" Style="{DynamicResource DefaultTextBlockStyle}" Text="-"/>
 
-                <TextBlock Grid.Row="2" Grid.Column="0" Text="Total clashes: " FontWeight="SemiBold" Margin="0,0,5,0"/>
-                <TextBlock Grid.Row="2" Grid.Column="1" x:Name="clashesCountText" Text="-"/>
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="Total clashes: " Style="{DynamicResource DefaultTextBlockStyle}" FontWeight="SemiBold" Margin="0,0,5,0"/>
+                <TextBlock Grid.Row="2" Grid.Column="1" x:Name="clashesCountText" Style="{DynamicResource DefaultTextBlockStyle}" Text="-"/>
             </Grid>
         </Border>
 
         <!-- Views List -->
-        <GroupBox Grid.Row="2" Header="Created Views" Margin="0,0,0,10">
+        <GroupBox Grid.Row="2" Header="Created Views" Style="{DynamicResource DefaultGroupBoxStyle}" Margin="0,0,0,10">
             <Grid Margin="8">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -59,7 +59,7 @@
                            Style="{DynamicResource SecondaryTextBlockStyle}" Margin="0,0,0,8" TextWrapping="Wrap" FontSize="11"/>
 
                 <Border Grid.Row="1" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="3">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Style="{DynamicResource CustomScrollViewerStyle}">
                         <StackPanel x:Name="viewsListPanel" Margin="8">
                             <!-- Views will be added here programmatically -->
                         </StackPanel>
@@ -72,7 +72,7 @@
         <Border Grid.Row="3" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,1"
                 Background="{DynamicResource BackgroundLightBrush}" Margin="-20,0,-20,15" Padding="20,12">
             <StackPanel>
-                <TextBlock Text="Visibility Options" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                <TextBlock Text="Visibility Options" Style="{DynamicResource DefaultTextBlockStyle}" FontWeight="SemiBold" Margin="0,0,0,8"/>
                 <CheckBox x:Name="annotationsToggle" Content="Show annotations (dimensions, text, tags, etc.)"
                           IsChecked="False"
                           Checked="AnnotationsToggle_Changed" Unchecked="AnnotationsToggle_Changed"
@@ -84,7 +84,7 @@
 
         <!-- Explanation -->
         <StackPanel Grid.Row="4" Margin="0,0,0,15">
-            <TextBlock Text="What you're seeing" FontWeight="SemiBold" Margin="0,0,0,6"/>
+            <TextBlock Text="What you're seeing" Style="{DynamicResource DefaultTextBlockStyle}" FontWeight="SemiBold" Margin="0,0,0,6"/>
             <TextBlock TextWrapping="Wrap" Style="{DynamicResource BodyTextBlockStyle}" FontSize="12" LineHeight="18">
                 <Run FontWeight="SemiBold" Foreground="#E74C3C">Red elements:</Run>
                 <Run> First category (host model). Darker lines help distinguish edges.</Run>

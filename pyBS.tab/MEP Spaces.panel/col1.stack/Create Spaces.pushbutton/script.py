@@ -721,11 +721,12 @@ class CreateSpacesWindow(WPFWindow):
         self.linked_models = []
         
         try:
-            # Load styles before WPFWindow.__init__
-            self.load_styles()
-            
             # Initialize WPF window
             WPFWindow.__init__(self, xaml_file)
+            
+            # Load styles AFTER window initialization (window-scoped, isolated from Revit UI)
+            from styles import load_styles_to_window
+            load_styles_to_window(self)
             
             # Hide busy overlay initially
             self.busyOverlay.Visibility = Visibility.Collapsed
@@ -739,20 +740,6 @@ class CreateSpacesWindow(WPFWindow):
         except Exception as e:
             logger.error("Error initializing window: {}".format(str(e)))
             forms.alert("Failed to initialize: {}".format(str(e)), exitscript=True)
-    
-    def load_styles(self):
-        """Load the common styles ResourceDictionary with theme support."""
-        try:
-            from styles import load_styles_to_window
-            result = load_styles_to_window(self)
-            if result:
-                logger.debug("Loaded styles with theme support")
-            else:
-                logger.warning("Could not load styles with theme support")
-        except ImportError as e:
-            logger.error("Failed to import styles: {}".format(str(e)))
-        except Exception as e:
-            logger.warning("Could not load styles: {}".format(str(e)))
     
     def set_busy(self, is_busy, message="Creating spaces..."):
         """Show or hide the busy overlay indicator.

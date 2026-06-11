@@ -56,23 +56,24 @@
                         </Grid.ColumnDefinitions>
                         <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                             <TextBlock Text="Default on new instances" Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center"/>
-                            <TextBlock Text="ⓘ" FontSize="14" Foreground="{DynamicResource TextSecondaryBrush}" Margin="5,0,0,0" VerticalAlignment="Center" Cursor="Hand">
+                            <TextBlock Text="ⓘ" FontSize="14" Foreground="{DynamicResource TextSecondaryBrush}" Margin="5,0,0,0" VerticalAlignment="Center" Cursor="Hand" Style="{DynamicResource DefaultTextBlockStyle}">
                                 <TextBlock.ToolTip>
                                     <ToolTip Background="{DynamicResource PopupBackgroundBrush}" Foreground="{DynamicResource TextBrush}">
                                         <StackPanel Margin="5">
-                                            <TextBlock Text="Default on new instances" FontWeight="Bold" Foreground="{DynamicResource TextBrush}" Margin="0,0,0,5"/>
-                                            <TextBlock Text="Turn on to apply the selected MMI to new instances when the MMI Monitor is active. Only runs for elements in DocumentChanged added-element IDs that already have the MMI parameter with a blank string. Pick a value below; choose (None) for no default text. Existing instances are not changed by this path." TextWrapping="Wrap" MaxWidth="350" Foreground="{DynamicResource TextBrush}"/>
+                                            <TextBlock Text="Default on new instances" FontWeight="Bold" Foreground="{DynamicResource TextBrush}" Margin="0,0,0,5" Style="{DynamicResource DefaultTextBlockStyle}"/>
+                                            <TextBlock Text="Turn on to apply the selected MMI to new instances when the MMI Monitor is active. Only runs for elements in DocumentChanged added-element IDs that already have the MMI parameter with a blank string. Pick a value below; choose (None) for no default text. Existing instances are not changed by this path." TextWrapping="Wrap" MaxWidth="350" Foreground="{DynamicResource TextBrush}" Style="{DynamicResource DefaultTextBlockStyle}"/>
                                         </StackPanel>
                                     </ToolTip>
                                 </TextBlock.ToolTip>
                             </TextBlock>
                         </StackPanel>
                         <CheckBox x:Name="defaultOnNewInstancesCheckBox" Grid.Row="0" Grid.Column="1" Style="{DynamicResource ToggleSwitchStyle}" VerticalAlignment="Center"/>
-                        <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Text="MMI value applied to new instances with an empty MMI string (MMI Monitor)." Foreground="{DynamicResource TextBrush}" Margin="0,3,0,5" FontSize="11" TextWrapping="Wrap"/>
+                        <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Text="MMI value applied to new instances with an empty MMI string (MMI Monitor)." Foreground="{DynamicResource TextBrush}" Margin="0,3,0,5" FontSize="11" TextWrapping="Wrap" Style="{DynamicResource DefaultTextBlockStyle}"/>
                         <ComboBox x:Name="defaultMmiComboBox" Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" MinHeight="28"
                                   Foreground="{DynamicResource TextBrush}"
                                   Background="{DynamicResource ControlBackgroundBrush}"
-                                  BorderBrush="{DynamicResource BorderBrush}">
+                                  BorderBrush="{DynamicResource BorderBrush}"
+                                  Style="{DynamicResource DefaultComboBoxStyle}">
                             <ComboBox.ItemTemplate>
                                 <DataTemplate>
                                     <StackPanel Orientation="Horizontal" Margin="0,2">
@@ -82,7 +83,8 @@
                                                 Background="{Binding swatch_brush}"/>
                                         <TextBlock Text="{Binding label}" VerticalAlignment="Center"
                                                    Foreground="{DynamicResource TextBrush}"
-                                                   ToolTip="{Binding tool_tip}"/>
+                                                   ToolTip="{Binding tool_tip}"
+                                                   Style="{DynamicResource DefaultTextBlockStyle}"/>
                                     </StackPanel>
                                     <DataTemplate.Triggers>
                                         <DataTrigger Binding="{Binding mmi_code}" Value="">
@@ -108,18 +110,18 @@
                         </Grid.RowDefinitions>
                         <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                             <TextBlock Text="Attempt to fix MMI values" Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center"/>
-                            <TextBlock Text="ⓘ" FontSize="14" Foreground="{DynamicResource TextSecondaryBrush}" Margin="5,0,0,0" VerticalAlignment="Center" Cursor="Hand">
+                            <TextBlock Text="ⓘ" FontSize="14" Foreground="{DynamicResource TextSecondaryBrush}" Margin="5,0,0,0" VerticalAlignment="Center" Cursor="Hand" Style="{DynamicResource DefaultTextBlockStyle}">
                                 <TextBlock.ToolTip>
                                     <ToolTip Background="{DynamicResource PopupBackgroundBrush}" Foreground="{DynamicResource TextBrush}">
                                         <StackPanel Margin="5">
-                                            <TextBlock Text="Attempt to fix MMI values" FontWeight="Bold" Foreground="{DynamicResource TextBrush}" Margin="0,0,0,5"/>
-                                            <TextBlock Text="When enabled, attempts to fix MMI values automatically when elements are modified. Checks that values are in correct format (3-digit numbers between 100-999) and auto-corrects invalid values. Examples: '40' becomes '400', '2500' becomes '250'. Shows a balloon notification with details of corrections made. Runs automatically on element modification events." TextWrapping="Wrap" MaxWidth="350" Foreground="{DynamicResource TextBrush}"/>
+                                            <TextBlock Text="Attempt to fix MMI values" FontWeight="Bold" Foreground="{DynamicResource TextBrush}" Margin="0,0,0,5" Style="{DynamicResource DefaultTextBlockStyle}"/>
+                                            <TextBlock Text="When enabled, attempts to fix MMI values automatically when elements are modified. Checks that values are in correct format (3-digit numbers between 100-999) and auto-corrects invalid values. Examples: '40' becomes '400', '2500' becomes '250'. Shows a balloon notification with details of corrections made. Runs automatically on element modification events." TextWrapping="Wrap" MaxWidth="350" Foreground="{DynamicResource TextBrush}" Style="{DynamicResource DefaultTextBlockStyle}"/>
                                         </StackPanel>
                                     </ToolTip>
                                 </TextBlock.ToolTip>
                             </TextBlock>
                         </StackPanel>
-                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Attempts to automatically fix MMI value format when elements are modified." Foreground="{DynamicResource TextBrush}" Margin="0,3,0,0" FontSize="11" TextWrapping="Wrap"/>
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Attempts to automatically fix MMI value format when elements are modified." Foreground="{DynamicResource TextBrush}" Margin="0,3,0,0" FontSize="11" TextWrapping="Wrap" Style="{DynamicResource DefaultTextBlockStyle}"/>
                         <CheckBox x:Name="validateMmiCheckBox" Grid.Row="0" Grid.RowSpan="2" Grid.Column="1" Style="{DynamicResource ToggleSwitchStyle}" VerticalAlignment="Center"/>
                     </Grid>
                     
@@ -135,18 +137,18 @@
                         </Grid.RowDefinitions>
                         <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                             <TextBlock Text="Pin elements >=400" Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center"/>
-                            <TextBlock Text="ⓘ" FontSize="14" Foreground="{DynamicResource TextSecondaryBrush}" Margin="5,0,0,0" VerticalAlignment="Center" Cursor="Hand">
+                            <TextBlock Text="ⓘ" FontSize="14" Foreground="{DynamicResource TextSecondaryBrush}" Margin="5,0,0,0" VerticalAlignment="Center" Cursor="Hand" Style="{DynamicResource DefaultTextBlockStyle}">
                                 <TextBlock.ToolTip>
                                     <ToolTip Background="{DynamicResource PopupBackgroundBrush}" Foreground="{DynamicResource TextBrush}">
                                         <StackPanel Margin="5">
-                                            <TextBlock Text="Pin elements >=400" FontWeight="Bold" Foreground="{DynamicResource TextBrush}" Margin="0,0,0,5"/>
-                                            <TextBlock Text="When enabled, automatically pins elements when their MMI value reaches or exceeds 400. Only pins elements that aren't already pinned, and only when the MMI value changes from below 400 to 400 or above. Shows a notification when elements are pinned. Elements can still be manually unpinned if needed." TextWrapping="Wrap" MaxWidth="350" Foreground="{DynamicResource TextBrush}"/>
+                                            <TextBlock Text="Pin elements >=400" FontWeight="Bold" Foreground="{DynamicResource TextBrush}" Margin="0,0,0,5" Style="{DynamicResource DefaultTextBlockStyle}"/>
+                                            <TextBlock Text="When enabled, automatically pins elements when their MMI value reaches or exceeds 400. Only pins elements that aren't already pinned, and only when the MMI value changes from below 400 to 400 or above. Shows a notification when elements are pinned. Elements can still be manually unpinned if needed." TextWrapping="Wrap" MaxWidth="350" Foreground="{DynamicResource TextBrush}" Style="{DynamicResource DefaultTextBlockStyle}"/>
                                         </StackPanel>
                                     </ToolTip>
                                 </TextBlock.ToolTip>
                             </TextBlock>
                         </StackPanel>
-                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Automatically pins elements when MMI value reaches 400 or higher (only when value changes)." Foreground="{DynamicResource TextBrush}" Margin="0,3,0,0" FontSize="11" TextWrapping="Wrap"/>
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Automatically pins elements when MMI value reaches 400 or higher (only when value changes)." Foreground="{DynamicResource TextBrush}" Margin="0,3,0,0" FontSize="11" TextWrapping="Wrap" Style="{DynamicResource DefaultTextBlockStyle}"/>
                         <CheckBox x:Name="pinElementsCheckBox" Grid.Row="0" Grid.RowSpan="2" Grid.Column="1" Style="{DynamicResource ToggleSwitchStyle}" VerticalAlignment="Center"/>
                     </Grid>
                     
@@ -162,18 +164,18 @@
                         </Grid.RowDefinitions>
                         <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                             <TextBlock Text="Warn when moving elements >=425" Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center"/>
-                            <TextBlock Text="ⓘ" FontSize="14" Foreground="{DynamicResource TextSecondaryBrush}" Margin="5,0,0,0" VerticalAlignment="Center" Cursor="Hand">
+                            <TextBlock Text="ⓘ" FontSize="14" Foreground="{DynamicResource TextSecondaryBrush}" Margin="5,0,0,0" VerticalAlignment="Center" Cursor="Hand" Style="{DynamicResource DefaultTextBlockStyle}">
                                 <TextBlock.ToolTip>
                                     <ToolTip Background="{DynamicResource PopupBackgroundBrush}" Foreground="{DynamicResource TextBrush}">
                                         <StackPanel Margin="5">
-                                            <TextBlock Text="Warn when moving elements >=425" FontWeight="Bold" Foreground="{DynamicResource TextBrush}" Margin="0,0,0,5"/>
-                                            <TextBlock Text="When enabled, detects when elements with MMI values of 425 or higher are moved more than 0.1 meters. Tracks element locations and shows a balloon warning notification with details about which elements were moved and how far. Helps identify accidental movement of high-quality elements. Shows top 5 moved elements with their IDs, MMI values, and movement distance." TextWrapping="Wrap" MaxWidth="350" Foreground="{DynamicResource TextBrush}"/>
+                                            <TextBlock Text="Warn when moving elements >=425" FontWeight="Bold" Foreground="{DynamicResource TextBrush}" Margin="0,0,0,5" Style="{DynamicResource DefaultTextBlockStyle}"/>
+                                            <TextBlock Text="When enabled, detects when elements with MMI values of 425 or higher are moved more than 0.1 meters. Tracks element locations and shows a balloon warning notification with details about which elements were moved and how far. Helps identify accidental movement of high-quality elements. Shows top 5 moved elements with their IDs, MMI values, and movement distance." TextWrapping="Wrap" MaxWidth="350" Foreground="{DynamicResource TextBrush}" Style="{DynamicResource DefaultTextBlockStyle}"/>
                                         </StackPanel>
                                     </ToolTip>
                                 </TextBlock.ToolTip>
                             </TextBlock>
                         </StackPanel>
-                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Shows warning notification when elements with MMI >=425 are moved more than 0.1m." Foreground="{DynamicResource TextBrush}" Margin="0,3,0,0" FontSize="11" TextWrapping="Wrap"/>
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Shows warning notification when elements with MMI >=425 are moved more than 0.1m." Foreground="{DynamicResource TextBrush}" Margin="0,3,0,0" FontSize="11" TextWrapping="Wrap" Style="{DynamicResource DefaultTextBlockStyle}"/>
                         <CheckBox x:Name="warnOnMoveCheckBox" Grid.Row="0" Grid.RowSpan="2" Grid.Column="1" Style="{DynamicResource ToggleSwitchStyle}" VerticalAlignment="Center"/>
                     </Grid>
                     
@@ -189,18 +191,18 @@
                         </Grid.RowDefinitions>
                         <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                             <TextBlock Text="Check MMI after sync" Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center"/>
-                            <TextBlock Text="ⓘ" FontSize="14" Foreground="{DynamicResource TextSecondaryBrush}" Margin="5,0,0,0" VerticalAlignment="Center" Cursor="Hand">
+                            <TextBlock Text="ⓘ" FontSize="14" Foreground="{DynamicResource TextSecondaryBrush}" Margin="5,0,0,0" VerticalAlignment="Center" Cursor="Hand" Style="{DynamicResource DefaultTextBlockStyle}">
                                 <TextBlock.ToolTip>
                                     <ToolTip Background="{DynamicResource PopupBackgroundBrush}" Foreground="{DynamicResource TextBrush}">
                                         <StackPanel Margin="5">
-                                            <TextBlock Text="Check MMI after sync" FontWeight="Bold" Foreground="{DynamicResource TextBrush}" Margin="0,0,0,5"/>
-                                            <TextBlock Text="When enabled, tracks user-owned elements before sync, then checks after sync if any are missing MMI values or have invalid MMI values. Creates or updates a 3D view called 'Post-Sync MMI Check' showing problematic elements. Shows a notification with details: count of missing MMI, invalid MMI, and opens the view with elements selected. Only checks elements owned by the current user before sync." TextWrapping="Wrap" MaxWidth="350" Foreground="{DynamicResource TextBrush}"/>
+                                            <TextBlock Text="Check MMI after sync" FontWeight="Bold" Foreground="{DynamicResource TextBrush}" Margin="0,0,0,5" Style="{DynamicResource DefaultTextBlockStyle}"/>
+                                            <TextBlock Text="When enabled, tracks user-owned elements before sync, then checks after sync if any are missing MMI values or have invalid MMI values. Creates or updates a 3D view called 'Post-Sync MMI Check' showing problematic elements. Shows a notification with details: count of missing MMI, invalid MMI, and opens the view with elements selected. Only checks elements owned by the current user before sync." TextWrapping="Wrap" MaxWidth="350" Foreground="{DynamicResource TextBrush}" Style="{DynamicResource DefaultTextBlockStyle}"/>
                                         </StackPanel>
                                     </ToolTip>
                                 </TextBlock.ToolTip>
                             </TextBlock>
                         </StackPanel>
-                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Checks user-owned elements after sync for missing or invalid MMI values and creates a view." Foreground="{DynamicResource TextBrush}" Margin="0,3,0,0" FontSize="11" TextWrapping="Wrap"/>
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Checks user-owned elements after sync for missing or invalid MMI values and creates a view." Foreground="{DynamicResource TextBrush}" Margin="0,3,0,0" FontSize="11" TextWrapping="Wrap" Style="{DynamicResource DefaultTextBlockStyle}"/>
                         <CheckBox x:Name="checkAfterSyncCheckBox" Grid.Row="0" Grid.RowSpan="2" Grid.Column="1" Style="{DynamicResource ToggleSwitchStyle}" VerticalAlignment="Center"/>
                     </Grid>
                 </StackPanel>

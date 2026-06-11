@@ -24,7 +24,7 @@
         </StackPanel>
 
         <!-- Source Parameter Column -->
-        <GroupBox Header="Source Parameter" Grid.Row="1" Grid.Column="0" Margin="0,0,10,0">
+        <GroupBox Header="Source Parameter" Grid.Row="1" Grid.Column="0" Margin="0,0,10,0" Style="{DynamicResource DefaultGroupBoxStyle}">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -44,14 +44,16 @@
         <StackPanel Grid.Row="1" Grid.Column="1" VerticalAlignment="Center" Margin="10,0">
             <TextBlock Text="→" FontSize="32" FontWeight="Bold" 
                        Foreground="{DynamicResource AccentBrush}" 
-                       HorizontalAlignment="Center"/>
+                       HorizontalAlignment="Center"
+                       Style="{DynamicResource DefaultTextBlockStyle}"/>
             <TextBlock Text="maps to" FontSize="11" 
                        Foreground="{DynamicResource TextSecondaryBrush}" 
-                       HorizontalAlignment="Center" Margin="0,5,0,0" FontStyle="Italic"/>
+                       HorizontalAlignment="Center" Margin="0,5,0,0" FontStyle="Italic"
+                       Style="{DynamicResource DefaultTextBlockStyle}"/>
         </StackPanel>
 
         <!-- Target Parameter Column -->
-        <GroupBox Header="Target Parameter" Grid.Row="1" Grid.Column="2" Margin="10,0,0,0">
+        <GroupBox Header="Target Parameter" Grid.Row="1" Grid.Column="2" Margin="10,0,0,0" Style="{DynamicResource DefaultGroupBoxStyle}">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>

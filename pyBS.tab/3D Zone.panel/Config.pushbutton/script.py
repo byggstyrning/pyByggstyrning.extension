@@ -406,41 +406,6 @@ class ParameterSelectorDialog(forms.WPFWindow):
         self.sourceParameterListBox.SelectionChanged += self.selection_changed
         self.targetParameterListBox.SelectionChanged += self.selection_changed
     
-    def load_styles(self):
-        """Load the common styles ResourceDictionary."""
-        try:
-            # Use tab_dir which is the extension root
-            styles_path = op.join(tab_dir, 'lib', 'styles', 'CommonStyles.xaml')
-            
-            if op.exists(styles_path):
-                from System.Windows.Markup import XamlReader
-                from System.IO import File
-                
-                # Read XAML content
-                xaml_content = File.ReadAllText(styles_path)
-                
-                # Parse as ResourceDictionary
-                styles_dict = XamlReader.Parse(xaml_content)
-                
-                # Merge into window resources
-                if self.Resources is None:
-                    from System.Windows import ResourceDictionary
-                    self.Resources = ResourceDictionary()
-                
-                # If it's a ResourceDictionary, merge its contents
-                if hasattr(styles_dict, 'Keys'):
-                    for key in styles_dict.Keys:
-                        self.Resources[key] = styles_dict[key]
-                else:
-                    # Try to merge the entire dictionary
-                    self.Resources.MergedDictionaries.Add(styles_dict)
-                    
-                logger.debug("ParameterSelectorDialog: Loaded styles from: {}".format(styles_path))
-        except Exception as e:
-            logger.warning("ParameterSelectorDialog: Could not load styles: {}".format(str(e)))
-            import traceback
-            logger.error(traceback.format_exc())
-    
     def sort_params_with_priority(self, params, priority_param):
         """Sort parameters list with priority parameter at the top.
         
@@ -1033,49 +998,6 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         # Load configurations
         self.load_configurations()
     
-    def load_styles(self):
-        """Load the common styles ResourceDictionary."""
-        try:
-            # Use tab_dir which is the extension root
-            styles_path = op.join(tab_dir, 'lib', 'styles', 'CommonStyles.xaml')
-            
-            if op.exists(styles_path):
-                from System.Windows.Markup import XamlReader
-                from System.IO import File
-                
-                # Read XAML content
-                xaml_content = File.ReadAllText(styles_path)
-                
-                # Parse as ResourceDictionary
-                styles_dict = XamlReader.Parse(xaml_content)
-                
-                # Merge into window resources
-                if self.Resources is None:
-                    from System.Windows import ResourceDictionary
-                    self.Resources = ResourceDictionary()
-                
-                # If it's a ResourceDictionary, merge its contents
-                if hasattr(styles_dict, 'Keys'):
-                    loaded_count = 0
-                    for key in styles_dict.Keys:
-                        self.Resources[key] = styles_dict[key]
-                        loaded_count += 1
-                    logger.debug("Loaded {} styles from: {}".format(loaded_count, styles_path))
-                    
-                    # Verify EnhancedDataGridStyle is loaded
-                    if 'EnhancedDataGridStyle' in self.Resources:
-                        logger.debug("EnhancedDataGridStyle found in window resources")
-                    else:
-                        logger.warning("EnhancedDataGridStyle NOT found in window resources")
-                else:
-                    # Try to merge the entire dictionary
-                    self.Resources.MergedDictionaries.Add(styles_dict)
-                    logger.debug("Merged styles dictionary from: {}".format(styles_path))
-        except Exception as e:
-            logger.warning("Could not load styles: {}".format(str(e)))
-            import traceback
-            logger.error(traceback.format_exc())
-    
     def EnabledCheckBox_Checked(self, sender, args):
         """Handle Enabled checkbox checked event."""
         config_item = sender.DataContext
@@ -1149,19 +1071,11 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         # Clear existing inlines
         sender.Inlines.Clear()
         
-        # Get arrow brush from resources (adapts to dark/light mode)
+        # Get arrow brush from window resources (adapts to dark/light mode)
         arrow_brush = None
         try:
-            # Try to get ArrowBrush from window resources first
             if hasattr(self, 'Resources') and self.Resources and 'ArrowBrush' in self.Resources:
                 arrow_brush = self.Resources['ArrowBrush']
-            # If not found, try Application resources
-            else:
-                from System.Windows import Application
-                if Application.Current is not None and Application.Current.Resources is not None:
-                    app_resources = Application.Current.Resources
-                    if 'ArrowBrush' in app_resources:
-                        arrow_brush = app_resources['ArrowBrush']
         except Exception as e:
             logger.debug("Could not load ArrowBrush from resources: {}".format(str(e)))
         

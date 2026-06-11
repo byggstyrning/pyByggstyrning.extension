@@ -141,37 +141,6 @@ class SpatialSelectorWindow(forms.WPFWindow):
         """
         raise NotImplementedError
     
-    def load_styles(self, extension_dir):
-        """Load the common styles ResourceDictionary."""
-        try:
-            styles_path = op.join(extension_dir, 'lib', 'styles', 'CommonStyles.xaml')
-            
-            if op.exists(styles_path):
-                from System.Windows.Markup import XamlReader
-                from System.IO import File
-                
-                # Read XAML content
-                xaml_content = File.ReadAllText(styles_path)
-                
-                # Parse as ResourceDictionary
-                styles_dict = XamlReader.Parse(xaml_content)
-                
-                # Merge into window resources
-                if self.Resources is None:
-                    from System.Windows import ResourceDictionary
-                    self.Resources = ResourceDictionary()
-                
-                # Merge styles into existing resources
-                if hasattr(styles_dict, 'MergedDictionaries'):
-                    for merged_dict in styles_dict.MergedDictionaries:
-                        self.Resources.MergedDictionaries.Add(merged_dict)
-                
-                # Copy individual resources
-                for key in styles_dict.Keys:
-                    self.Resources[key] = styles_dict[key]
-        except Exception as e:
-            logger.debug("Could not load styles: {}".format(e))
-    
     def searchTextBox_TextChanged(self, sender, args):
         """Handle search text box text changed event."""
         try:

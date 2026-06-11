@@ -105,7 +105,8 @@
                                       HorizontalAlignment="Center" 
                                       VerticalAlignment="Center"
                                       FontWeight="Bold"
-                                      Foreground="{DynamicResource TextBrush}"/>
+                                      Foreground="{DynamicResource TextBrush}"
+                                      Style="{DynamicResource DefaultTextBlockStyle}"/>
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>

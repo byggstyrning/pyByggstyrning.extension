@@ -9,6 +9,7 @@
             <!-- DisplayMemberPath does not resolve IronPython Reactive types; ItemTemplate uses Binding -->
             <DataTemplate x:Key="LinkModelComboItemTemplate">
                 <TextBlock Text="{Binding DisplayName}"
+                           Style="{DynamicResource DefaultTextBlockStyle}"
                            Foreground="{DynamicResource TextBrush}"
                            TextTrimming="CharacterEllipsis"/>
             </DataTemplate>
@@ -29,7 +30,7 @@
         </StackPanel>
 
         <!-- Views + sheet (compact) -->
-        <GroupBox Grid.Row="1" Header="Views and sheet" Margin="0,0,0,10" Padding="0,4,0,8">
+        <GroupBox Grid.Row="1" Header="Views and sheet" Style="{DynamicResource DefaultGroupBoxStyle}" Margin="0,0,0,10" Padding="0,4,0,8">
             <Grid Margin="10,4,10,6">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -84,7 +85,7 @@
             </Grid.ColumnDefinitions>
 
         <!-- Host Categories -->
-        <GroupBox Grid.Column="0" Header="Host categories" Margin="0,0,0,0">
+        <GroupBox Grid.Column="0" Header="Host categories" Style="{DynamicResource DefaultGroupBoxStyle}" Margin="0,0,0,0">
             <Grid Margin="10">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -111,7 +112,7 @@
                 </StackPanel>
 
                 <Border Grid.Row="3" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="3">
-                    <ListBox x:Name="categoryListBox" Background="{DynamicResource ControlBackgroundBrush}"
+                    <ListBox x:Name="categoryListBox" Style="{DynamicResource DefaultListBoxStyle}" Background="{DynamicResource ControlBackgroundBrush}"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                              ScrollViewer.VerticalScrollBarVisibility="Auto">
                         <ListBox.ItemTemplate>
@@ -131,7 +132,7 @@
         </GroupBox>
 
         <!-- Link Categories -->
-        <GroupBox Grid.Column="2" Margin="0,0,0,0">
+        <GroupBox Grid.Column="2" Style="{DynamicResource DefaultGroupBoxStyle}" Margin="0,0,0,0">
             <GroupBox.Header>
                 <CheckBox x:Name="againstLinkToggle" Content="Against link model"
                           IsChecked="False"
@@ -179,7 +180,7 @@
                 <!-- Link category list -->
                 <Border Grid.Row="3" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="3"
                         IsEnabled="{Binding IsChecked, ElementName=againstLinkToggle}">
-                    <ListBox x:Name="linkCategoryListBox" Background="{DynamicResource ControlBackgroundBrush}"
+                    <ListBox x:Name="linkCategoryListBox" Style="{DynamicResource DefaultListBoxStyle}" Background="{DynamicResource ControlBackgroundBrush}"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                              ScrollViewer.VerticalScrollBarVisibility="Auto">
                         <ListBox.ItemTemplate>

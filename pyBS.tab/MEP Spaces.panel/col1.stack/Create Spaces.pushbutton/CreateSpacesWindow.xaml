@@ -33,7 +33,8 @@
                         <DataTemplate>
                             <TextBlock Text="{Binding display_name}" 
                                        Foreground="{DynamicResource TextBrush}"
-                                       VerticalAlignment="Center"/>
+                                       VerticalAlignment="Center"
+                                       Style="{DynamicResource DefaultTextBlockStyle}"/>
                         </DataTemplate>
                     </ComboBox.ItemTemplate>
                 </ComboBox>
@@ -68,7 +69,8 @@
                         <TextBlock Text="Tag Type:" 
                                    VerticalAlignment="Center"
                                    Margin="0,0,10,0"
-                                   Foreground="{DynamicResource TextBrush}"/>
+                                   Foreground="{DynamicResource TextBrush}"
+                                   Style="{DynamicResource DefaultTextBlockStyle}"/>
                         <ComboBox x:Name="tagTypeComboBox"
                                   Width="280"
                                   Height="26"
@@ -78,7 +80,8 @@
                                 <DataTemplate>
                                     <TextBlock Text="{Binding display_name}" 
                                                Foreground="{DynamicResource TextBrush}"
-                                               VerticalAlignment="Center"/>
+                                               VerticalAlignment="Center"
+                                               Style="{DynamicResource DefaultTextBlockStyle}"/>
                                 </DataTemplate>
                             </ComboBox.ItemTemplate>
                         </ComboBox>
@@ -120,7 +123,8 @@
                         <TextBlock x:Name="busyTextBlock" 
                                    Text="Creating spaces..." 
                                    HorizontalAlignment="Center"
-                                   Foreground="{DynamicResource TextBrush}"/>
+                                   Foreground="{DynamicResource TextBrush}"
+                                   Style="{DynamicResource DefaultTextBlockStyle}"/>
                     </StackPanel>
                 </Border>
             </StackPanel>

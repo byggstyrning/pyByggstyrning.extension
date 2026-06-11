@@ -501,48 +501,12 @@ def create_and_apply_mmi_filters():
                         # Load styles AFTER window initialization (window-scoped, does not affect Revit UI)
                         load_styles_to_window(self)
                         
-                        # Ensure window Resources has the styles merged (for dark mode support)
-                        try:
-                            from System.Windows import Application, ResourceDictionary
-                            if Application.Current is not None and Application.Current.Resources is not None:
-                                # Merge Application resources into window resources if needed
-                                if self.Resources is None:
-                                    self.Resources = ResourceDictionary()
-                                # Copy theme-aware brushes to window resources
-                                for key in ['WindowBackgroundBrush', 'TextBrush', 'ControlBackgroundBrush', 
-                                           'BorderBrush', 'PopupBackgroundBrush', 'BackgroundLightBrush',
-                                           'BackgroundLighterBrush', 'AccentBrush', 'DisabledTextBrush']:
-                                    try:
-                                        if key in Application.Current.Resources.Keys:
-                                            self.Resources[key] = Application.Current.Resources[key]
-                                    except:
-                                        pass
-                        except Exception as ex:
-                            logger.debug("Could not merge Application resources to window: {}".format(str(ex)))
-                        
-                        # Ensure options panel is visible and TextBrush is available
+                        # Ensure options panel is visible
                         try:
                             from System.Windows import Visibility
-                            from System.Windows.Media import SolidColorBrush, Colors
-                            
-                            # Ensure TextBrush is available
-                            if self.Resources is None:
-                                self.Resources = ResourceDictionary()
-                            
-                            if 'TextBrush' not in self.Resources.Keys:
-                                if Application.Current is not None and Application.Current.Resources is not None:
-                                    if 'TextBrush' in Application.Current.Resources.Keys:
-                                        self.Resources['TextBrush'] = Application.Current.Resources['TextBrush']
-                                    else:
-                                        self.Resources['TextBrush'] = SolidColorBrush(Colors.Black)
-                                else:
-                                    self.Resources['TextBrush'] = SolidColorBrush(Colors.Black)
-                            
-                            # Ensure options panel is visible
                             options_panel = self.FindName('optionsPanel')
                             if options_panel:
                                 options_panel.Visibility = Visibility.Visible
-                                # Ensure all TextBlock children are visible
                                 for i in range(options_panel.Children.Count):
                                     child = options_panel.Children[i]
                                     if hasattr(child, 'Visibility'):

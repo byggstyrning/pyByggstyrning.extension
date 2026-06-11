@@ -503,9 +503,6 @@ class RevitColorizerWindow(WPFWindow):
             except Exception as ex:
                 raise
             
-            # Load styles ResourceDictionary (for window-specific resources if needed)
-            self.load_styles()
-            
 # Store references
             self.logger = logger
             self.DB = DB
@@ -617,26 +614,6 @@ class RevitColorizerWindow(WPFWindow):
             UI.TaskDialog.Show("Error", "Failed to initialize Revit Colorizer: " + str(ex))
             logger.error("Initialization error: %s", str(ex))
             self.Close()
-    
-    def load_styles(self):
-        """Load the common styles ResourceDictionary with theme support."""
-        try:
-            # Use the proper theme-aware function from styles (lib is in sys.path)
-            from styles import load_styles_to_window
-            result = load_styles_to_window(self)
-            
-            if result:
-                logger.debug("Loaded styles with theme support")
-            else:
-                logger.warning("Could not load styles with theme support")
-        except ImportError as e:
-            logger.error("Failed to import styles: {}".format(str(e)))
-            logger.error("lib_path: {}, in sys.path: {}".format(lib_path, lib_path in sys.path))
-            raise
-        except Exception as e:
-            logger.warning("Could not load styles: {}. Using default styles.".format(str(e)))
-            import traceback
-            logger.debug("Style loading error details: {}".format(traceback.format_exc()))
     
     def set_busy(self, is_busy, message="Loading..."):
         """Show or hide the busy overlay indicator."""

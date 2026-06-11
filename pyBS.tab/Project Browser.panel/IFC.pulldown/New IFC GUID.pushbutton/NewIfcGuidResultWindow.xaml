@@ -45,12 +45,14 @@
                 <StackPanel>
                     <TextBlock Text="Updated"
                                Foreground="{DynamicResource TextSecondaryBrush}"
-                               FontSize="11"/>
+                               FontSize="11"
+                               Style="{DynamicResource DefaultTextBlockStyle}"/>
                     <TextBlock x:Name="updatedCountText"
                                Text="0"
                                FontSize="22"
                                FontWeight="Bold"
-                               Foreground="{DynamicResource SuccessBrush}"/>
+                               Foreground="{DynamicResource SuccessBrush}"
+                               Style="{DynamicResource DefaultTextBlockStyle}"/>
                 </StackPanel>
             </Border>
 
@@ -64,12 +66,14 @@
                 <StackPanel>
                     <TextBlock Text="Skipped"
                                Foreground="{DynamicResource TextSecondaryBrush}"
-                               FontSize="11"/>
+                               FontSize="11"
+                               Style="{DynamicResource DefaultTextBlockStyle}"/>
                     <TextBlock x:Name="skippedCountText"
                                Text="0"
                                FontSize="22"
                                FontWeight="Bold"
-                               Foreground="{DynamicResource WarningBrush}"/>
+                               Foreground="{DynamicResource WarningBrush}"
+                               Style="{DynamicResource DefaultTextBlockStyle}"/>
                 </StackPanel>
             </Border>
 
@@ -83,12 +87,14 @@
                 <StackPanel>
                     <TextBlock Text="Failed"
                                Foreground="{DynamicResource TextSecondaryBrush}"
-                               FontSize="11"/>
+                               FontSize="11"
+                               Style="{DynamicResource DefaultTextBlockStyle}"/>
                     <TextBlock x:Name="failedCountText"
                                Text="0"
                                FontSize="22"
                                FontWeight="Bold"
-                               Foreground="{DynamicResource ErrorBrush}"/>
+                               Foreground="{DynamicResource ErrorBrush}"
+                               Style="{DynamicResource DefaultTextBlockStyle}"/>
                 </StackPanel>
             </Border>
         </Grid>
@@ -96,7 +102,8 @@
         <GroupBox Grid.Row="2"
                   Header="Details"
                   Margin="0,12,0,0"
-                  Foreground="{DynamicResource TextBrush}">
+                  Foreground="{DynamicResource TextBrush}"
+                  Style="{DynamicResource DefaultGroupBoxStyle}">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>

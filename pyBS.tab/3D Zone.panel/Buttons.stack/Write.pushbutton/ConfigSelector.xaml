@@ -27,9 +27,11 @@
                 <DataTemplate>
                     <StackPanel Orientation="Horizontal" Margin="5">
                         <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" VerticalAlignment="Center" Margin="0,0,10,0"
-                                 Foreground="{DynamicResource TextBrush}"/>
+                                 Foreground="{DynamicResource TextBrush}"
+                                 Style="{DynamicResource DefaultCheckBoxStyle}"/>
                         <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center"
-                                  Foreground="{DynamicResource TextBrush}"/>
+                                  Foreground="{DynamicResource TextBrush}"
+                                  Style="{DynamicResource DefaultTextBlockStyle}"/>
                     </StackPanel>
                 </DataTemplate>
             </ListBox.ItemTemplate>

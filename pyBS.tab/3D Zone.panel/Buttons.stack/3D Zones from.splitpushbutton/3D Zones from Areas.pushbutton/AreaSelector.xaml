@@ -23,7 +23,8 @@
                     <DataTemplate>
                         <TextBlock Text="{Binding display_name}" 
                                    Foreground="{DynamicResource TextBrush}"
-                                   VerticalAlignment="Center"/>
+                                   VerticalAlignment="Center"
+                                   Style="{DynamicResource DefaultTextBlockStyle}"/>
                     </DataTemplate>
                 </ComboBox.ItemTemplate>
             </ComboBox>
@@ -124,7 +125,8 @@
                                       HorizontalAlignment="Center" 
                                       VerticalAlignment="Center"
                                       FontWeight="Bold"
-                                      Foreground="{DynamicResource TextBrush}"/>
+                                      Foreground="{DynamicResource TextBrush}"
+                                      Style="{DynamicResource DefaultTextBlockStyle}"/>
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>

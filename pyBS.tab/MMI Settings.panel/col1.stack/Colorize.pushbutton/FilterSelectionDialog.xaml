@@ -19,7 +19,8 @@
                    TextWrapping="Wrap"
                    Margin="0,0,0,15"
                    FontSize="12"
-                   Foreground="{DynamicResource TextBrush}">
+                   Foreground="{DynamicResource TextBrush}"
+                   Style="{DynamicResource DefaultTextBlockStyle}">
             <Run Text="The view '"/>
             <Run x:Name="viewNameRun" Text=""/>
             <Run Text="' uses a view template '"/>
@@ -41,17 +42,20 @@
                        TextWrapping="Wrap"
                        FontSize="11"
                        Margin="0,0,0,8"
-                       Foreground="{DynamicResource TextBrush}"/>
+                       Foreground="{DynamicResource TextBrush}"
+                       Style="{DynamicResource DefaultTextBlockStyle}"/>
             <TextBlock Text="• Add to View: Filters will be applied only to this view (may be overridden by template)"
                        TextWrapping="Wrap"
                        FontSize="11"
                        Margin="0,0,0,8"
-                       Foreground="{DynamicResource TextBrush}"/>
+                       Foreground="{DynamicResource TextBrush}"
+                       Style="{DynamicResource DefaultTextBlockStyle}"/>
             <TextBlock Text="• Both: Filters will be applied to both the template and this view"
                        TextWrapping="Wrap"
                        FontSize="11"
                        Margin="0,0,0,8"
-                       Foreground="{DynamicResource TextBrush}"/>
+                       Foreground="{DynamicResource TextBrush}"
+                       Style="{DynamicResource DefaultTextBlockStyle}"/>
         </StackPanel>
         
         <!-- Selection ComboBox and OK Button Row -->

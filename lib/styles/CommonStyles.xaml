@@ -342,7 +342,7 @@
     </Style>
     
     <!-- Default Button Style (applies to all buttons without explicit style) -->
-    <Style TargetType="Button">
+    <Style x:Key="DefaultButtonStyle" TargetType="Button">
         <Setter Property="Height" Value="30"/>
         <Setter Property="Padding" Value="{StaticResource ButtonPadding}"/>
         <Setter Property="Margin" Value="{StaticResource ButtonMargin}"/>
@@ -405,7 +405,7 @@
     <!-- Default TextBlock Style -->
     <!-- Note: Foreground removed to allow ContentPresenter's TextBlock.Foreground to work -->
     <!-- All keyed TextBlock styles explicitly set their own Foreground -->
-    <Style TargetType="TextBlock">
+    <Style x:Key="DefaultTextBlockStyle" TargetType="TextBlock">
         <Setter Property="Margin" Value="5,5,5,2"/>
         <Setter Property="FontWeight" Value="SemiBold"/>
     </Style>
@@ -441,6 +441,7 @@
     
     <!-- ComboBox Style -->
     <Style x:Key="StandardComboBoxStyle" TargetType="ComboBox">
+        <Setter Property="ItemContainerStyle" Value="{DynamicResource DefaultComboBoxItemStyle}"/>
         <Setter Property="Margin" Value="5"/>
         <Setter Property="Height" Value="33"/>
         <Setter Property="IsEditable" Value="False"/>
@@ -518,7 +519,7 @@
                                 BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="1"
                                 MinWidth="{Binding ActualWidth, ElementName=ToggleButton}">
-                                <ScrollViewer Margin="4,6,4,6" SnapsToDevicePixels="True">
+                                <ScrollViewer Margin="4,6,4,6" SnapsToDevicePixels="True" Style="{DynamicResource CustomScrollViewerStyle}">
                                     <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/>
                                 </ScrollViewer>
                             </Border>
@@ -563,6 +564,7 @@
     
     <!-- Searchable ComboBox Style with Placeholder and Search Filter -->
     <Style x:Key="SearchableComboBoxStyle" TargetType="ComboBox">
+        <Setter Property="ItemContainerStyle" Value="{DynamicResource DefaultComboBoxItemStyle}"/>
         <Setter Property="Height" Value="33"/>
         <Setter Property="IsEditable" Value="False"/>
         <Setter Property="IsTextSearchEnabled" Value="True"/>
@@ -693,7 +695,8 @@
                                                     Margin="0"
                                                     SnapsToDevicePixels="True"
                                                     HorizontalScrollBarVisibility="Auto"
-                                                    VerticalScrollBarVisibility="Auto">
+                                                    VerticalScrollBarVisibility="Auto"
+                                                    Style="{DynamicResource CustomScrollViewerStyle}">
                                             <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"
                                                            KeyboardNavigation.TabNavigation="Cycle"/>
                                         </ScrollViewer>
@@ -716,7 +719,8 @@
     </Style>
     
     <!-- Default ComboBox Style -->
-    <Style TargetType="ComboBox">
+    <Style x:Key="DefaultComboBoxStyle" TargetType="ComboBox">
+        <Setter Property="ItemContainerStyle" Value="{DynamicResource DefaultComboBoxItemStyle}"/>
         <Setter Property="Margin" Value="5"/>
         <Setter Property="Height" Value="33"/>
         <Setter Property="IsEditable" Value="False"/>
@@ -794,7 +798,7 @@
                                 BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="1"
                                 MinWidth="{Binding ActualWidth, ElementName=ToggleButton}">
-                                <ScrollViewer Margin="4,6,4,6" SnapsToDevicePixels="True">
+                                <ScrollViewer Margin="4,6,4,6" SnapsToDevicePixels="True" Style="{DynamicResource CustomScrollViewerStyle}">
                                     <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/>
                                 </ScrollViewer>
                             </Border>
@@ -910,7 +914,7 @@
     </Style>
     
     <!-- Default CheckBox Style -->
-    <Style TargetType="CheckBox">
+    <Style x:Key="DefaultCheckBoxStyle" TargetType="CheckBox">
         <Setter Property="Margin" Value="5,5,10,5"/>
         <Setter Property="VerticalAlignment" Value="Center"/>
         <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
@@ -975,7 +979,7 @@
     </Style>
     
     <!-- Default RadioButton Style -->
-    <Style TargetType="RadioButton">
+    <Style x:Key="DefaultRadioButtonStyle" TargetType="RadioButton">
         <Setter Property="Margin" Value="{DynamicResource SmallMargin}"/>
         <Setter Property="VerticalAlignment" Value="Center"/>
         <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
@@ -1171,7 +1175,8 @@
                 SnapsToDevicePixels="True">
             <ScrollViewer Padding="{TemplateBinding Padding}"
                           Background="{TemplateBinding Background}"
-                          Focusable="False">
+                          Focusable="False"
+                          Style="{DynamicResource CustomScrollViewerStyle}">
                 <ItemsPresenter SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
             </ScrollViewer>
         </Border>
@@ -1184,6 +1189,7 @@
 
     <!-- ListBox Style -->
     <Style x:Key="StandardListBoxStyle" TargetType="ListBox">
+        <Setter Property="ItemContainerStyle" Value="{DynamicResource DefaultListBoxItemStyle}"/>
         <Setter Property="Margin" Value="{DynamicResource DefaultMargin}"/>
         <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
@@ -1194,7 +1200,8 @@
     </Style>
     
     <!-- Default ListBox Style -->
-    <Style TargetType="ListBox">
+    <Style x:Key="DefaultListBoxStyle" TargetType="ListBox">
+        <Setter Property="ItemContainerStyle" Value="{DynamicResource DefaultListBoxItemStyle}"/>
         <Setter Property="Margin" Value="{DynamicResource DefaultMargin}"/>
         <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
@@ -1206,6 +1213,7 @@
     
     <!-- ListView Style -->
     <Style x:Key="StandardListViewStyle" TargetType="ListView">
+        <Setter Property="ItemContainerStyle" Value="{DynamicResource StandardListViewItemStyle}"/>
         <Setter Property="Margin" Value="{DynamicResource DefaultMargin}"/>
         <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
@@ -1214,7 +1222,8 @@
     </Style>
     
     <!-- Default ListView Style -->
-    <Style TargetType="ListView">
+    <Style x:Key="DefaultListViewStyle" TargetType="ListView">
+        <Setter Property="ItemContainerStyle" Value="{DynamicResource DefaultListViewItemStyle}"/>
         <Setter Property="Margin" Value="{DynamicResource DefaultMargin}"/>
         <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
         <Setter Property="Background" Value="{DynamicResource ControlBackgroundBrush}"/>
@@ -1222,7 +1231,7 @@
     </Style>
     
     <!-- GridViewColumnHeader Style (for ListView GridView headers) -->
-    <Style TargetType="GridViewColumnHeader">
+    <Style x:Key="DefaultGridViewColumnHeaderStyle" TargetType="GridViewColumnHeader">
         <Setter Property="Background" Value="{DynamicResource BackgroundLightBrush}"/>
         <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
         <Setter Property="FontWeight" Value="SemiBold"/>
@@ -1302,7 +1311,7 @@
     </Style>
     
     <!-- Default ListViewItem Style -->
-    <Style TargetType="ListViewItem">
+    <Style x:Key="DefaultListViewItemStyle" TargetType="ListViewItem">
         <Setter Property="Background" Value="Transparent"/>
         <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
         <Setter Property="BorderThickness" Value="0"/>
@@ -1344,6 +1353,9 @@
     
     <!-- DataGrid Style -->
     <Style x:Key="StandardDataGridStyle" TargetType="DataGrid">
+        <Setter Property="RowStyle" Value="{DynamicResource DefaultDataGridRowStyle}"/>
+        <Setter Property="CellStyle" Value="{DynamicResource DefaultDataGridCellStyle}"/>
+        <Setter Property="ColumnHeaderStyle" Value="{DynamicResource DefaultDataGridColumnHeaderStyle}"/>
         <Setter Property="Background" Value="{DynamicResource ControlBackgroundBrush}"/>
         <Setter Property="RowBackground" Value="{DynamicResource DataGridRowBackgroundBrush}"/>
         <Setter Property="AlternatingRowBackground" Value="{DynamicResource BackgroundLightBrush}"/>
@@ -1478,16 +1490,8 @@
                                     Focusable="False"
                                     HorizontalScrollBarVisibility="Auto"
                                     VerticalScrollBarVisibility="Auto"
-                                    CanContentScroll="True">
-                            <ScrollViewer.Template>
-                                <ControlTemplate TargetType="ScrollViewer">
-                                    <Border BorderThickness="0">
-                                        <ScrollContentPresenter x:Name="PART_ScrollContentPresenter" 
-                                                              CanContentScroll="{TemplateBinding CanContentScroll}"
-                                                              ContentTemplate="{TemplateBinding ContentTemplate}"/>
-                                    </Border>
-                                </ControlTemplate>
-                            </ScrollViewer.Template>
+                                    CanContentScroll="True"
+                                    Style="{DynamicResource CustomScrollViewerStyle}">
                             <ItemsPresenter SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
                         </ScrollViewer>
                     </Border>
@@ -1587,7 +1591,7 @@
     </Style>
     
     <!-- Default DataGridColumnHeader Style (matches GridViewColumnHeader pattern) -->
-    <Style TargetType="DataGridColumnHeader">
+    <Style x:Key="DefaultDataGridColumnHeaderStyle" TargetType="DataGridColumnHeader">
         <Setter Property="Background" Value="{DynamicResource BackgroundLightBrush}"/>
         <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
         <Setter Property="FontWeight" Value="SemiBold"/>
@@ -1636,7 +1640,10 @@
     </Style>
     
     <!-- Default DataGrid Style -->
-    <Style TargetType="DataGrid">
+    <Style x:Key="DefaultDataGridStyle" TargetType="DataGrid">
+        <Setter Property="RowStyle" Value="{DynamicResource DefaultDataGridRowStyle}"/>
+        <Setter Property="CellStyle" Value="{DynamicResource DefaultDataGridCellStyle}"/>
+        <Setter Property="ColumnHeaderStyle" Value="{DynamicResource DefaultDataGridColumnHeaderStyle}"/>
         <Setter Property="Background" Value="{DynamicResource ControlBackgroundBrush}"/>
         <Setter Property="RowBackground" Value="{DynamicResource DataGridRowBackgroundBrush}"/>
         <Setter Property="AlternatingRowBackground" Value="{DynamicResource BackgroundLightBrush}"/>
@@ -1645,7 +1652,7 @@
     </Style>
     
     <!-- Default DataGridRow Style - selection is handled by cells for reliable unfocused behavior -->
-    <Style TargetType="DataGridRow">
+    <Style x:Key="DefaultDataGridRowStyle" TargetType="DataGridRow">
         <Setter Property="Background" Value="{DynamicResource DataGridRowBackgroundBrush}"/>
         <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
         <Setter Property="BorderThickness" Value="0"/>
@@ -1658,7 +1665,7 @@
     </Style>
     
     <!-- Default DataGridCell Style - cells handle selection background for reliable unfocused behavior -->
-    <Style TargetType="DataGridCell">
+    <Style x:Key="DefaultDataGridCellStyle" TargetType="DataGridCell">
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="Padding" Value="6,3"/>
         <Setter Property="VerticalAlignment" Value="Center"/>
@@ -1730,7 +1737,7 @@
     </Style>
     
     <!-- Default GroupBox Style -->
-    <Style TargetType="GroupBox">
+    <Style x:Key="DefaultGroupBoxStyle" TargetType="GroupBox">
         <Setter Property="Margin" Value="{StaticResource GroupBoxMargin}"/>
         <Setter Property="BorderBrush" Value="White"/>
         <Setter Property="BorderThickness" Value="2"/>
@@ -1769,6 +1776,7 @@
     
     <!-- TabControl Style -->
     <Style x:Key="StandardTabControlStyle" TargetType="TabControl">
+        <Setter Property="ItemContainerStyle" Value="{DynamicResource StandardTabItemStyle}"/>
         <Setter Property="Background" Value="{DynamicResource WindowBackgroundBrush}"/>
         <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
         <Setter Property="Template">
@@ -1806,7 +1814,8 @@
     </Style>
     
     <!-- Default TabControl Style -->
-    <Style TargetType="TabControl">
+    <Style x:Key="DefaultTabControlStyle" TargetType="TabControl">
+        <Setter Property="ItemContainerStyle" Value="{DynamicResource DefaultTabItemStyle}"/>
         <Setter Property="Background" Value="{DynamicResource WindowBackgroundBrush}"/>
         <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
         <Setter Property="Template">
@@ -1891,7 +1900,7 @@
     </Style>
     
     <!-- Default TabItem Style -->
-    <Style TargetType="TabItem">
+    <Style x:Key="DefaultTabItemStyle" TargetType="TabItem">
         <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
         <Setter Property="Background" Value="{DynamicResource ControlBackgroundBrush}"/>
         <Setter Property="Padding" Value="12,6"/>
@@ -1946,7 +1955,7 @@
     </Style>
     
     <!-- Default StatusBar Style -->
-    <Style TargetType="StatusBar">
+    <Style x:Key="DefaultStatusBarStyle" TargetType="StatusBar">
         <Setter Property="Background" Value="{DynamicResource BackgroundLighterBrush}"/>
         <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
         <Setter Property="BorderThickness" Value="0,1,0,0"/>
@@ -1961,7 +1970,7 @@
     </Style>
     
     <!-- ListBoxItem Style for text colors -->
-    <Style TargetType="ListBoxItem">
+    <Style x:Key="DefaultListBoxItemStyle" TargetType="ListBoxItem">
         <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
         <Setter Property="Background" Value="Transparent"/>
         <Style.Triggers>
@@ -1976,7 +1985,7 @@
     </Style>
     
     <!-- ComboBoxItem Style for text colors -->
-    <Style TargetType="ComboBoxItem">
+    <Style x:Key="DefaultComboBoxItemStyle" TargetType="ComboBoxItem">
         <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
         <Setter Property="Background" Value="{DynamicResource PopupBackgroundBrush}"/>
         <Setter Property="Template">
@@ -2360,10 +2369,5 @@
         </Setter>
     </Style>
     
-    <!-- Default ScrollBar Style (applies to all ScrollBars globally) -->
-    <Style TargetType="ScrollBar" BasedOn="{StaticResource CustomScrollBarStyle}"/>
-    
-    <!-- Default ScrollViewer Style (applies to all ScrollViewers globally) -->
-    <Style TargetType="ScrollViewer" BasedOn="{StaticResource CustomScrollViewerStyle}"/>
     
 </ResourceDictionary>

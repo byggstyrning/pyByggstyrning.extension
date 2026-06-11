@@ -25,7 +25,7 @@
         </StackPanel>
 
         <!-- Main Content with TabControl -->
-        <TabControl Grid.Row="1" x:Name="tabControl">
+        <TabControl Grid.Row="1" x:Name="tabControl" Style="{DynamicResource DefaultTabControlStyle}">
             <!-- Configurations List Tab -->
             <TabItem Header="Configurations" x:Name="configsTab">
                 <Grid Margin="10">
@@ -38,7 +38,7 @@
                     <ListView x:Name="configsListView" Grid.Row="0" Margin="0,0,0,10" SelectionMode="Single"
                              Style="{DynamicResource StandardListBoxStyle}">
                         <ListView.View>
-                            <GridView>
+                            <GridView ColumnHeaderContainerStyle="{DynamicResource DefaultGridViewColumnHeaderStyle}">
                                 <GridViewColumn Header="Checklist" DisplayMemberBinding="{Binding ChecklistName}" Width="150"/>
                                 <GridViewColumn Header="Mapping" DisplayMemberBinding="{Binding DisplayName}" Width="300"/>
                                 <GridViewColumn Header="Details" DisplayMemberBinding="{Binding MappingDetails}" Width="150"/>
@@ -48,7 +48,7 @@
                     </ListView>
                     
                     <StackPanel Grid.Row="1" Margin="0,10,0,10">
-                        <TextBlock Text="Overall Progress:" FontWeight="Bold" Margin="0,0,0,5"/>
+                        <TextBlock Text="Overall Progress:" FontWeight="Bold" Margin="0,0,0,5" Style="{DynamicResource DefaultTextBlockStyle}"/>
                         <ProgressBar x:Name="mainProgressBar" Height="20" Minimum="0" Maximum="100" Value="0"/>
                     </StackPanel>
 
@@ -89,7 +89,7 @@
                     <TextBlock x:Name="revitParameterTextBlock" Grid.Row="2" Grid.Column="1" Margin="0,10,0,5" TextWrapping="Wrap"
                               Style="{DynamicResource SecondaryTextBlockStyle}"/>
                     
-                    <CheckBox x:Name="enableMappingCheckBox" Content="Enable Parameter Mapping" Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,15,0,5" IsChecked="False" />
+                    <CheckBox x:Name="enableMappingCheckBox" Content="Enable Parameter Mapping" Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,15,0,5" IsChecked="False" Style="{DynamicResource DefaultCheckBoxStyle}"/>
                     
                     <Grid Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" Grid.RowSpan="2" x:Name="mappingGrid" Visibility="Collapsed">
                         <Grid.RowDefinitions>
@@ -102,7 +102,7 @@
                                   Style="{DynamicResource SubheaderTextBlockStyle}"/>
                         
                         <DataGrid x:Name="mappingDataGrid" Grid.Row="1" AutoGenerateColumns="False" Margin="0,5,0,5" 
-                                  CanUserAddRows="True" CanUserDeleteRows="True">
+                                  CanUserAddRows="True" CanUserDeleteRows="True" Style="{DynamicResource DefaultDataGridStyle}">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="Checklist Value" 
                                                   Binding="{Binding ChecklistValue, UpdateSourceTrigger=PropertyChanged}" 
@@ -114,8 +114,8 @@
                         </DataGrid>
                         
                         <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,5,0,0">
-                            <Button x:Name="addNewRowButton" Content="Add New Row" Width="120" Height="30" Margin="0,0,10,0"/>
-                            <Button x:Name="removeRowButton" Content="Remove Selected Row" Width="150" Height="30"/>
+                            <Button x:Name="addNewRowButton" Content="Add New Row" Width="120" Height="30" Margin="0,0,10,0" Style="{DynamicResource DefaultButtonStyle}"/>
+                            <Button x:Name="removeRowButton" Content="Remove Selected Row" Width="150" Height="30" Style="{DynamicResource DefaultButtonStyle}"/>
                         </StackPanel>
                     </Grid>
                     

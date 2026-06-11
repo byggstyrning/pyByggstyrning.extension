@@ -25,7 +25,7 @@
         <!-- Main Content with TabControl -->
         <TabControl Grid.Row="1" x:Name="tabControl" Style="{DynamicResource StandardTabControlStyle}">
             <!-- Login Tab -->
-            <TabItem Header="1. Login" x:Name="loginTab">
+            <TabItem Header="1. Login" x:Name="loginTab" Style="{DynamicResource StandardTabItemStyle}">
                 <Grid Margin="{DynamicResource GridMargin}">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -68,7 +68,7 @@
             </TabItem>
 
             <!-- Project Selection Tab -->
-            <TabItem Header="2. Select Project" x:Name="projectTab" IsEnabled="False">
+            <TabItem Header="2. Select Project" x:Name="projectTab" IsEnabled="False" Style="{DynamicResource StandardTabItemStyle}">
                 <Grid Margin="{DynamicResource GridMargin}">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -79,7 +79,7 @@
                     <TextBlock Text="Select a StreamBIM Project:" Grid.Row="0" Style="{DynamicResource SubheaderTextBlockStyle}"/>
                     <ListView x:Name="projectsListView" Grid.Row="1" Style="{DynamicResource StandardListBoxStyle}" SelectionMode="Single" MouseDoubleClick="projects_list_double_click">
                         <ListView.View>
-                            <GridView>
+                            <GridView ColumnHeaderContainerStyle="{DynamicResource DefaultGridViewColumnHeaderStyle}">
                                 <GridViewColumn Header="ID" DisplayMemberBinding="{Binding Id}" Width="50"/>
                                 <GridViewColumn Header="Name" DisplayMemberBinding="{Binding Name}" Width="200"/>
                                 <GridViewColumn Header="Description" DisplayMemberBinding="{Binding Description}" Width="300"/>
@@ -91,7 +91,7 @@
             </TabItem>
 
             <!-- Checklist Selection Tab -->
-            <TabItem Header="3. Select Checklist" x:Name="checklistTab" IsEnabled="False">
+            <TabItem Header="3. Select Checklist" x:Name="checklistTab" IsEnabled="False" Style="{DynamicResource StandardTabItemStyle}">
                 <Grid Margin="{DynamicResource GridMargin}">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -114,7 +114,7 @@
                     
                     <ListView x:Name="checklistsListView" Grid.Row="2" Style="{DynamicResource StandardListBoxStyle}" SelectionMode="Single" MouseDoubleClick="checklists_list_double_click">
                         <ListView.View>
-                            <GridView>
+                            <GridView ColumnHeaderContainerStyle="{DynamicResource DefaultGridViewColumnHeaderStyle}">
                                 <GridViewColumn Header="ID" DisplayMemberBinding="{Binding Id}" Width="50"/>
                                 <GridViewColumn Header="Name" DisplayMemberBinding="{Binding Name}" Width="450"/>
                             </GridView>
@@ -125,7 +125,7 @@
             </TabItem>
 
             <!-- Parameter Selection Tab -->
-            <TabItem Header="4. Select Parameters" x:Name="parameterTab" IsEnabled="False">
+            <TabItem Header="4. Select Parameters" x:Name="parameterTab" IsEnabled="False" Style="{DynamicResource StandardTabItemStyle}">
                 <Grid Margin="{DynamicResource GridMargin}">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>

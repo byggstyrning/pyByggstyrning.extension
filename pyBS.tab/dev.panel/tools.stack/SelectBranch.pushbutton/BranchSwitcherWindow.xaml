@@ -108,12 +108,14 @@
                     <TextBlock Text="Select Branch"
                                FontSize="16"
                                FontWeight="SemiBold"
-                               Foreground="{DynamicResource TextBrush}"/>
+                               Foreground="{DynamicResource TextBrush}"
+                               Style="{DynamicResource DefaultTextBlockStyle}"/>
                     <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
                         <TextBlock Text="On "
                                    FontSize="11"
                                    Foreground="{DynamicResource TextSecondaryBrush}"
-                                   VerticalAlignment="Center"/>
+                                   VerticalAlignment="Center"
+                                   Style="{DynamicResource DefaultTextBlockStyle}"/>
                         <Border Background="{DynamicResource AccentBrush}"
                                 CornerRadius="8"
                                 Padding="7,1,7,2"
@@ -122,7 +124,8 @@
                                        Text="(unknown)"
                                        FontSize="10"
                                        FontWeight="Bold"
-                                       Foreground="#000000"/>
+                                       Foreground="#000000"
+                                       Style="{DynamicResource DefaultTextBlockStyle}"/>
                         </Border>
                     </StackPanel>
                 </StackPanel>
@@ -136,11 +139,13 @@
                                FontSize="11"
                                FontWeight="SemiBold"
                                HorizontalAlignment="Right"
-                               Foreground="{DynamicResource TextBrush}"/>
+                               Foreground="{DynamicResource TextBrush}"
+                               Style="{DynamicResource DefaultTextBlockStyle}"/>
                     <TextBlock Text="local + origin"
                                FontSize="10"
                                HorizontalAlignment="Right"
-                               Foreground="{DynamicResource TextLightBrush}"/>
+                               Foreground="{DynamicResource TextLightBrush}"
+                               Style="{DynamicResource DefaultTextBlockStyle}"/>
                 </StackPanel>
             </Grid>
         </Border>
@@ -157,11 +162,13 @@
                 <TextBlock Text="What is a branch?"
                            FontSize="11"
                            FontWeight="SemiBold"
-                           Foreground="{DynamicResource TextBrush}"/>
+                           Foreground="{DynamicResource TextBrush}"
+                           Style="{DynamicResource DefaultTextBlockStyle}"/>
                 <TextBlock FontSize="11"
                            Margin="0,2,0,0"
                            TextWrapping="Wrap"
-                           Foreground="{DynamicResource TextSecondaryBrush}">
+                           Foreground="{DynamicResource TextSecondaryBrush}"
+                           Style="{DynamicResource DefaultTextBlockStyle}">
                     A branch is a different version of this toolbar. Pick one, hit Switch, and pyRevit reloads with those tools.
                     <LineBreak/>
                     <Run FontWeight="SemiBold" Text="master"/> = stable. Others = work in progress or experiments.
@@ -177,7 +184,8 @@
                    Margin="2,8,2,0"
                    TextWrapping="Wrap"
                    Visibility="Collapsed"
-                   Foreground="{DynamicResource TextSecondaryBrush}"/>
+                   Foreground="{DynamicResource TextSecondaryBrush}"
+                   Style="{DynamicResource DefaultTextBlockStyle}"/>
 
         <!-- Search box -->
         <TextBox x:Name="searchBox"
@@ -194,6 +202,7 @@
                 BorderThickness="1"
                 CornerRadius="4">
             <ListBox x:Name="branchList"
+                     Style="{DynamicResource DefaultListBoxStyle}"
                      BorderThickness="0"
                      Background="Transparent"
                      Padding="6,6,6,6"
@@ -231,7 +240,8 @@
                                        Margin="8,0,8,0"
                                        VerticalAlignment="Center"
                                        TextTrimming="CharacterEllipsis"
-                                       Foreground="{DynamicResource TextBrush}"/>
+                                       Foreground="{DynamicResource TextBrush}"
+                                       Style="{DynamicResource DefaultTextBlockStyle}"/>
 
                             <!-- LOCAL-only pill (branch not yet on origin) -->
                             <Border Grid.Column="2"
@@ -281,7 +291,8 @@
                    Text="Tip: double-click a branch to switch, or press Enter."
                    FontSize="10"
                    Margin="2,8,2,0"
-                   Foreground="{DynamicResource TextLightBrush}"/>
+                   Foreground="{DynamicResource TextLightBrush}"
+                   Style="{DynamicResource DefaultTextBlockStyle}"/>
 
         <!-- Footer buttons -->
         <StackPanel Grid.Row="6"
