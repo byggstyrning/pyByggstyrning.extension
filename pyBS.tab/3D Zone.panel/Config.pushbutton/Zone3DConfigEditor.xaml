@@ -38,7 +38,7 @@
                                   Style="{DynamicResource StandardListViewStyle}">
                             <ListView.View>
                                 <GridView>
-                                    <GridViewColumn Header="Name" Width="200">
+                                    <GridViewColumn Header="Name" Width="80">
                                         <GridViewColumn.CellTemplate>
                                             <DataTemplate>
                                                 <TextBlock Text="{Binding Name}" VerticalAlignment="Center" Margin="5,0"
@@ -46,7 +46,18 @@
                                             </DataTemplate>
                                         </GridViewColumn.CellTemplate>
                                     </GridViewColumn>
-                                    <GridViewColumn Header="Source Categories" Width="200">
+                                    <GridViewColumn Header="Linked Model" Width="70">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding LinkedModelDisplay}" VerticalAlignment="Center" Margin="5,0"
+                                                          TextTrimming="CharacterEllipsis"
+                                                          ToolTip="{Binding LinkedModelTooltip}"
+                                                          Foreground="{DynamicResource TextSecondaryBrush}"
+                                                          FontStyle="Italic"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="Source Categories" Width="100">
                                         <GridViewColumn.CellTemplate>
                                             <DataTemplate>
                                                 <TextBlock Text="{Binding SourceCategoriesDisplay}" VerticalAlignment="Center" Margin="5,0"
@@ -54,7 +65,7 @@
                                             </DataTemplate>
                                         </GridViewColumn.CellTemplate>
                                     </GridViewColumn>
-                                    <GridViewColumn Header="Mappings" Width="300">
+                                    <GridViewColumn Header="Mappings" Width="160">
                                         <GridViewColumn.CellTemplate>
                                             <DataTemplate>
                                                 <TextBlock x:Name="mappingsTextBlock" TextWrapping="Wrap" VerticalAlignment="Center" Margin="5,0"
@@ -62,7 +73,7 @@
                                             </DataTemplate>
                                         </GridViewColumn.CellTemplate>
                                     </GridViewColumn>
-                                    <GridViewColumn Header="Enabled" Width="80">
+                                    <GridViewColumn Header="Enabled" Width="90">
                                         <GridViewColumn.CellTemplate>
                                             <DataTemplate>
                                                 <CheckBox x:Name="enabledCheckBox" IsChecked="{Binding Enabled, Mode=TwoWay}" 
@@ -72,7 +83,7 @@
                                             </DataTemplate>
                                         </GridViewColumn.CellTemplate>
                                     </GridViewColumn>
-                                    <GridViewColumn Header="On IFC Export" Width="130">
+                                    <GridViewColumn Header="On IFC Export" Width="120">
                                         <GridViewColumn.CellTemplate>
                                             <DataTemplate>
                                                 <CheckBox x:Name="writeBeforeIfcCheckBox" IsChecked="{Binding WriteBeforeIfcExport, Mode=TwoWay}" 
@@ -162,7 +173,7 @@
                                 <!-- Source Category Selection -->
                                 <StackPanel Margin="0,0,0,15">
                                     <TextBlock Text="Source Category" Style="{DynamicResource LabelTextBlockStyle}" Margin="0,0,0,5"/>
-                                    <TextBlock Text="Select the spatial element category to read parameters from" 
+                                    <TextBlock Text="Spatial categories (Rooms, Spaces, etc.) use containment. Other categories (e.g. Walls) use geometric overlap." 
                                                Style="{DynamicResource SecondaryTextBlockStyle}" Margin="0,0,0,8" FontStyle="Italic"/>
                                     <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="3">
                                         <ListBox x:Name="sourceCategoriesListBox" Height="140" SelectionMode="Single" 

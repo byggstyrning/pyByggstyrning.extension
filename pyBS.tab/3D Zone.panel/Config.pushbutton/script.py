@@ -81,6 +81,7 @@ import System.Windows.Threading
 
 # Special marker for 3D Zone filter (Generic Models with family name containing 3DZone)
 THREE_D_ZONE_MARKER = "3DZONE_FILTER"
+SOURCE_CATEGORY_SEPARATOR = "────────"
 
 # --- Helper Classes ---
 
@@ -129,6 +130,20 @@ class ConfigItem(INotifyPropertyChanged):
     @property
     def Name(self):
         return self.name
+    
+    @property
+    def LinkedModelDisplay(self):
+        """Display linked model filename when source uses a linked document."""
+        if self.use_linked_document and self.linked_document_name:
+            return format_linked_model_display_name(self.linked_document_name)
+        return ""
+    
+    @property
+    def LinkedModelTooltip(self):
+        """Full Revit link instance name for tooltip."""
+        if self.use_linked_document and self.linked_document_name:
+            return self.linked_document_name
+        return ""
     
     @property
     def Order(self):
@@ -326,11 +341,12 @@ class ParameterMappingEntry(INotifyPropertyChanged):
 
 class ParameterSelectorDialog(forms.WPFWindow):
     """Dialog for selecting source and target parameters side by side."""
-    def __init__(self, available_params, initial_source=None, initial_target=None):
+    def __init__(self, source_params, target_params, initial_source=None, initial_target=None):
         """Initialize the parameter selector dialog.
         
         Args:
-            available_params: List of available parameter names
+            source_params: List of source parameter names (from source category / linked doc)
+            target_params: List of target parameter names (from host document)
             initial_source: Optional initial source parameter name to preselect
             initial_target: Optional initial target parameter name to preselect
         """
@@ -349,8 +365,8 @@ class ParameterSelectorDialog(forms.WPFWindow):
         self.initial_target = initial_target
         
         # Sort parameters: put initial selections at the top
-        source_params_sorted = self.sort_params_with_priority(available_params, initial_source)
-        target_params_sorted = self.sort_params_with_priority(available_params, initial_target)
+        source_params_sorted = self.sort_params_with_priority(source_params, initial_source)
+        target_params_sorted = self.sort_params_with_priority(target_params, initial_target)
         
         # Store full lists for filtering (maintain sort order)
         self.all_source_params = source_params_sorted
@@ -513,15 +529,137 @@ class ParameterSelectorDialog(forms.WPFWindow):
 
 # --- Helper Functions ---
 
-def get_category_options():
-    """Get list of common BuiltInCategory options for selection."""
-    return [
+def _measure_text_width(text, font_size=12.0, bold=False, italic=False, padding=20.0):
+    """Measure rendered text width for GridView column autosizing."""
+    text = str(text) if text is not None else ""
+    if not text:
+        return padding
+    try:
+        from System.Windows import FlowDirection, FontStyles, FontWeights
+        from System.Windows.Media import FormattedText, Typeface, Brushes
+        from System.Globalization import CultureInfo
+        weight = FontWeights.Bold if bold else FontWeights.Normal
+        style = FontStyles.Italic if italic else FontStyles.Normal
+        typeface = Typeface("Segoe UI", style, weight, False)
+        formatted = FormattedText(
+            text,
+            CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight,
+            typeface,
+            font_size,
+            Brushes.Black
+        )
+        return formatted.Width + padding
+    except Exception:
+        return max(len(text) * 7.0, padding)
+
+
+def autosize_configs_listview_columns(list_view, fill_mappings_column=True):
+    """Resize GridView columns to fit headers and cell content."""
+    grid_view = list_view.View
+    if grid_view is None:
+        return
+    
+    font_size = 12.0
+    padding = 20.0
+    checkbox_extra = 44.0
+    mappings_column_index = 3
+    
+    text_column_specs = [
+        ("Name", lambda item: item.Name, True, False, 80.0),
+        ("Linked Model", lambda item: item.LinkedModelDisplay, False, True, 70.0),
+        ("Source Categories", lambda item: item.SourceCategoriesDisplay, False, False, 100.0),
+        ("Mappings", lambda item: item.MappingsFormattedText, False, False, 160.0),
+    ]
+    checkbox_headers = ["Enabled", "On IFC Export", "Only Empty"]
+    
+    widths = []
+    for header, getter, bold, italic, min_width in text_column_specs:
+        max_width = _measure_text_width(header, font_size, bold=True, padding=padding)
+        for item in list_view.Items:
+            try:
+                value = getter(item)
+                if not value:
+                    continue
+                if header == "Mappings":
+                    for line in str(value).split("\n"):
+                        line = line.strip()
+                        if line:
+                            max_width = max(
+                                max_width,
+                                _measure_text_width(line, font_size, bold=bold, italic=italic, padding=padding)
+                            )
+                else:
+                    max_width = max(
+                        max_width,
+                        _measure_text_width(value, font_size, bold=bold, italic=italic, padding=padding)
+                    )
+            except Exception:
+                continue
+        widths.append(max(max_width, min_width))
+    
+    for header in checkbox_headers:
+        header_width = _measure_text_width(header, font_size, bold=True, padding=padding + checkbox_extra)
+        widths.append(max(header_width, 90.0))
+    
+    if fill_mappings_column and list_view.ActualWidth > 0 and len(widths) > mappings_column_index:
+        scrollbar_padding = 24.0
+        fixed_width = sum(widths) - widths[mappings_column_index] + scrollbar_padding
+        remaining = list_view.ActualWidth - fixed_width
+        if remaining > widths[mappings_column_index]:
+            widths[mappings_column_index] = remaining
+    
+    columns = list(grid_view.Columns)
+    for index, width in enumerate(widths):
+        if index < len(columns):
+            columns[index].Width = width
+
+
+def format_linked_model_display_name(link_name):
+    """Return the link filename from a Revit link instance display name.
+    
+    Revit link names look like: 'Model.rvt : 3 : location ...'
+    """
+    if not link_name:
+        return ""
+    name = str(link_name).strip()
+    if " : " in name:
+        return name.split(" : ")[0].strip()
+    return name
+
+
+def get_category_options(doc):
+    """Get source category options: spatial types first, then all other model categories.
+    
+    Args:
+        doc: Revit document used to enumerate model categories
+        
+    Returns:
+        list: Tuples of (display_name, category_value) where category_value is
+              BuiltInCategory, THREE_D_ZONE_MARKER, or SOURCE_CATEGORY_SEPARATOR
+    """
+    spatial_options = [
         ("Rooms", BuiltInCategory.OST_Rooms),
         ("Spaces", BuiltInCategory.OST_MEPSpaces),
         ("Areas", BuiltInCategory.OST_Areas),
         ("Mass", BuiltInCategory.OST_Mass),
         ("3D Zone (custom family)", THREE_D_ZONE_MARKER)
     ]
+    
+    spatial_builtin_values = set()
+    for _, cat_value in spatial_options:
+        if cat_value != THREE_D_ZONE_MARKER:
+            spatial_builtin_values.add(int(cat_value))
+    
+    options = list(spatial_options)
+    options.append((SOURCE_CATEGORY_SEPARATOR, SOURCE_CATEGORY_SEPARATOR))
+    
+    if doc:
+        for display_name, cat_value in get_all_model_categories(doc):
+            if int(cat_value) not in spatial_builtin_values:
+                options.append((display_name, cat_value))
+    
+    return options
 
 def get_linked_documents(doc):
     """Get all linked Revit documents in the current document.
@@ -727,16 +865,30 @@ def get_source_element_instance_properties(doc, source_category, use_linked_docu
         # Get source document
         source_doc = doc
         if use_linked_document and linked_document_name:
-            link_instances = FilteredElementCollector(doc).OfClass(RevitLinkInstance).ToElements()
-            for link in link_instances:
-                if link.Name == linked_document_name:
+            link_instance = get_linked_document_by_name(doc, linked_document_name)
+            if link_instance:
+                try:
+                    link_doc = link_instance.GetLinkDocument()
+                    if link_doc:
+                        source_doc = link_doc
+                except Exception:
+                    pass
+        
+        # Project/shared instance parameters from the source document bindings
+        try:
+            param_bindings = source_doc.ParameterBindings
+            iterator = param_bindings.ForwardIterator()
+            while iterator.MoveNext():
+                definition = iterator.Key
+                binding = iterator.Current
+                if isinstance(binding, InstanceBinding):
                     try:
-                        link_doc = link.GetLinkDocument()
-                        if link_doc:
-                            source_doc = link_doc
-                            break
-                    except:
+                        if is_param_acceptable_for_mapping(definition):
+                            params.add(definition.Name)
+                    except Exception:
                         pass
+        except Exception as e:
+            logger.debug("Error reading source ParameterBindings: {}".format(str(e)))
         
         # Collect elements from source category
         source_elements = []
@@ -824,6 +976,8 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         # Set up event handlers
         self.configsListView.SelectionChanged += self.config_selection_changed
         self.configsListView.MouseDoubleClick += self.config_double_click
+        self.configsListView.Loaded += self.configs_list_view_loaded
+        self.configsListView.SizeChanged += self.configs_list_view_size_changed
         self.addButton.Click += self.add_button_click
         self.editButton.Click += self.edit_button_click
         self.deleteButton.Click += self.delete_button_click
@@ -1157,6 +1311,22 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         self.configsListView.ItemsSource = None
         self.configsListView.ItemsSource = self.configs
         self.configsListView.UpdateLayout()
+        self.autosize_configs_columns()
+    
+    def configs_list_view_loaded(self, sender, args):
+        """Autosize columns once the list view is rendered."""
+        self.autosize_configs_columns()
+    
+    def configs_list_view_size_changed(self, sender, args):
+        """Rebalance column widths when the list view is resized."""
+        self.autosize_configs_columns()
+    
+    def autosize_configs_columns(self):
+        """Autosize mappings table columns to content."""
+        try:
+            autosize_configs_listview_columns(self.configsListView)
+        except Exception as e:
+            logger.debug("Could not autosize mappings columns: {}".format(str(e)))
     
     def update_status(self, message):
         """Update the status display."""
@@ -1169,8 +1339,11 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         name_valid = bool(self.nameTextBox.Text and self.nameTextBox.Text.strip())
         self._validation_errors["name"] = not name_valid
         
-        # Validate source category (exactly one)
-        source_category_valid = self.sourceCategoriesListBox.SelectedItem is not None
+        # Validate source category (exactly one, not separator)
+        source_category_valid = False
+        if self.sourceCategoriesListBox.SelectedItem is not None:
+            display_name = str(self.sourceCategoriesListBox.SelectedItem)
+            source_category_valid = display_name in self.source_category_map
         self._validation_errors["source_category"] = not source_category_valid
         
         # Validate mappings (at least one)
@@ -1267,42 +1440,49 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         # Load instance properties for the selected source category
         self.load_source_element_properties()
     
+    def _get_selected_source_category(self):
+        """Return the selected source category value, or None."""
+        selected_item = self.sourceCategoriesListBox.SelectedItem
+        if not selected_item:
+            return None
+        return self.source_category_map.get(str(selected_item))
+
+    def _get_linked_document_settings(self):
+        """Return (use_linked_document, linked_document_name) from the form."""
+        use_linked = self.useLinkedDocumentCheckBox.IsChecked
+        linked_doc_name = None
+        if use_linked and self.linkedDocumentComboBox.SelectedItem:
+            linked_doc_name = str(self.linkedDocumentComboBox.SelectedItem)
+        return use_linked, linked_doc_name
+
+    def get_source_params_for_mapping(self):
+        """Get source parameter names from the selected source category document."""
+        source_category = self._get_selected_source_category()
+        if not source_category:
+            return []
+        use_linked, linked_doc_name = self._get_linked_document_settings()
+        return get_source_element_instance_properties(
+            revit.doc,
+            source_category,
+            use_linked_document=use_linked,
+            linked_document_name=linked_doc_name
+        )
+
     def load_source_element_properties(self):
         """Load instance properties from source elements into the sort property dropdown."""
         try:
             # Clear existing items
             self.sourceSortPropertyComboBox.Items.Clear()
             
-            # Get selected source category
-            selected_item = self.sourceCategoriesListBox.SelectedItem
-            if not selected_item:
+            source_category = self._get_selected_source_category()
+            if not source_category:
                 # No category selected, just add ElementId as default
                 self.sourceSortPropertyComboBox.Items.Add("ElementId")
                 self.sourceSortPropertyComboBox.SelectedItem = "ElementId"
                 return
             
-            display_name = str(selected_item)
-            source_category = self.source_category_map.get(display_name)
-            
-            if not source_category:
-                # Category not found, use default
-                self.sourceSortPropertyComboBox.Items.Add("ElementId")
-                self.sourceSortPropertyComboBox.SelectedItem = "ElementId"
-                return
-            
-            # Get linked document settings
-            use_linked = self.useLinkedDocumentCheckBox.IsChecked
-            linked_doc_name = None
-            if use_linked and self.linkedDocumentComboBox.SelectedItem:
-                linked_doc_name = str(self.linkedDocumentComboBox.SelectedItem)
-            
             # Get instance properties from source elements
-            properties = get_source_element_instance_properties(
-                revit.doc, 
-                source_category,
-                use_linked_document=use_linked,
-                linked_document_name=linked_doc_name
-            )
+            properties = self.get_source_params_for_mapping()
             
             # Populate ComboBox
             current_selection = self.sourceSortPropertyComboBox.SelectedItem
@@ -1560,12 +1740,13 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         # Load source categories
         self.sourceCategoriesListBox.Items.Clear()
         self.source_category_map = {}
-        category_options = get_category_options()
+        category_options = get_category_options(revit.doc)
         for opt in category_options:
             display_name = opt[0]
             category_value = opt[1]
             self.sourceCategoriesListBox.Items.Add(display_name)
-            self.source_category_map[display_name] = category_value
+            if category_value != SOURCE_CATEGORY_SEPARATOR:
+                self.source_category_map[display_name] = category_value
         
         # Load target filter categories
         self.targetFilterCategoriesListBox.Items.Clear()
@@ -1633,8 +1814,9 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
 
             # Get selected source category (single selection)
             selected_source_cats = []
-            category_options = get_category_options()
-            cat_map = {opt[0]: opt[1] for opt in category_options}
+            category_options = get_category_options(revit.doc)
+            cat_map = {opt[0]: opt[1] for opt in category_options
+                       if opt[1] != SOURCE_CATEGORY_SEPARATOR}
             
             if self.sourceCategoriesListBox.SelectedItem:
                 display_name = str(self.sourceCategoriesListBox.SelectedItem)
@@ -1867,15 +2049,22 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
     
     def add_parameter_mapping_button_click(self, sender, args):
         """Handle add parameter mapping button click."""
-        # Get available parameters
-        available_params = get_all_writable_instance_parameters(revit.doc)
+        if not self._get_selected_source_category():
+            MessageBox.Show("Select a source category before adding a parameter mapping.", "Source Category Required", MessageBoxButton.OK)
+            return
         
-        if not available_params:
-            MessageBox.Show("No writable instance parameters found in the project.", "No Parameters", MessageBoxButton.OK)
+        source_params = self.get_source_params_for_mapping()
+        target_params = get_all_writable_instance_parameters(revit.doc)
+        
+        if not source_params:
+            MessageBox.Show("No parameters found on source elements. Check the source category and linked document settings.", "No Source Parameters", MessageBoxButton.OK)
+            return
+        if not target_params:
+            MessageBox.Show("No writable instance parameters found in the project.", "No Target Parameters", MessageBoxButton.OK)
             return
         
         # Create and show custom parameter selector dialog
-        selector_dialog = ParameterSelectorDialog(available_params)
+        selector_dialog = ParameterSelectorDialog(source_params, target_params)
         result = selector_dialog.ShowDialog()
         
         if result and selector_dialog.selected_source and selector_dialog.selected_target:
@@ -1925,16 +2114,24 @@ class Zone3DConfigEditorUI(forms.WPFWindow):
         current_source = mapping_entry.SourceParameter.strip() if mapping_entry.SourceParameter else None
         current_target = mapping_entry.TargetParameter.strip() if mapping_entry.TargetParameter else None
         
-        # Get available parameters
-        available_params = get_all_writable_instance_parameters(revit.doc)
+        if not self._get_selected_source_category():
+            MessageBox.Show("Select a source category before editing a parameter mapping.", "Source Category Required", MessageBoxButton.OK)
+            return
         
-        if not available_params:
-            MessageBox.Show("No writable instance parameters found in the project.", "No Parameters", MessageBoxButton.OK)
+        source_params = self.get_source_params_for_mapping()
+        target_params = get_all_writable_instance_parameters(revit.doc)
+        
+        if not source_params:
+            MessageBox.Show("No parameters found on source elements. Check the source category and linked document settings.", "No Source Parameters", MessageBoxButton.OK)
+            return
+        if not target_params:
+            MessageBox.Show("No writable instance parameters found in the project.", "No Target Parameters", MessageBoxButton.OK)
             return
         
         # Create and show custom parameter selector dialog with current values preselected
         selector_dialog = ParameterSelectorDialog(
-            available_params,
+            source_params,
+            target_params,
             initial_source=current_source,
             initial_target=current_target
         )

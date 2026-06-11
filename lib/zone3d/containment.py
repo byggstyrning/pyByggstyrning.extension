@@ -11,7 +11,7 @@ from Autodesk.Revit.DB import (
     Line, SolidCurveIntersectionOptions, SolidCurveIntersectionMode, 
     Area, Level, CurveLoop, Solid, GeometryCreationUtilities, Transform,
     BoundingBoxXYZ, BuiltInParameter, Phase, ElementId, FamilyInstance,
-    HostObject, HostObjectUtils, ShellLayerType, PlanarFace
+    HostObject, HostObjectUtils, ShellLayerType, PlanarFace, ViewDetailLevel
 )
 from Autodesk.Revit.DB.Architecture import Room
 from Autodesk.Revit.DB.Mechanical import Space
@@ -42,9 +42,6 @@ except ImportError:
 
 # Initialize logger
 logger = script.get_logger()
-
-
-
 
 def get_phase_map_for_link(host_doc, link_instance):
     """Get phase mapping from host document to linked document using Revit's API.
@@ -98,6 +95,16 @@ ROOF_FOOTPRINT_SAMPLE_SPACING_FT = 1.5
 ROOF_FOOTPRINT_MAX_POINTS = 56
 ROOF_CONTAINMENT_VOTE_MIN_FRACTION = 0.5
 
+# Coplanar overlap for thin sources (Fire Protection) vs walls/floors (internal feet)
+COPLANAR_NORMAL_ANGLE_TOL_DEG = 5.0
+COPLANAR_PLANE_DISTANCE_TOL_FT = 0.35
+# Mutual overlap: the smaller element must be covered by at least this fraction.
+# Rejects "edge-only" matches (e.g. small floor clipping the edge of a large slab).
+COPLANAR_MIN_OVERLAP_FRACTION = 0.5
+COPLANAR_FACE_GRID_SIZE = 5
+COPLANAR_MAX_DESCRIPTORS_PER_ELEMENT = 8
+COPLANAR_MIN_FACE_AREA_SQ_FT = 0.05
+
 # Cache for geometry calculations (Mass/Generic Model)
 # Structure: element_id -> {"solids": [Solid, ...], "bbox": BoundingBox}
 # NOTE: We store a list of solids to handle in-place families with multiple solid forms
@@ -116,6 +123,16 @@ def _get_geometry_options(doc):
             _geometry_options.DetailLevel = doc.ActiveView.DetailLevel
     return _geometry_options
 
+def _category_to_int(category):
+    """Normalize BuiltInCategory or int category values for comparison."""
+    try:
+        if isinstance(category, BuiltInCategory):
+            return int(category)
+        return int(category)
+    except Exception:
+        return None
+
+
 def detect_containment_strategy(source_categories):
     """Detect optimal containment strategy based on source categories.
     
@@ -123,29 +140,39 @@ def detect_containment_strategy(source_categories):
         source_categories: List of BuiltInCategory values
         
     Returns:
-        str: Strategy name ("room", "space", "area", "element", or None)
+        str: Strategy name ("room", "space", "area", "element", "overlap", or None)
     """
     if not source_categories:
         return None
     
+    category_ints = set()
+    for category in source_categories:
+        cat_int = _category_to_int(category)
+        if cat_int is not None:
+            category_ints.add(cat_int)
+    
+    if not category_ints:
+        return None
+    
     # Check for Rooms (fastest)
-    if BuiltInCategory.OST_Rooms in source_categories:
+    if int(BuiltInCategory.OST_Rooms) in category_ints:
         return "room"
     
     # Check for Spaces (fastest)
-    if BuiltInCategory.OST_MEPSpaces in source_categories:
+    if int(BuiltInCategory.OST_MEPSpaces) in category_ints:
         return "space"
     
     # Check for Areas (slower)
-    if BuiltInCategory.OST_Areas in source_categories:
+    if int(BuiltInCategory.OST_Areas) in category_ints:
         return "area"
     
     # Check for Mass/Generic Model (slowest)
-    if BuiltInCategory.OST_Mass in source_categories or \
-       BuiltInCategory.OST_GenericModel in source_categories:
+    if int(BuiltInCategory.OST_Mass) in category_ints or \
+       int(BuiltInCategory.OST_GenericModel) in category_ints:
         return "element"
     
-    return None
+    # Non-spatial categories use geometric overlap (e.g. Walls -> Walls)
+    return "overlap"
 
 def is_point_in_bbox(point, bbox):
     """Check if a point is inside a BoundingBoxXYZ.
@@ -2590,23 +2617,664 @@ def get_containing_element(element, doc, source_categories):
         logger.debug("Error getting containing element: {}".format(str(e)))
         return None
 
-def get_containing_element_by_strategy(element, doc, strategy, source_categories=None, 
+def _get_fire_protection_category_int():
+    """Return BuiltInCategory int for Fire Protection, or None if unavailable."""
+    try:
+        return int(BuiltInCategory.OST_FireProtection)
+    except Exception:
+        return None
+
+
+def _source_uses_coplanar_overlap(source_categories):
+    """True when source category needs coplanar plane matching (thin elements)."""
+    fire_cat = _get_fire_protection_category_int()
+    if fire_cat is None:
+        return False
+    for category in source_categories or []:
+        if _category_to_int(category) == fire_cat:
+            return True
+    return False
+
+
+def _normalize_vector(vector):
+    try:
+        length = vector.GetLength()
+        if length < 1e-9:
+            return None
+        return vector.Divide(length)
+    except Exception:
+        return None
+
+
+def _normals_are_parallel(normal_a, normal_b, angle_tol_deg=COPLANAR_NORMAL_ANGLE_TOL_DEG):
+    na = _normalize_vector(normal_a)
+    nb = _normalize_vector(normal_b)
+    if not na or not nb:
+        return False
+    return abs(na.DotProduct(nb)) >= math.cos(math.radians(angle_tol_deg))
+
+
+def _normals_are_perpendicular(normal_a, normal_b, angle_tol_deg=COPLANAR_NORMAL_ANGLE_TOL_DEG):
+    na = _normalize_vector(normal_a)
+    nb = _normalize_vector(normal_b)
+    if not na or not nb:
+        return False
+    return abs(na.DotProduct(nb)) <= math.sin(math.radians(angle_tol_deg))
+
+
+def _distance_point_to_plane(point, plane_origin, plane_normal):
+    normal = _normalize_vector(plane_normal)
+    if not normal:
+        return None
+    try:
+        return abs((point - plane_origin).DotProduct(normal))
+    except Exception:
+        return None
+
+
+def _point_inside_planar_face(face, point):
+    """Return True when a point projects inside a planar face boundary."""
+    try:
+        # Face.Project returns an IntersectionResult (not a UV); use its UVPoint.
+        projection = face.Project(point)
+        if projection is None:
+            return False
+        uv = getattr(projection, "UVPoint", None)
+        if uv is None:
+            return False
+        result = face.IsInside(uv)
+        if isinstance(result, tuple):
+            return bool(result[0])
+        return bool(result)
+    except Exception:
+        return False
+
+
+def _collect_hostobject_planar_faces(element):
+    """Collect PlanarFace objects from HostObject side/top/bottom faces."""
+    faces = []
+    if not isinstance(element, HostObject):
+        return faces
+    
+    try:
+        is_wall = hasattr(element, "WallType")
+        if is_wall:
+            for side in [ShellLayerType.Exterior, ShellLayerType.Interior]:
+                try:
+                    face_refs = HostObjectUtils.GetSideFaces(element, side)
+                    if not face_refs:
+                        continue
+                    for ref in face_refs:
+                        try:
+                            face = element.GetGeometryObjectFromReference(ref)
+                            if face and isinstance(face, PlanarFace):
+                                faces.append(face)
+                        except Exception:
+                            continue
+                except Exception:
+                    continue
+        else:
+            cat = element.Category
+            cat_id = get_element_id_value(cat.Id) if cat and cat.Id else None
+            top_supported = cat_id in (
+                int(BuiltInCategory.OST_Floors),
+                int(BuiltInCategory.OST_Ceilings),
+                int(BuiltInCategory.OST_Roofs),
+            )
+            if top_supported:
+                try:
+                    for ref in HostObjectUtils.GetTopFaces(element) or []:
+                        try:
+                            face = element.GetGeometryObjectFromReference(ref)
+                            if face and isinstance(face, PlanarFace):
+                                faces.append(face)
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+            if top_supported:
+                try:
+                    for ref in HostObjectUtils.GetBottomFaces(element) or []:
+                        try:
+                            face = element.GetGeometryObjectFromReference(ref)
+                            if face and isinstance(face, PlanarFace):
+                                faces.append(face)
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.debug("Error collecting host planar faces: {}".format(str(e)))
+    
+    return faces
+
+
+def _collect_geometry_planar_faces(element, doc):
+    """Collect PlanarFace objects from arbitrary element geometry."""
+    faces = []
+    try:
+        options = Options()
+        options.ComputeReferences = False
+        options.IncludeNonVisibleObjects = False
+        options.DetailLevel = ViewDetailLevel.Fine
+        geometry = element.get_Geometry(options)
+        if not geometry:
+            return faces
+        
+        stack = list(geometry)
+        while stack:
+            geom_obj = stack.pop()
+            if geom_obj is None:
+                continue
+            if isinstance(geom_obj, PlanarFace):
+                faces.append(geom_obj)
+            elif hasattr(geom_obj, "GetInstanceGeometry"):
+                try:
+                    instance_geom = geom_obj.GetInstanceGeometry()
+                    if instance_geom:
+                        stack.extend(list(instance_geom))
+                except Exception:
+                    pass
+            elif hasattr(geom_obj, "Faces"):
+                try:
+                    for face in geom_obj.Faces:
+                        if isinstance(face, PlanarFace):
+                            faces.append(face)
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.debug("Error collecting geometry planar faces: {}".format(str(e)))
+    
+    return faces
+
+
+def _collect_element_planar_faces(element, doc):
+    """Collect planar faces for coplanar overlap checks."""
+    faces = _collect_hostobject_planar_faces(element)
+    if faces:
+        return faces
+    return _collect_geometry_planar_faces(element, doc)
+
+
+def _planar_face_descriptor(face, grid_size=COPLANAR_FACE_GRID_SIZE):
+    """Build a lightweight planar descriptor with sample points."""
+    try:
+        samples = _generate_grid_points_on_face(face, grid_size)
+        if not samples:
+            bbox = face.GetBoundingBox()
+            if bbox:
+                uv = UV((bbox.Min.U + bbox.Max.U) * 0.5, (bbox.Min.V + bbox.Max.V) * 0.5)
+                samples = [face.Evaluate(uv)]
+        if not samples:
+            return None
+        return {
+            "origin": face.Origin,
+            "normal": face.FaceNormal,
+            "area": face.Area,
+            "samples": samples,
+            "face": face,
+            "inverse_transform": None,
+        }
+    except Exception:
+        return None
+
+
+def _transform_planar_descriptor(descriptor, transform):
+    """Transform a planar descriptor into another coordinate space."""
+    if not descriptor or transform is None:
+        return descriptor
+    try:
+        normal = transform.OfVector(descriptor["normal"])
+        normal = _normalize_vector(normal)
+        if not normal:
+            return None
+        inverse = None
+        try:
+            inverse = transform.Inverse
+        except Exception:
+            inverse = None
+        return {
+            "origin": transform.OfPoint(descriptor["origin"]),
+            "normal": normal,
+            "area": descriptor["area"],
+            "samples": [transform.OfPoint(point) for point in descriptor["samples"]],
+            # Original face stays in source (link) coordinates; inverse maps host->source
+            # so we can test host-space target samples against the source face.
+            "face": descriptor.get("face"),
+            "inverse_transform": inverse,
+        }
+    except Exception:
+        return None
+
+
+def _filter_coplanar_descriptors(descriptors):
+    """Keep the largest planar faces; thin families often expose hundreds of tiny faces."""
+    if not descriptors:
+        return descriptors
+    filtered = [
+        descriptor for descriptor in descriptors
+        if descriptor.get("area", 0.0) >= COPLANAR_MIN_FACE_AREA_SQ_FT
+    ]
+    filtered.sort(key=lambda descriptor: descriptor.get("area", 0.0), reverse=True)
+    return filtered[:COPLANAR_MAX_DESCRIPTORS_PER_ELEMENT]
+
+
+def _planar_descriptor_overlaps_faces(target_faces, source_descriptor,
+                                    plane_dist_tol=COPLANAR_PLANE_DISTANCE_TOL_FT,
+                                    min_overlap_fraction=COPLANAR_MIN_OVERLAP_FRACTION):
+    """Return True when a source plane meaningfully overlaps a coplanar target face.
+
+    Overlap is measured both ways (source samples inside target face and target
+    samples inside the source face). The match requires the SMALLER element to be
+    covered by at least ``min_overlap_fraction``, so edge-only contact is rejected.
+    """
+    if not target_faces or not source_descriptor:
+        return False
+    
+    source_normal = source_descriptor["normal"]
+    source_origin = source_descriptor["origin"]
+    source_samples = source_descriptor["samples"]
+    source_face = source_descriptor.get("face")
+    source_inverse = source_descriptor.get("inverse_transform")
+    if not source_samples:
+        return False
+    
+    for target_face in target_faces:
+        try:
+            target_desc = _planar_face_descriptor(target_face, COPLANAR_FACE_GRID_SIZE)
+            if not target_desc:
+                continue
+            
+            target_normal = target_desc["normal"]
+            if _normals_are_perpendicular(target_normal, source_normal):
+                continue
+            if not _normals_are_parallel(target_normal, source_normal):
+                continue
+            
+            plane_distance = _distance_point_to_plane(
+                source_origin, target_desc["origin"], target_normal)
+            if plane_distance is None or plane_distance > plane_dist_tol:
+                continue
+            
+            # Fraction of the source footprint that lies over the target face.
+            inside_source_on_target = 0
+            for point in source_samples:
+                if _point_inside_planar_face(target_face, point):
+                    inside_source_on_target += 1
+            source_fraction = float(inside_source_on_target) / float(len(source_samples))
+            
+            # Fraction of the target footprint that lies over the source face.
+            target_samples = target_desc["samples"]
+            target_fraction = 0.0
+            inside_target_on_source = 0
+            if source_face is not None and target_samples:
+                for point in target_samples:
+                    probe = source_inverse.OfPoint(point) if source_inverse is not None else point
+                    if _point_inside_planar_face(source_face, probe):
+                        inside_target_on_source += 1
+                target_fraction = float(inside_target_on_source) / float(len(target_samples))
+            
+            # The smaller element drives the decision (max of the two coverages):
+            # a small element fully under a large one yields a high fraction on its side.
+            best_fraction = max(source_fraction, target_fraction)
+            if best_fraction >= min_overlap_fraction:
+                return True
+        except Exception:
+            continue
+    
+    return False
+
+
+def _get_link_transform(link_instance):
+    if link_instance is None:
+        return None
+    try:
+        return link_instance.GetTotalTransform()
+    except Exception:
+        return None
+
+
+def _get_source_coplanar_descriptors(source_el, source_doc, link_transform=None,
+                                     descriptor_cache=None):
+    """Return transformed planar descriptors for a source element (cached when possible)."""
+    el_id = get_element_id_value(source_el.Id)
+    if descriptor_cache is not None and el_id in descriptor_cache:
+        return descriptor_cache[el_id]
+    
+    descriptors = []
+    for source_face in _collect_element_planar_faces(source_el, source_doc):
+        source_desc = _planar_face_descriptor(source_face)
+        if not source_desc:
+            continue
+        if link_transform is not None:
+            source_desc = _transform_planar_descriptor(source_desc, link_transform)
+        if source_desc:
+            descriptors.append(source_desc)
+    
+    descriptors = _filter_coplanar_descriptors(descriptors)
+    if descriptor_cache is not None:
+        descriptor_cache[el_id] = descriptors
+    return descriptors
+
+
+def build_source_coplanar_descriptor_cache(source_elements, source_doc, link_instance=None):
+    """Pre-compute coplanar descriptors for all source elements (batch overlap path)."""
+    cache = {}
+    link_transform = _get_link_transform(link_instance)
+    for source_el in source_elements:
+        _get_source_coplanar_descriptors(
+            source_el, source_doc, link_transform, descriptor_cache=cache)
+    return cache
+
+
+def _elements_overlap_coplanar(target_faces, source_descriptors, source_bbox_host=None):
+    """Check coplanar overlap using pre-collected target faces and source descriptors.
+
+    The bbox center/corner fallback was intentionally removed: it matched on mere
+    edge contact, which produced false positives for large slabs touching small floors.
+    """
+    if not target_faces or not source_descriptors:
+        return False
+    
+    for source_desc in source_descriptors:
+        if _planar_descriptor_overlaps_faces(target_faces, source_desc):
+            return True
+    
+    return False
+
+
+def _bbox_corners(bbox):
+    """Return all 8 corners of a BoundingBoxXYZ."""
+    mn = bbox.Min
+    mx = bbox.Max
+    return [
+        XYZ(mn.X, mn.Y, mn.Z), XYZ(mx.X, mn.Y, mn.Z),
+        XYZ(mn.X, mx.Y, mn.Z), XYZ(mx.X, mx.Y, mn.Z),
+        XYZ(mn.X, mn.Y, mx.Z), XYZ(mx.X, mn.Y, mx.Z),
+        XYZ(mn.X, mx.Y, mx.Z), XYZ(mx.X, mx.Y, mx.Z),
+    ]
+
+
+def _transform_axis_aligned_bbox(bbox, transform):
+    """Transform bbox corners and return a new axis-aligned BoundingBoxXYZ."""
+    corners = _bbox_corners(bbox)
+    transformed = [transform.OfPoint(corner) for corner in corners]
+    mn_x = min(point.X for point in transformed)
+    mn_y = min(point.Y for point in transformed)
+    mn_z = min(point.Z for point in transformed)
+    mx_x = max(point.X for point in transformed)
+    mx_y = max(point.Y for point in transformed)
+    mx_z = max(point.Z for point in transformed)
+    result = BoundingBoxXYZ()
+    result.Min = XYZ(mn_x, mn_y, mn_z)
+    result.Max = XYZ(mx_x, mx_y, mx_z)
+    return result
+
+
+def _get_element_solids_for_overlap(element, doc):
+    """Extract solid geometry from an element for overlap matching."""
+    try:
+        element_id = get_element_id_value(element.Id)
+        if element_id in _geometry_cache:
+            cached = _geometry_cache[element_id]
+            solids = cached.get("solids", [])
+            if solids:
+                return solids
+        
+        options = Options()
+        options.ComputeReferences = False
+        options.IncludeNonVisibleObjects = False
+        options.DetailLevel = ViewDetailLevel.Fine
+        
+        geometry = element.get_Geometry(options)
+        if not geometry:
+            return []
+        
+        solids = _collect_all_solids_from_geometry(geometry)
+        if solids:
+            bbox = element.get_BoundingBox(None)
+            _geometry_cache[element_id] = {"solids": solids, "bbox": bbox}
+        return solids
+    except Exception as e:
+        logger.debug("Error getting element solids for overlap: {}".format(str(e)))
+        return []
+
+
+def _transform_solids_with_transform(solids, transform):
+    """Transform solids to another coordinate space."""
+    if not solids or transform is None:
+        return solids or []
+    try:
+        from Autodesk.Revit.DB import SolidUtils
+        transformed = []
+        for solid in solids:
+            try:
+                if solid is None:
+                    continue
+                ts = SolidUtils.CreateTransformed(solid, transform)
+                if ts is not None and ts.Volume > 1e-9:
+                    transformed.append(ts)
+            except Exception:
+                continue
+        return transformed
+    except Exception as e:
+        logger.debug("Error transforming solids for overlap: {}".format(str(e)))
+        return solids or []
+
+
+def _solids_overlap(solids_a, solids_b):
+    """Return True when any solid pair has a non-empty intersection volume."""
+    if not solids_a or not solids_b:
+        return False
+    try:
+        from Autodesk.Revit.DB import BooleanOperationsUtils, BooleanOperationsType
+        for solid_a in solids_a:
+            for solid_b in solids_b:
+                try:
+                    result = BooleanOperationsUtils.ExecuteBooleanOperation(
+                        solid_a, solid_b, BooleanOperationsType.Intersect)
+                    if result is not None and result.Volume > 1e-9:
+                        return True
+                except Exception:
+                    continue
+    except Exception:
+        return False
+    return False
+
+
+def _find_overlap_candidates_by_target_points(target_el, source_doc, source_categories,
+                                              link_instance=None, exclude_element_id=None):
+    """Fallback overlap: find source elements whose bbox contains target sample points."""
+    candidate_map = {}
+    target_doc = target_el.Document
+    test_points = get_element_test_points(target_el, target_doc)
+    if not test_points:
+        return candidate_map
+    
+    if link_instance is not None:
+        try:
+            inverse = link_instance.GetTotalTransform().Inverse
+            test_points = [inverse.OfPoint(point) for point in test_points]
+        except Exception:
+            pass
+    
+    for point in test_points:
+        try:
+            point_filter = BoundingBoxContainsPointFilter(point)
+            for category in source_categories:
+                for source_el in FilteredElementCollector(source_doc)\
+                        .WhereElementIsNotElementType()\
+                        .OfCategory(category)\
+                        .WherePasses(point_filter)\
+                        .ToElements():
+                    el_id = get_element_id_value(source_el.Id)
+                    if exclude_element_id is not None and el_id == exclude_element_id:
+                        continue
+                    if el_id not in candidate_map:
+                        candidate_map[el_id] = source_el
+        except Exception:
+            continue
+    
+    return candidate_map
+
+
+def _get_overlap_outline_for_target(target_el, link_instance=None):
+    """Build an Outline for bbox pre-filtering in the source document coordinate space."""
+    try:
+        bbox = target_el.get_BoundingBox(None)
+        if not bbox:
+            return None
+        if link_instance is not None:
+            bbox = _transform_axis_aligned_bbox(
+                bbox, link_instance.GetTotalTransform().Inverse)
+        return Outline(bbox.Min, bbox.Max)
+    except Exception:
+        return None
+
+
+def get_containing_element_by_overlap(target_el, source_doc, source_categories,
+                                      sort_property="ElementId", sort_descending=False,
+                                      link_instance=None, exclude_element_id=None,
+                                      source_coplanar_cache=None):
+    """Find overlapping source element for a target using solid intersection.
+    
+    Uses element bounding-box pre-filter, then solid intersection. For linked
+    sources, compares solids in host coordinate space (Clash Views pattern).
+    
+    Args:
+        target_el: Target element (in host document when using linked source)
+        source_doc: Document containing source elements (link doc when linked)
+        source_categories: List of BuiltInCategory values to search
+        sort_property: Property used to pick winner when multiple sources overlap
+        sort_descending: Sort direction for tie-break
+        link_instance: Optional RevitLinkInstance when source is linked
+        exclude_element_id: Optional ElementId integer value to skip (same-doc self guard)
+        
+    Returns:
+        Element: Best matching overlapping source element or None
+    """
+    try:
+        if not source_categories:
+            return None
+        
+        target_doc = target_el.Document
+        use_coplanar = _source_uses_coplanar_overlap(source_categories)
+        target_faces = _collect_element_planar_faces(target_el, target_doc) if use_coplanar else None
+        link_transform = _get_link_transform(link_instance) if use_coplanar else None
+        target_solids_host = _get_element_solids_for_overlap(target_el, target_doc)
+        outline = _get_overlap_outline_for_target(target_el, link_instance)
+        if not outline:
+            return None
+        if use_coplanar and not target_faces:
+            return None
+        
+        candidate_map = {}
+        
+        for category in source_categories:
+            try:
+                collector = FilteredElementCollector(source_doc)\
+                    .WhereElementIsNotElementType()\
+                    .OfCategory(category)\
+                    .WherePasses(BoundingBoxIntersectsFilter(outline))
+                bbox_candidates = list(collector.ToElements())
+                
+                for source_el in bbox_candidates:
+                    el_id = get_element_id_value(source_el.Id)
+                    if exclude_element_id is not None and el_id == exclude_element_id:
+                        continue
+                    
+                    overlaps = False
+                    if use_coplanar:
+                        source_descriptors = _get_source_coplanar_descriptors(
+                            source_el, source_doc, link_transform, source_coplanar_cache)
+                        source_bbox_host = source_el.get_BoundingBox(None)
+                        if link_transform is not None and source_bbox_host is not None:
+                            source_bbox_host = _transform_axis_aligned_bbox(
+                                source_bbox_host, link_transform)
+                        overlaps = _elements_overlap_coplanar(
+                            target_faces, source_descriptors,
+                            source_bbox_host=source_bbox_host)
+                    elif link_instance is not None:
+                        source_solids = _get_element_solids_for_overlap(source_el, source_doc)
+                        source_solids_host = _transform_solids_with_transform(
+                            source_solids, link_instance.GetTotalTransform())
+                        if target_solids_host and source_solids_host:
+                            overlaps = _solids_overlap(target_solids_host, source_solids_host)
+                        else:
+                            overlaps = True
+                    else:
+                        if target_solids_host:
+                            solid_filter = ElementIntersectsSolidFilter(target_solids_host[0])
+                            overlaps = source_el in list(
+                                FilteredElementCollector(source_doc, [source_el.Id])
+                                .WherePasses(solid_filter)
+                                .ToElements()
+                            )
+                            if not overlaps and len(target_solids_host) > 1:
+                                for target_solid in target_solids_host[1:]:
+                                    if target_solid is None or target_solid.Volume <= 1e-9:
+                                        continue
+                                    solid_filter = ElementIntersectsSolidFilter(target_solid)
+                                    if source_el in list(
+                                        FilteredElementCollector(source_doc, [source_el.Id])
+                                        .WherePasses(solid_filter)
+                                        .ToElements()
+                                    ):
+                                        overlaps = True
+                                        break
+                        else:
+                            overlaps = True
+                    
+                    if overlaps and el_id not in candidate_map:
+                        candidate_map[el_id] = source_el
+            except Exception as solid_err:
+                logger.debug("Error checking overlap for category {}: {}".format(category, str(solid_err)))
+                continue
+        
+        if not candidate_map and not use_coplanar:
+            point_candidates = _find_overlap_candidates_by_target_points(
+                target_el, source_doc, source_categories, link_instance, exclude_element_id)
+            if point_candidates:
+                candidate_map.update(point_candidates)
+
+        if not candidate_map:
+            return None
+        
+        candidates = list(candidate_map.values())
+        if sort_property == "ElementId":
+            candidates.sort(key=lambda el: get_element_id_value(el.Id), reverse=sort_descending)
+        else:
+            try:
+                from zone3d.core import sort_source_elements
+                candidates = sort_source_elements(candidates, sort_property, descending=sort_descending)
+            except ImportError:
+                candidates.sort(key=lambda el: get_element_id_value(el.Id), reverse=sort_descending)
+        
+        return candidates[0]
+    except Exception as e:
+        logger.debug("Error in get_containing_element_by_overlap: {}".format(str(e)))
+        return None
+
+
+def get_containing_element_by_strategy(element, doc, strategy, source_categories=None,
                                      rooms_by_level=None, spaces_by_level=None, areas_by_level=None,
-                                     element_index=None, element_index_cell_size=50.0, 
-                                     sort_property="ElementId", sort_descending=False, link_instance=None):
+                                     element_index=None, element_index_cell_size=50.0,
+                                     sort_property="ElementId", sort_descending=False, link_instance=None,
+                                     exclude_element_id=None, source_coplanar_cache=None):
     """Unified function that routes to appropriate containment method.
     
     Args:
         element: Target element
         doc: Revit document (source doc; when link_instance is set, this is the link doc)
-        strategy: Containment strategy ("room", "space", "area", "element")
-        source_categories: List of BuiltInCategory values (for element strategy)
+        strategy: Containment strategy ("room", "space", "area", "element", "overlap")
+        source_categories: List of BuiltInCategory values (for element/overlap strategy)
         rooms_by_level: Optional pre-grouped rooms dict
         spaces_by_level: Optional pre-grouped spaces dict
         areas_by_level: Optional pre-grouped areas dict
         element_index: Optional spatial index dict for element strategy (fast path)
         element_index_cell_size: Cell size for spatial index (feet, default 50.0)
         link_instance: Optional RevitLinkInstance when source is linked (for element strategy coord transform)
+        exclude_element_id: Optional ElementId integer value to skip in overlap strategy
         
     Returns:
         Element: Containing element or None
@@ -2624,6 +3292,13 @@ def get_containing_element_by_strategy(element, doc, strategy, source_categories
         else:
             # Fallback to database query method (link not used for fallback - same-doc only)
             return get_containing_element(element, doc, source_categories)
+    elif strategy == "overlap":
+        return get_containing_element_by_overlap(
+            element, doc, source_categories,
+            sort_property=sort_property, sort_descending=sort_descending,
+            link_instance=link_instance, exclude_element_id=exclude_element_id,
+            source_coplanar_cache=source_coplanar_cache
+        )
     else:
         return None
 

@@ -59,6 +59,22 @@ except ImportError:
 # Initialize logger
 logger = script.get_logger()
 
+
+def _reload_containment_module():
+    """Reload containment module so lib/ edits apply without a full pyRevit restart."""
+    global containment
+    try:
+        import sys
+        module_name = None
+        if 'zone3d.containment' in sys.modules:
+            module_name = 'zone3d.containment'
+        elif 'containment' in sys.modules:
+            module_name = 'containment'
+        if module_name:
+            containment = reload(sys.modules[module_name])
+    except Exception as e:
+        logger.debug("Could not reload containment module: {}".format(str(e)))
+
 def copy_parameter_value(source_param, target_param, return_value=False):
     """Copy a parameter value from source to target.
     
@@ -660,6 +676,10 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
                 categories_for_strategy.append(cat)
         
         strategy = containment.detect_containment_strategy(categories_for_strategy)
+        if not strategy and categories_for_strategy:
+            # Fallback for stale cached containment modules during development
+            strategy = "overlap"
+            logger.debug("Using overlap strategy fallback for categories: {}".format(categories_for_strategy))
         
         if not strategy:
             error_msg = "Could not detect containment strategy for categories: {} (converted: {})".format(source_categories, categories_for_strategy)
@@ -884,7 +904,6 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
             logger.debug("[DEBUG] Found {} target elements for categories: {}".format(len(target_elements), target_filter_categories))
         
         if not target_elements:
-
             logger.warning("[DEBUG] No target elements found for categories: {}".format(target_filter_categories))
             return results
         
@@ -922,7 +941,6 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
         target_elements = filtered_target_elements
         
         if not target_elements:
-
             logger.warning("[DEBUG] No target elements found with required target parameters: {}".format(target_param_names))
             return results
         
@@ -993,6 +1011,18 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
                     else:
                         # If no level, add to a default list (use None as key)
                         areas_by_level[None].append(source_el)
+        
+        categories_for_containment = []
+        for cat in source_categories:
+            if cat == THREE_D_ZONE_MARKER or str(cat) == THREE_D_ZONE_MARKER:
+                categories_for_containment.append(BuiltInCategory.OST_GenericModel)
+            else:
+                categories_for_containment.append(cat)
+        
+        source_coplanar_cache = None
+        if strategy == "overlap" and containment._source_uses_coplanar_overlap(categories_for_containment):
+            source_coplanar_cache = containment.build_source_coplanar_descriptor_cache(
+                source_elements, source_doc, link_instance)
         
         # Process each target element
         total_elements = len(target_elements)
@@ -1080,21 +1110,19 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
                         host_doc=doc, phase_map=phase_map  # Use Revit's phase map for reliable cross-doc mapping
                     )
                 else:
-                    # Convert special marker to BuiltInCategory for containment check
-                    # (3D Zone uses Generic Model category)
-                    categories_for_containment = []
-                    for cat in source_categories:
-                        if cat == THREE_D_ZONE_MARKER or str(cat) == THREE_D_ZONE_MARKER:
-                            categories_for_containment.append(BuiltInCategory.OST_GenericModel)
-                        else:
-                            categories_for_containment.append(cat)
+                    # Same-doc overlap: exclude target itself when source/target share a category
+                    overlap_exclude_id = None
+                    if strategy == "overlap" and link_instance is None:
+                        overlap_exclude_id = get_element_id_value(target_el.Id)
                     
                     containing_el = containment.get_containing_element_by_strategy(
                         target_el, source_doc, strategy, categories_for_containment,  # Use source_doc, not doc
                         rooms_by_level, spaces_by_level, areas_by_level,
                         element_index, element_index_cell_size,
                         sort_property=sort_property, sort_descending=sort_descending,
-                        link_instance=link_instance  # For element strategy: transform target points to link coords
+                        link_instance=link_instance,  # For element/overlap: transform target geometry to link coords
+                        exclude_element_id=overlap_exclude_id,
+                        source_coplanar_cache=source_coplanar_cache,
                     )
                 
                 # Additional check: if using 3D Zone marker, verify family name matches
@@ -1323,6 +1351,8 @@ def execute_configuration(doc, zone_config, progress_bar=None, view_id=None, for
         dict: Results dictionary
     """
     config_name = zone_config.get("name", "Unknown")
+
+    _reload_containment_module()
 
     # Clear element type cache at start of each configuration
     global _element_type_cache
