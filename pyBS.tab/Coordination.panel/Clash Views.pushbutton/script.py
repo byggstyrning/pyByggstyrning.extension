@@ -37,6 +37,12 @@ from Autodesk.Revit.DB import (
     BooleanOperationsUtils, BooleanOperationsType, Solid, SolidUtils,
     Options, GeometryInstance, ViewDetailLevel,
 )
+try:
+    from Autodesk.Revit.DB import RevitLinkGraphicsSettings, LinkVisibility, ViewDiscipline
+except ImportError:
+    RevitLinkGraphicsSettings = None
+    LinkVisibility = None
+    ViewDiscipline = None
 from Autodesk.Revit.UI import RevitCommandId, PostableCommand
 
 import sys
@@ -61,6 +67,10 @@ from revit.compat import get_element_id_value, make_element_id
 logger = script.get_logger()
 
 DEBUG_MODE = False
+
+# Experimental branch: color clash sides via SetCategoryOverrides /
+# SetLinkOverrides (category targeting) instead of per-element overrides.
+USE_CATEGORY_LINK_OVERRIDES = True
 
 doc = __revit__.ActiveUIDocument.Document
 uidoc = __revit__.ActiveUIDocument
@@ -942,6 +952,205 @@ def _build_clash_override(color, solid_fill_id):
     except Exception:
         pass
     return ogs
+
+
+def _revit_version_int():
+    try:
+        return int(__revit__.Application.VersionNumber)
+    except Exception:
+        return 0
+
+
+def _supports_set_link_overrides():
+    return _revit_version_int() >= 2024 and RevitLinkGraphicsSettings is not None
+
+
+def _agent_log(location, message, data=None, hypothesis_id="LINK_OVR"):
+    """Append a debug line to debug-822ea8.log for link-override experiments."""
+    import json as _j, time as _t
+    try:
+        with open(op.join(extension_dir, 'debug-822ea8.log'), 'a') as _f:
+            _f.write(_j.dumps({
+                "sessionId": "822ea8",
+                "hypothesisId": hypothesis_id,
+                "location": location,
+                "message": message,
+                "data": data or {},
+                "timestamp": int(_t.time() * 1000),
+            }) + "\n")
+    except Exception:
+        pass
+
+
+def _build_custom_link_graphics_settings(view):
+    """Build RevitLinkGraphicsSettings with Custom object styles for link categories."""
+    gs = RevitLinkGraphicsSettings()
+    gs.LinkVisibilityType = LinkVisibility.Custom
+    gs.LinkedViewId = ElementId.InvalidElementId
+    gs.ViewFilterType = LinkVisibility.Custom
+    try:
+        gs.ViewRange = (
+            LinkVisibility.ByHostView
+            if RevitLinkGraphicsSettings.IsViewRangeSupported(view)
+            else LinkVisibility.ByHostView
+        )
+    except Exception:
+        gs.ViewRange = LinkVisibility.ByHostView
+    try:
+        has_color_fill = False
+        supported = view.SupportedColorFillCategoryIds()
+        if supported is not None:
+            for _cid in supported:
+                has_color_fill = True
+                break
+        gs.ColorFill = (
+            LinkVisibility.ByLinkView if has_color_fill else LinkVisibility.ByHostView
+        )
+    except Exception:
+        gs.ColorFill = LinkVisibility.ByHostView
+    # Per-link model category overrides (RVT Link Display Settings > Model Categories > Custom)
+    gs.ObjectStyles = LinkVisibility.Custom
+    gs.NestedLinks = LinkVisibility.ByHostView
+    try:
+        gs.SetDiscipline(LinkVisibility.Custom, view.Discipline)
+    except Exception:
+        try:
+            gs.SetDiscipline(LinkVisibility.Custom, ViewDiscipline.Coordination)
+        except Exception:
+            pass
+    try:
+        gs.SetPhase(LinkVisibility.Custom, ElementId.InvalidElementId)
+        gs.SetPhaseFilter(LinkVisibility.Custom, ElementId.InvalidElementId)
+        gs.SetViewDetailLevel(LinkVisibility.Custom, ViewDetailLevel.Fine)
+    except Exception:
+        pass
+    return gs
+
+
+def _apply_category_color_override(view, cat_id, ogs, context="host"):
+    """Apply OverrideGraphicSettings to a category via SetCategoryOverrides."""
+    if cat_id is None:
+        return False, "cat_id is None"
+    try:
+        if not view.IsCategoryOverridable(cat_id):
+            return False, "category not overridable"
+    except Exception as ex:
+        return False, "IsCategoryOverridable: {}".format(ex)
+    try:
+        view.SetCategoryOverrides(cat_id, ogs)
+        _agent_log(
+            "script.py:_apply_category_color_override",
+            "SetCategoryOverrides OK",
+            {"context": context, "cat_id": str(cat_id)},
+        )
+        return True, None
+    except Exception as ex:
+        _agent_log(
+            "script.py:_apply_category_color_override",
+            "SetCategoryOverrides FAILED",
+            {"context": context, "cat_id": str(cat_id), "error": str(ex)},
+        )
+        return False, str(ex)
+
+
+def _apply_link_category_color_override(view, link_instance_id, cat_id, ogs):
+    """Enable Custom link display, then override the target category color."""
+    if link_instance_id is None or cat_id is None:
+        return False, "missing link_instance_id or cat_id"
+    if not _supports_set_link_overrides():
+        return False, "SetLinkOverrides not supported (Revit < 2024)"
+
+    try:
+        gs = _build_custom_link_graphics_settings(view)
+        view.SetLinkOverrides(link_instance_id, gs)
+        _agent_log(
+            "script.py:_apply_link_category_color_override",
+            "SetLinkOverrides OK",
+            {
+                "link_instance_id": str(link_instance_id),
+                "link_visibility": str(gs.LinkVisibilityType),
+                "object_styles": str(gs.ObjectStyles),
+            },
+        )
+    except Exception as ex:
+        _agent_log(
+            "script.py:_apply_link_category_color_override",
+            "SetLinkOverrides FAILED",
+            {"link_instance_id": str(link_instance_id), "error": str(ex)},
+        )
+        return False, "SetLinkOverrides: {}".format(ex)
+
+    return _apply_category_color_override(view, cat_id, ogs, context="link_b")
+
+
+def _apply_clash_view_colors(view, ovr_a, ovr_b, is_link_mode=False,
+                             link_instance_id=None, cat_a_id=None, cat_b_id=None,
+                             a_eids=None, b_eids=None):
+    """Apply clash colors via category / link overrides (experimental branch)."""
+    a_eids = a_eids or []
+    b_eids = b_eids or []
+    results = {
+        "use_category_link_overrides": USE_CATEGORY_LINK_OVERRIDES,
+        "is_link_mode": is_link_mode,
+        "a": None,
+        "b": None,
+        "fallbacks": [],
+    }
+
+    if USE_CATEGORY_LINK_OVERRIDES and cat_a_id is not None:
+        ok, err = _apply_category_color_override(view, cat_a_id, ovr_a, context="host_a")
+        results["a"] = {"method": "SetCategoryOverrides", "ok": ok, "error": err}
+    else:
+        count = 0
+        for eid in a_eids:
+            try:
+                view.SetElementOverrides(eid, ovr_a)
+                count += 1
+            except Exception:
+                continue
+        results["a"] = {"method": "SetElementOverrides", "count": count}
+        results["fallbacks"].append("host_a per-element")
+
+    if is_link_mode and link_instance_id is not None:
+        if USE_CATEGORY_LINK_OVERRIDES and cat_b_id is not None:
+            ok, err = _apply_link_category_color_override(
+                view, link_instance_id, cat_b_id, ovr_b)
+            results["b"] = {
+                "method": "SetLinkOverrides+SetCategoryOverrides",
+                "ok": ok,
+                "error": err,
+            }
+            if not ok:
+                try:
+                    view.SetElementOverrides(link_instance_id, ovr_b)
+                    results["fallbacks"].append("link_instance SetElementOverrides")
+                    results["b"]["fallback"] = "SetElementOverrides(link)"
+                except Exception as ex2:
+                    results["b"]["fallback_error"] = str(ex2)
+        else:
+            try:
+                view.SetElementOverrides(link_instance_id, ovr_b)
+                results["b"] = {"method": "SetElementOverrides(link)", "ok": True}
+            except Exception as ex:
+                results["b"] = {"method": "SetElementOverrides(link)", "ok": False, "error": str(ex)}
+    elif USE_CATEGORY_LINK_OVERRIDES and cat_b_id is not None:
+        ok, err = _apply_category_color_override(view, cat_b_id, ovr_b, context="host_b")
+        results["b"] = {"method": "SetCategoryOverrides", "ok": ok, "error": err}
+    else:
+        count = 0
+        for eid in b_eids:
+            try:
+                view.SetElementOverrides(eid, ovr_b)
+                count += 1
+            except Exception:
+                continue
+        results["b"] = {"method": "SetElementOverrides", "count": count}
+        results["fallbacks"].append("host_b per-element")
+
+    _agent_log("script.py:_apply_clash_view_colors", "color apply summary", results)
+    if DEBUG_MODE:
+        logger.debug("Clash view colors: {}".format(results))
+    return results
 
 
 # =============================================================================
@@ -1859,11 +2068,13 @@ class ClashViewsWindow(forms.WPFWindow):
                            cat_a_id=None, cat_b_id=None):
         """Create an isolated isometric 3D view.
 
-        Host mode: isolate A+B, color A=red, B=green.
-        Link mode: isolate host (A) elements + the link instance itself, color
-        A=red, link instance=green (tints all visible link geometry).  After
-        isolation is made permanent, non-target Model categories are hidden so
-        host and link VG both scope to the two clashing categories.
+        Host mode: isolate A+B, color A=red, B=green via category overrides.
+        Link mode: isolate host (A) elements + the link instance itself.
+        Color A via host SetCategoryOverrides; color link B via
+        SetLinkOverrides (Custom object styles) + SetCategoryOverrides on
+        cat_b_id. Falls back to SetElementOverrides(link) if link API fails.
+        After isolation is made permanent, non-target Model categories are
+        hidden so host and link VG both scope to the two clashing categories.
         """
         isolate_list = List[ElementId]()
         a_eids = []
@@ -1992,37 +2203,16 @@ class ClashViewsWindow(forms.WPFWindow):
             #  handles unexpected view-family defaults and re-entrancy)
             if link_instance_id is not None:
                 _ensure_link_instance_visible(view, link_instance_id, doc)
-            # Phase 4: set Custom basics override so the Basics tab is explicit
-            if link_instance_id is not None:
-                try:
-                    from Autodesk.Revit.DB import RevitLinkGraphicsSettings, LinkVisibility
-                    revit_ver = int(__revit__.Application.VersionNumber)
-                    if revit_ver >= 2025:
-                        gs = RevitLinkGraphicsSettings()
-                        gs.LinkVisibilityType = LinkVisibility.Custom
-                        view.SetLinkOverrides(link_instance_id, gs)
-                except Exception:
-                    pass
 
-        # Color overrides — host A elements red
-        for eid in a_eids:
-            try:
-                view.SetElementOverrides(eid, ovr_a)
-            except Exception:
-                continue
-        # Host-mode: B elements green
-        for eid in b_eids:
-            try:
-                view.SetElementOverrides(eid, ovr_b)
-            except Exception:
-                continue
-        # Link-mode: tint the whole link instance green so link geometry reads
-        # with the B colour (category filter already limits what is visible)
-        if is_link_mode and link_instance_id is not None:
-            try:
-                view.SetElementOverrides(link_instance_id, ovr_b)
-            except Exception:
-                pass
+        _apply_clash_view_colors(
+            view, ovr_a, ovr_b,
+            is_link_mode=is_link_mode,
+            link_instance_id=link_instance_id,
+            cat_a_id=cat_a_id,
+            cat_b_id=cat_b_id,
+            a_eids=a_eids,
+            b_eids=b_eids,
+        )
 
         return view
 
