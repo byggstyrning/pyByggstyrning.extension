@@ -86,7 +86,7 @@
                 <TextBlock x:Name="markersHelpText"
                            Style="{DynamicResource SecondaryTextBlockStyle}" Margin="24,4,0,0" FontSize="11" FontStyle="Italic"
                            TextWrapping="Wrap"
-                           Text="Temporary markers at clash locations. Zoom out to group counts; zoom in for individual clashes. Markers disappear when the model closes (Revit 2022+)."/>
+                           Text="On the sheet: one grouped badge per clash viewport (hover: Double-click to view clashes). In an open clash 3D view: markers only in that view. Zoom to cluster or expand. Use Markers ribbon to toggle or Shift+Click refresh (Revit 2022+)."/>
             </StackPanel>
         </Border>
 
