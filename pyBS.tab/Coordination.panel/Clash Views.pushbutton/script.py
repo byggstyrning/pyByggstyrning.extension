@@ -58,6 +58,16 @@ if lib_path not in sys.path:
 
 from revit.compat import get_element_id_value, make_element_id
 
+try:
+    from revit.clash_markers import (
+        is_temporary_graphics_available,
+        ClashMarkerDriver,
+    )
+    _CLASH_MARKERS_AVAILABLE = is_temporary_graphics_available()
+except Exception:
+    _CLASH_MARKERS_AVAILABLE = False
+    ClashMarkerDriver = None
+
 logger = script.get_logger()
 
 DEBUG_MODE = False
@@ -285,6 +295,27 @@ def _union_bbox_mixed(host_elements, link_elements_with_transform, padding=0.0):
     bb.Min = XYZ(mn_x - padding, mn_y - padding, mn_z - padding)
     bb.Max = XYZ(mx_x + padding, mx_y + padding, mx_z + padding)
     return bb
+
+
+def _clash_pair_center(el_a, el_b, link_transform=None, b_is_link=False):
+    """Model-space center for a clashing element pair (union bbox midpoint)."""
+    host_elements = [el_a]
+    link_pairs = []
+    if b_is_link and link_transform is not None:
+        link_pairs = [(el_b, link_transform)]
+    else:
+        host_elements.append(el_b)
+    if link_pairs:
+        bbox = _union_bbox_mixed(host_elements, link_pairs, padding=0.0)
+    else:
+        bbox = _union_bbox(host_elements, padding=0.0)
+    if bbox is None:
+        return None
+    return XYZ(
+        (bbox.Min.X + bbox.Max.X) / 2.0,
+        (bbox.Min.Y + bbox.Max.Y) / 2.0,
+        (bbox.Min.Z + bbox.Max.Z) / 2.0,
+    )
 
 
 def _bbox_corners(bbox):
@@ -1657,6 +1688,14 @@ class ClashViewsWindow(forms.WPFWindow):
 
         grouped = OrderedDict()
         total_clashes = 0
+        self._marker_points_by_view = {}
+
+        link_transform = None
+        if link_mode:
+            try:
+                link_transform = link_instance.GetTotalTransform()
+            except Exception:
+                link_transform = None
 
         for idx, ((name_a, bic_a), (name_b, bic_b)) in enumerate(pair_list):
             if progress_bar:
@@ -1700,12 +1739,27 @@ class ClashViewsWindow(forms.WPFWindow):
                         "link_mode": link_mode,
                         "cat_a_id": cat_a_id,
                         "cat_b_id": cat_b_id,
+                        "pair_points": [],
                     }
                 by_level[level_key]["a_ids"].add(get_element_id_value(a.Id))
                 if link_mode:
                     by_level[level_key]["b_ids"].add(get_element_id_value(b.Id))
                 else:
                     by_level[level_key]["b_ids"].add(get_element_id_value(b.Id))
+                center = None
+                if link_mode and link_transform is None:
+                    pass
+                else:
+                    center = _clash_pair_center(
+                        a, b, link_transform=link_transform, b_is_link=link_mode)
+                if center is not None:
+                    by_level[level_key]["pair_points"].append({
+                        "x": center.X,
+                        "y": center.Y,
+                        "z": center.Z,
+                        "a_id": get_element_id_value(a.Id),
+                        "b_id": get_element_id_value(b.Id),
+                    })
 
             grouped[pair_key] = by_level
             total_clashes += len(pairs)
@@ -1721,13 +1775,6 @@ class ClashViewsWindow(forms.WPFWindow):
         # Phase 1: compute bboxes and uniform size before the transaction
         natural_info = OrderedDict()
         max_dx = max_dy = max_dz = 0.0
-
-        link_transform = None
-        if link_mode:
-            try:
-                link_transform = link_instance.GetTotalTransform()
-            except Exception:
-                link_transform = None
 
         for pair_key, by_level in grouped.items():
             for level_name, ids_map in by_level.items():
@@ -1771,6 +1818,7 @@ class ClashViewsWindow(forms.WPFWindow):
                     "link_mode": is_link,
                     "cat_a_id": ids_map.get("cat_a_id"),
                     "cat_b_id": ids_map.get("cat_b_id"),
+                    "pair_points": list(ids_map.get("pair_points") or []),
                     "center": XYZ(
                         (bbox.Min.X + bbox.Max.X) / 2.0,
                         (bbox.Min.Y + bbox.Max.Y) / 2.0,
@@ -1849,6 +1897,13 @@ class ClashViewsWindow(forms.WPFWindow):
                         )
                         if view:
                             self.clash_views[(pair_key, level_name)] = view
+                            pair_pts = info.get("pair_points") or []
+                            if pair_pts:
+                                try:
+                                    vid = get_element_id_value(view.Id)
+                                    self._marker_points_by_view[vid] = pair_pts
+                                except Exception:
+                                    pass
                             if info.get("link_mode") and link_instance is not None:
                                 refinement_queue.append(RefinementJob(
                                     view_id=view.Id,
@@ -1900,6 +1955,10 @@ class ClashViewsWindow(forms.WPFWindow):
             'view_names': view_names,
             'total_clashes': total_clashes,
             'clash_pairs': clash_pairs,
+            'marker_data': {
+                'available': _CLASH_MARKERS_AVAILABLE,
+                'view_points': dict(self._marker_points_by_view),
+            },
         }
 
         # Callback to show summary dialog (called after refinement completes)
@@ -1907,7 +1966,7 @@ class ClashViewsWindow(forms.WPFWindow):
             try:
                 summary_window = ClashViewsSummaryWindow(
                     data['sheet'], data['view_names'], data['total_clashes'],
-                    data['clash_pairs'])
+                    data['clash_pairs'], data.get('marker_data'))
                 summary_window.ShowDialog()
             except Exception as ex:
                 logger.debug("Failed to show summary window: {}".format(ex))
@@ -2353,13 +2412,15 @@ class RefinementProgressWindow(forms.WPFWindow):
 class ClashViewsSummaryWindow(forms.WPFWindow):
     """Summary dialog shown after clash views are created."""
 
-    def __init__(self, sheet, view_names, total_clashes, clash_pairs):
+    def __init__(self, sheet, view_names, total_clashes, clash_pairs,
+                 marker_data=None):
         """
         Args:
             sheet: The created ViewSheet
             view_names: List of created view names
             total_clashes: Total number of clash pairs detected
             clash_pairs: List of (pair_key, count) tuples
+            marker_data: Optional dict with available flag and view_points map
         """
         xaml_file = op.join(pushbutton_dir, "ClashViewsSummary.xaml")
         forms.WPFWindow.__init__(self, xaml_file)
@@ -2374,6 +2435,12 @@ class ClashViewsSummaryWindow(forms.WPFWindow):
         self._view_names = view_names
         self._total_clashes = total_clashes
         self._clash_pairs = clash_pairs
+        self._marker_driver = None
+        marker_data = marker_data or {}
+        self._markers_available = bool(marker_data.get('available'))
+        self._marker_view_points = dict(marker_data.get('view_points') or {})
+
+        self.Closing += self._on_window_closing
 
         # Populate header info
         try:
@@ -2397,6 +2464,21 @@ class ClashViewsSummaryWindow(forms.WPFWindow):
 
         # Populate views list
         self._populate_views_list()
+
+        # Clash markers (TemporaryGraphicsManager, Revit 2022+)
+        if hasattr(self, "markersToggle") and self.markersToggle:
+            if not self._markers_available:
+                self.markersToggle.IsChecked = False
+                self.markersToggle.IsEnabled = False
+                if hasattr(self, "markersHelpText") and self.markersHelpText:
+                    self.markersHelpText.Text = (
+                        "Clash markers require Revit 2022 or newer "
+                        "(TemporaryGraphicsManager API).")
+            elif self._marker_view_points:
+                self._start_marker_driver()
+            else:
+                self.markersToggle.IsChecked = False
+                self.markersToggle.IsEnabled = False
 
         # Initially hide annotations
         self._annotations_visible = False
@@ -2456,8 +2538,46 @@ class ClashViewsSummaryWindow(forms.WPFWindow):
         status = "shown" if is_checked else "hidden"
         logger.debug("Annotations {} in all clash views".format(status))
 
+    def _start_marker_driver(self):
+        if not _CLASH_MARKERS_AVAILABLE or ClashMarkerDriver is None:
+            return
+        if not self._marker_view_points:
+            return
+        try:
+            self._stop_marker_driver()
+            driver = ClashMarkerDriver(
+                __revit__, doc, self._marker_view_points,
+                get_element_id_value, logger=logger)
+            driver.start()
+            if hasattr(self, "markersToggle") and self.markersToggle:
+                driver.set_enabled(bool(self.markersToggle.IsChecked))
+            self._marker_driver = driver
+        except Exception as ex:
+            logger.debug("Failed to start clash marker driver: {}".format(ex))
+
+    def _stop_marker_driver(self):
+        if self._marker_driver is not None:
+            try:
+                self._marker_driver.stop()
+            except Exception as ex:
+                logger.debug("Failed to stop clash marker driver: {}".format(ex))
+            self._marker_driver = None
+
+    def MarkersToggle_Changed(self, sender, args):
+        if not self._markers_available:
+            return
+        is_checked = bool(self.markersToggle.IsChecked)
+        if is_checked and self._marker_driver is None:
+            self._start_marker_driver()
+        if self._marker_driver is not None:
+            self._marker_driver.set_enabled(is_checked)
+
+    def _on_window_closing(self, sender, args):
+        self._stop_marker_driver()
+
     def closeButton_Click(self, sender, args):
         """Close the dialog."""
+        self._stop_marker_driver()
         self.Close()
 
 
