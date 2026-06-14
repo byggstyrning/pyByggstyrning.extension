@@ -3,7 +3,6 @@
 
 __title__ = "Clash\nViews"
 __author__ = "pyByggstyrning"
-__highlight__ = "new"
 __doc__ = """Pick two or more model categories. All unique pairs (C(N,2)) are clash-detected
 using a bounding-box pre-filter plus geometric confirmation in the host document.
 Each pair (sub-grouped by level) becomes an isolated 3D view; every view is placed
@@ -49,7 +48,8 @@ from pyrevit import forms, script
 
 script_path = __file__
 pushbutton_dir = op.dirname(script_path)
-panel_dir = op.dirname(pushbutton_dir)
+stack_dir = op.dirname(pushbutton_dir)
+panel_dir = op.dirname(stack_dir)
 tab_dir = op.dirname(panel_dir)
 extension_dir = op.dirname(tab_dir)
 lib_path = op.join(extension_dir, 'lib')
@@ -57,6 +57,28 @@ if lib_path not in sys.path:
     sys.path.insert(0, lib_path)
 
 from revit.compat import get_element_id_value, make_element_id
+
+try:
+    from revit.clash_markers import (
+        is_temporary_graphics_available,
+        find_marker_driver,
+        start_or_get_driver,
+        clean_marker_session,
+        _is_view_sheet,
+        register_marker_session,
+        set_marker_toggle_active,
+        is_marker_toggle_active,
+    )
+    _CLASH_MARKERS_AVAILABLE = is_temporary_graphics_available()
+except Exception:
+    _CLASH_MARKERS_AVAILABLE = False
+    find_marker_driver = None
+    start_or_get_driver = None
+    clean_marker_session = None
+    _is_view_sheet = None
+    register_marker_session = None
+    set_marker_toggle_active = None
+    is_marker_toggle_active = None
 
 logger = script.get_logger()
 
@@ -287,6 +309,96 @@ def _union_bbox_mixed(host_elements, link_elements_with_transform, padding=0.0):
     return bb
 
 
+def _clash_pair_bbox_center(el_a, el_b, link_transform=None, b_is_link=False):
+    """Fallback: union bbox midpoint when solid clash point is unavailable."""
+    host_elements = [el_a]
+    link_pairs = []
+    if b_is_link and link_transform is not None:
+        link_pairs = [(el_b, link_transform)]
+    else:
+        host_elements.append(el_b)
+    if link_pairs:
+        bbox = _union_bbox_mixed(host_elements, link_pairs, padding=0.0)
+    else:
+        bbox = _union_bbox(host_elements, padding=0.0)
+    if bbox is None:
+        return None
+    return XYZ(
+        (bbox.Min.X + bbox.Max.X) / 2.0,
+        (bbox.Min.Y + bbox.Max.Y) / 2.0,
+        (bbox.Min.Z + bbox.Max.Z) / 2.0,
+    )
+
+
+def _solid_reference_point(solid):
+    """Centroid of a solid, or bbox midpoint as fallback."""
+    try:
+        pt = solid.ComputeCentroid()
+        if pt is not None:
+            return pt
+    except Exception:
+        pass
+    try:
+        bb = solid.GetBoundingBox()
+        if bb is not None:
+            return XYZ(
+                (bb.Min.X + bb.Max.X) / 2.0,
+                (bb.Min.Y + bb.Max.Y) / 2.0,
+                (bb.Min.Z + bb.Max.Z) / 2.0,
+            )
+    except Exception:
+        pass
+    return None
+
+
+def _intersection_point_from_solids(solids_a, solids_b, tol=1e-9):
+    """Clash point: centroid of the largest solid-solid intersection volume."""
+    best_pt = None
+    best_vol = tol
+    for sa in solids_a:
+        if sa is None:
+            continue
+        for sb in solids_b:
+            if sb is None:
+                continue
+            try:
+                inter = BooleanOperationsUtils.ExecuteBooleanOperation(
+                    sa, sb, BooleanOperationsType.Intersect)
+                if inter is None:
+                    continue
+                vol = inter.Volume
+                if vol <= tol:
+                    continue
+                if vol > best_vol:
+                    pt = _solid_reference_point(inter)
+                    if pt is not None:
+                        best_pt = pt
+                        best_vol = vol
+            except Exception:
+                pass
+    return best_pt
+
+
+def _clash_pair_center(el_a, el_b, link_transform=None, b_is_link=False):
+    """Model-space point at the solid-solid clash (largest intersection volume)."""
+    solids_a = list(_iter_element_solids(el_a))
+    if not solids_a:
+        return _clash_pair_bbox_center(
+            el_a, el_b, link_transform=link_transform, b_is_link=b_is_link)
+
+    solids_b = list(_iter_element_solids(el_b))
+    if b_is_link and link_transform is not None:
+        solids_b = _transform_solids(solids_b, link_transform)
+
+    if solids_b:
+        pt = _intersection_point_from_solids(solids_a, solids_b)
+        if pt is not None:
+            return pt
+
+    return _clash_pair_bbox_center(
+        el_a, el_b, link_transform=link_transform, b_is_link=b_is_link)
+
+
 def _bbox_corners(bbox):
     """Return all 8 corners of a BoundingBoxXYZ as XYZ list."""
     mn = bbox.Min
@@ -375,12 +487,14 @@ def _transform_solids(solids, transform):
     return result
 
 
-def _solids_intersect(solids_a, solids_b, tol=1e-9):
-    """Return True if any solid from A intersects any solid from B.
+def _solids_intersect_info(solids_a, solids_b, tol=1e-9):
+    """Return (intersects, clash_point) for solid pairs.
 
-    Uses BooleanOperationsUtils.ExecuteBooleanOperation with BooleanOperationsType.Intersect.
-    Per-pair try/except so a bad solid doesn't kill the whole pair.
+    Single boolean pass: clash_point is centroid of largest intersection volume.
     """
+    best_pt = None
+    best_vol = tol
+    found = False
     for sa in solids_a:
         if sa is None:
             continue
@@ -388,16 +502,28 @@ def _solids_intersect(solids_a, solids_b, tol=1e-9):
             if sb is None:
                 continue
             try:
-                inter = BooleanOperationsUtils.ExecuteBooleanOperation(sa, sb, BooleanOperationsType.Intersect)
-                if inter is not None:
-                    try:
-                        if inter.Volume > tol:
-                            return True
-                    except Exception:
-                        pass
+                inter = BooleanOperationsUtils.ExecuteBooleanOperation(
+                    sa, sb, BooleanOperationsType.Intersect)
+                if inter is None:
+                    continue
+                vol = inter.Volume
+                if vol <= tol:
+                    continue
+                found = True
+                if vol > best_vol:
+                    pt = _solid_reference_point(inter)
+                    if pt is not None:
+                        best_pt = pt
+                        best_vol = vol
             except Exception:
                 pass
-    return False
+    return found, best_pt
+
+
+def _solids_intersect(solids_a, solids_b, tol=1e-9):
+    """Return True if any solid from A intersects any solid from B."""
+    found, _ = _solids_intersect_info(solids_a, solids_b, tol=tol)
+    return found
 
 
 def _element_level_name(document, element):
@@ -1139,7 +1265,8 @@ def _clash_pairs(document, bic_a, bic_b):
             if key in seen:
                 continue
             seen.add(key)
-            pairs.append((a, b))
+            center = _clash_pair_center(a, b)
+            pairs.append((a, b, center))
 
     return pairs
 
@@ -1233,11 +1360,14 @@ def _clash_pairs_with_link(document, bic_host, link_instance, link_doc, bic_link
             if key in seen:
                 continue
 
+            clash_pt = None
             # If we have transformed link solids, do real solid-solid intersection
             if has_link_solids:
                 host_solids = list(_iter_element_solids(host_el))
                 if host_solids:
-                    if not _solids_intersect(host_solids, transformed_link_solids):
+                    intersects, clash_pt = _solids_intersect_info(
+                        host_solids, transformed_link_solids)
+                    if not intersects:
                         continue
                 else:
                     # Host element has no extractable solids (lines, etc.)
@@ -1246,7 +1376,7 @@ def _clash_pairs_with_link(document, bic_host, link_instance, link_doc, bic_link
             # If no link solids, fall back to bbox match (non-solid link elements)
 
             seen.add(key)
-            pairs.append((host_el, link_el))
+            pairs.append((host_el, link_el, clash_pt))
 
     return pairs
 
@@ -1657,6 +1787,14 @@ class ClashViewsWindow(forms.WPFWindow):
 
         grouped = OrderedDict()
         total_clashes = 0
+        self._marker_points_by_view = {}
+
+        link_transform = None
+        if link_mode:
+            try:
+                link_transform = link_instance.GetTotalTransform()
+            except Exception:
+                link_transform = None
 
         for idx, ((name_a, bic_a), (name_b, bic_b)) in enumerate(pair_list):
             if progress_bar:
@@ -1688,7 +1826,10 @@ class ClashViewsWindow(forms.WPFWindow):
             cat_a_id = _host_category_id(doc, bic_a)
             cat_b_id = _host_category_id(doc, bic_b)
             by_level = OrderedDict()
-            for (a, b) in pairs:
+            for pair in pairs:
+                a = pair[0]
+                b = pair[1]
+                cached_center = pair[2] if len(pair) > 2 else None
                 if group_by_level:
                     level_key = _element_level_name(doc, a)
                 else:
@@ -1700,12 +1841,22 @@ class ClashViewsWindow(forms.WPFWindow):
                         "link_mode": link_mode,
                         "cat_a_id": cat_a_id,
                         "cat_b_id": cat_b_id,
+                        "pair_points": [],
                     }
                 by_level[level_key]["a_ids"].add(get_element_id_value(a.Id))
-                if link_mode:
-                    by_level[level_key]["b_ids"].add(get_element_id_value(b.Id))
-                else:
-                    by_level[level_key]["b_ids"].add(get_element_id_value(b.Id))
+                by_level[level_key]["b_ids"].add(get_element_id_value(b.Id))
+                center = cached_center
+                if center is None and not (link_mode and link_transform is None):
+                    center = _clash_pair_center(
+                        a, b, link_transform=link_transform, b_is_link=link_mode)
+                if center is not None:
+                    by_level[level_key]["pair_points"].append({
+                        "x": center.X,
+                        "y": center.Y,
+                        "z": center.Z,
+                        "a_id": get_element_id_value(a.Id),
+                        "b_id": get_element_id_value(b.Id),
+                    })
 
             grouped[pair_key] = by_level
             total_clashes += len(pairs)
@@ -1721,13 +1872,6 @@ class ClashViewsWindow(forms.WPFWindow):
         # Phase 1: compute bboxes and uniform size before the transaction
         natural_info = OrderedDict()
         max_dx = max_dy = max_dz = 0.0
-
-        link_transform = None
-        if link_mode:
-            try:
-                link_transform = link_instance.GetTotalTransform()
-            except Exception:
-                link_transform = None
 
         for pair_key, by_level in grouped.items():
             for level_name, ids_map in by_level.items():
@@ -1771,6 +1915,7 @@ class ClashViewsWindow(forms.WPFWindow):
                     "link_mode": is_link,
                     "cat_a_id": ids_map.get("cat_a_id"),
                     "cat_b_id": ids_map.get("cat_b_id"),
+                    "pair_points": list(ids_map.get("pair_points") or []),
                     "center": XYZ(
                         (bbox.Min.X + bbox.Max.X) / 2.0,
                         (bbox.Min.Y + bbox.Max.Y) / 2.0,
@@ -1804,66 +1949,93 @@ class ClashViewsWindow(forms.WPFWindow):
 
         refinement_queue = []
 
-        with TransactionGroup(doc, "Create Category Clash Views") as tg:
-            tg.Start()
+        tg = TransactionGroup(doc, "Create Category Clash Views")
+        tg.Start()
+        try:
+            processed = 0
+            total_views = len(natural_info)
+            for (pair_key, level_name), info in natural_info.items():
+                processed += 1
+                if progress_bar:
+                    try:
+                        progress_bar.title = "Building view {}/{}".format(
+                            processed, total_views)
+                    except Exception:
+                        pass
+                    progress_bar.update_progress(processed, total_views)
 
-            with Transaction(doc, "Create Clash 3D Views") as t:
-                t.Start()
-                processed = 0
-                for (pair_key, level_name), info in natural_info.items():
-                    processed += 1
-                    if progress_bar:
+                center = info["center"]
+                uniform = BoundingBoxXYZ()
+                uniform.Min = XYZ(
+                    center.X - max_dx / 2.0,
+                    center.Y - max_dy / 2.0,
+                    center.Z - max_dz / 2.0,
+                )
+                uniform.Max = XYZ(
+                    center.X + max_dx / 2.0,
+                    center.Y + max_dy / 2.0,
+                    center.Z + max_dz / 2.0,
+                )
+
+                shell = None
+                vg = TransactionGroup(doc, "Clash View")
+                vg.Start()
+                try:
+                    with Transaction(doc, "Create Clash 3D View") as t:
+                        t.Start()
+                        shell = self._create_clash_view_shell(
+                            pair_key, level_name,
+                            view_type_id, scale, name_prefix, iteration,
+                            info["a_ids"], info["b_ids"])
+                        t.Commit()
+
+                    if shell is None:
+                        vg.RollBack()
+                        continue
+
+                    view = shell['view']
+                    self.clash_views[(pair_key, level_name)] = view
+                    pair_pts = info.get("pair_points") or []
+                    if pair_pts:
                         try:
-                            progress_bar.title = "Creating view {}/{}".format(
-                                processed, total_views_to_create)
+                            vid = get_element_id_value(view.Id)
+                            self._marker_points_by_view[vid] = pair_pts
                         except Exception:
                             pass
-                        progress_bar.update_progress(
-                            processed, total_views_to_create)
+                    shell['ovr_a'] = ovr_a
+                    shell['ovr_b'] = ovr_b
+                    shell['is_link_mode'] = info.get("link_mode", False)
+                    shell['link_instance_id'] = (
+                        link_instance.Id if link_instance is not None else None)
+                    shell['cat_a_id'] = info.get("cat_a_id")
+                    shell['cat_b_id'] = info.get("cat_b_id")
+                    shell['uniform_bbox'] = uniform
+                    shell['info'] = info
 
-                    center = info["center"]
-                    uniform = BoundingBoxXYZ()
-                    uniform.Min = XYZ(
-                        center.X - max_dx / 2.0,
-                        center.Y - max_dy / 2.0,
-                        center.Z - max_dz / 2.0,
-                    )
-                    uniform.Max = XYZ(
-                        center.X + max_dx / 2.0,
-                        center.Y + max_dy / 2.0,
-                        center.Z + max_dz / 2.0,
-                    )
+                    with Transaction(doc, "Configure Clash 3D View") as t:
+                        t.Start()
+                        try:
+                            self._configure_clash_view(shell)
+                        except Exception as ex:
+                            logger.warning(
+                                "Configure clash view failed for {} / {}: {}".format(
+                                    shell.get('pair_key'), shell.get('level_name'), ex))
+                        t.Commit()
 
-                    try:
-                        view = self._create_clash_view(
-                            pair_key, level_name,
-                            info["a_ids"], info["b_ids"], uniform,
-                            view_type_id, scale, name_prefix, iteration,
-                            ovr_a, ovr_b,
-                            is_link_mode=info.get("link_mode", False),
-                            link_instance_id=(link_instance.Id
-                                              if link_instance is not None
-                                              else None),
-                            cat_a_id=info.get("cat_a_id"),
-                            cat_b_id=info.get("cat_b_id"),
-                        )
-                        if view:
-                            self.clash_views[(pair_key, level_name)] = view
-                            if info.get("link_mode") and link_instance is not None:
-                                refinement_queue.append(RefinementJob(
-                                    view_id=view.Id,
-                                    link_instance_id=link_instance.Id,
-                                    a_cat_id=info.get("cat_a_id"),
-                                    b_cat_id=info.get("cat_b_id"),
-                                    b_clash_link_eids=list(info["b_ids"]),
-                                    bbox_min=uniform.Min,
-                                    bbox_max=uniform.Max,
-                                ))
-                    except Exception as ex:
-                        logger.warning(
-                            "Failed to create view for {} / {}: {}".format(
-                                pair_key, level_name, ex))
-                t.Commit()
+                    vg.Assimilate()
+                finally:
+                    vg.Dispose()
+
+                if info.get("link_mode") and shell.get('link_instance_id') is not None:
+                    refinement_queue.append(RefinementJob(
+                        view_id=shell['view'].Id,
+                        link_instance_id=shell['link_instance_id'],
+                        a_cat_id=info.get("cat_a_id"),
+                        b_cat_id=info.get("cat_b_id"),
+                        b_clash_link_eids=list(info.get("b_ids") or []),
+                        bbox_min=uniform.Min,
+                        bbox_max=uniform.Max,
+                    ))
 
             with Transaction(doc, "Create Sheet and Place Viewports") as t:
                 t.Start()
@@ -1872,6 +2044,14 @@ class ClashViewsWindow(forms.WPFWindow):
                 t.Commit()
 
             tg.Assimilate()
+        except Exception:
+            try:
+                tg.RollBack()
+            except Exception:
+                pass
+            raise
+        finally:
+            tg.Dispose()
 
         # Show progress window immediately if link refinement is needed
         # This gives user feedback during the summary data building and before idling
@@ -1900,15 +2080,25 @@ class ClashViewsWindow(forms.WPFWindow):
             'view_names': view_names,
             'total_clashes': total_clashes,
             'clash_pairs': clash_pairs,
+            'marker_data': {
+                'available': _CLASH_MARKERS_AVAILABLE,
+                'view_points': dict(self._marker_points_by_view),
+            },
         }
+        if register_marker_session and self._marker_points_by_view:
+            register_marker_session(
+                doc, self._marker_points_by_view, toggle_active=True)
 
         # Callback to show summary dialog (called after refinement completes)
         def _show_summary(data):
             try:
+                import sys as _sys
                 summary_window = ClashViewsSummaryWindow(
                     data['sheet'], data['view_names'], data['total_clashes'],
-                    data['clash_pairs'])
-                summary_window.ShowDialog()
+                    data['clash_pairs'], data.get('marker_data'))
+                # Modeless so user can open clash views while markers run
+                _sys._pyBS_clash_summary_window = summary_window
+                summary_window.Show()
             except Exception as ex:
                 logger.debug("Failed to show summary window: {}".format(ex))
 
@@ -1957,62 +2147,21 @@ class ClashViewsWindow(forms.WPFWindow):
 
     # -------------------- View creation ----------------------------------
 
-    def _create_clash_view(self, pair_key, level_name,
-                           a_id_values, b_id_values, uniform_bbox,
-                           view_type_id, scale, name_prefix, iteration,
-                           ovr_a, ovr_b, is_link_mode=False,
-                           link_instance_id=None,
-                           cat_a_id=None, cat_b_id=None):
-        """Create an isolated isometric 3D view.
-
-        Host mode: isolate A+B, color A=red, B=green via category overrides.
-        Link mode: isolate host (A) elements + the link instance itself.
-        Color A via host SetCategoryOverrides; color link B via
-        SetCategoryOverrides on cat_b_id (link follows host VG). Same category
-        on both sides uses per-element overrides (host) or hybrid (link: category
-        B + per-element host A). Falls back to SetElementOverrides(link) if
-        category override fails.
-        After isolation is made permanent, non-target Model categories are
-        hidden so host and link VG both scope to the two clashing categories.
-        """
-        isolate_list = List[ElementId]()
-        a_eids = []
-        b_eids = []
-
-        for v in a_id_values:
-            eid = make_element_id(v)
-            if doc.GetElement(eid) is None:
-                continue
-            a_eids.append(eid)
-            isolate_list.Add(eid)
-
-        if not is_link_mode:
-            for v in b_id_values:
-                eid = make_element_id(v)
-                if doc.GetElement(eid) is None:
-                    continue
-                b_eids.append(eid)
-                isolate_list.Add(eid)
-        else:
-            if link_instance_id is not None:
-                try:
-                    if doc.GetElement(link_instance_id) is not None:
-                        isolate_list.Add(link_instance_id)
-                except Exception:
-                    pass
-
-        if not a_eids and not b_eids:
+    def _create_clash_view_shell(self, pair_key, level_name,
+                                 view_type_id, scale, name_prefix, iteration,
+                                 a_id_values, b_id_values):
+        """Create bare 3D view (name, scale). Section box + isolate in configure."""
+        has_a = False
+        for v in a_id_values or []:
+            if doc.GetElement(make_element_id(v)) is not None:
+                has_a = True
+                break
+        if not has_a:
             return None
 
         view = View3D.CreateIsometric(doc, view_type_id)
         if view is None:
             return None
-
-        try:
-            view.SetSectionBox(uniform_bbox)
-        except Exception as ex:
-            logger.debug("SetSectionBox failed for {} / {}: {}".format(
-                pair_key, level_name, ex))
 
         try:
             view.Scale = scale
@@ -2041,6 +2190,62 @@ class ClashViewsWindow(forms.WPFWindow):
                 except Exception:
                     continue
 
+        return {
+            'view': view,
+            'pair_key': pair_key,
+            'level_name': level_name,
+            'a_id_values': list(a_id_values or []),
+            'b_id_values': list(b_id_values or []),
+        }
+
+    def _configure_clash_view(self, shell):
+        """Apply isolate, category scope, and colors after view exists.
+
+        Deferred from view creation so Revit finishes link GRep for the new
+        view before isolate/overrides run (avoids regen conflicts).
+        """
+        view = shell['view']
+        pair_key = shell['pair_key']
+        level_name = shell['level_name']
+        a_id_values = shell['a_id_values']
+        b_id_values = shell['b_id_values']
+        ovr_a = shell['ovr_a']
+        ovr_b = shell['ovr_b']
+        is_link_mode = shell.get('is_link_mode', False)
+        link_instance_id = shell.get('link_instance_id')
+        cat_a_id = shell.get('cat_a_id')
+        cat_b_id = shell.get('cat_b_id')
+        uniform_bbox = shell.get('uniform_bbox')
+
+        if uniform_bbox is not None:
+            try:
+                view.SetSectionBox(uniform_bbox)
+            except Exception as ex:
+                logger.debug("SetSectionBox failed for {} / {}: {}".format(
+                    pair_key, level_name, ex))
+
+        isolate_list = List[ElementId]()
+        a_eids = []
+        b_eids = []
+
+        for v in a_id_values:
+            eid = make_element_id(v)
+            if doc.GetElement(eid) is None:
+                continue
+            a_eids.append(eid)
+            isolate_list.Add(eid)
+
+        if not is_link_mode:
+            for v in b_id_values:
+                eid = make_element_id(v)
+                if doc.GetElement(eid) is None:
+                    continue
+                b_eids.append(eid)
+                isolate_list.Add(eid)
+        # Link mode: isolate host clash elements only. Adding the whole
+        # RvtLinkInstance forces generateViewSpecificGRep for every link view
+        # (journal crash: Arr.cpp Invalid array after mass link regen).
+
         if isolate_list.Count > 0:
             try:
                 view.IsolateElementsTemporary(isolate_list)
@@ -2051,9 +2256,12 @@ class ClashViewsWindow(forms.WPFWindow):
                 view.ConvertTemporaryHideIsolateToPermanent()
             except Exception as ex:
                 if DEBUG_MODE:
-                    logger.debug("ConvertTemporaryHideIsolateToPermanent failed: {}".format(ex))
+                    logger.debug(
+                        "ConvertTemporaryHideIsolateToPermanent failed: {}".format(ex))
 
-        # Hide all annotation categories by default for clean clash views
+        if is_link_mode and link_instance_id is not None:
+            _ensure_link_instance_visible(view, link_instance_id, doc)
+
         try:
             _set_annotation_categories_visible(view, False)
         except Exception as ex:
@@ -2084,7 +2292,28 @@ class ClashViewsWindow(forms.WPFWindow):
             b_eids=b_eids,
         )
 
-        return view
+    def _create_clash_view(self, pair_key, level_name,
+                           a_id_values, b_id_values, uniform_bbox,
+                           view_type_id, scale, name_prefix, iteration,
+                           ovr_a, ovr_b, is_link_mode=False,
+                           link_instance_id=None,
+                           cat_a_id=None, cat_b_id=None):
+        """Create and configure an isolated isometric 3D clash view (single step)."""
+        shell = self._create_clash_view_shell(
+            pair_key, level_name,
+            view_type_id, scale, name_prefix, iteration,
+            a_id_values, b_id_values)
+        if shell is None:
+            return None
+        shell['uniform_bbox'] = uniform_bbox
+        shell['ovr_a'] = ovr_a
+        shell['ovr_b'] = ovr_b
+        shell['is_link_mode'] = is_link_mode
+        shell['link_instance_id'] = link_instance_id
+        shell['cat_a_id'] = cat_a_id
+        shell['cat_b_id'] = cat_b_id
+        self._configure_clash_view(shell)
+        return shell['view']
 
     # -------------------- Grid layout ------------------------------------
 
@@ -2284,7 +2513,7 @@ class RefinementProgressWindow(forms.WPFWindow):
     def __init__(self, total_views):
         xaml_content = '''<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Refining Clash Views" Width="480" Height="200"
+        Title="Updating clash views" Width="480" Height="200"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource WindowBackgroundBrush}"
         ResizeMode="NoResize">
@@ -2296,11 +2525,11 @@ class RefinementProgressWindow(forms.WPFWindow):
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <TextBlock Grid.Row="0" Text="Optimizing view visibility..."
+        <TextBlock Grid.Row="0" Text="Hiding non-clash elements in linked models..."
                    Style="{DynamicResource HeaderTextBlockStyle}" Margin="0,0,0,10"/>
 
         <TextBlock Grid.Row="1" x:Name="statusText"
-                   Text="Processing 0 of 0 views"
+                   Text="View 0 of 0"
                    Style="{DynamicResource BodyTextBlockStyle}"
                    Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,15"/>
 
@@ -2311,11 +2540,11 @@ class RefinementProgressWindow(forms.WPFWindow):
 
         <TextBlock Grid.Row="3" TextWrapping="Wrap" Margin="0,15,0,0"
                    Style="{DynamicResource SecondaryTextBlockStyle}" FontSize="11" LineHeight="16">
-            <Run FontWeight="SemiBold">What's happening:</Run>
+            <Run FontWeight="SemiBold">What is happening:</Run>
             <LineBreak/>
-            Revit is hiding non-clashing elements from the linked model in each view.
-            This ensures only the elements that actually clash are visible.
-            The process switches between views automatically.
+            <Run>Revit is hiding elements in the linked model that are not part of a clash. Only clashing elements stay visible.</Run>
+            <LineBreak/>
+            <Run>The tool switches between views automatically. Please wait.</Run>
         </TextBlock>
     </Grid>
 </Window>'''
@@ -2337,7 +2566,7 @@ class RefinementProgressWindow(forms.WPFWindow):
     def _update_status(self, current):
         try:
             if hasattr(self, 'statusText') and self.statusText:
-                self.statusText.Text = "Processing view {} of {}".format(current, self._total_views)
+                self.statusText.Text = "View {} of {}".format(current, self._total_views)
         except Exception:
             pass
 
@@ -2353,13 +2582,15 @@ class RefinementProgressWindow(forms.WPFWindow):
 class ClashViewsSummaryWindow(forms.WPFWindow):
     """Summary dialog shown after clash views are created."""
 
-    def __init__(self, sheet, view_names, total_clashes, clash_pairs):
+    def __init__(self, sheet, view_names, total_clashes, clash_pairs,
+                 marker_data=None):
         """
         Args:
             sheet: The created ViewSheet
             view_names: List of created view names
             total_clashes: Total number of clash pairs detected
             clash_pairs: List of (pair_key, count) tuples
+            marker_data: Optional dict with available flag and view_points map
         """
         xaml_file = op.join(pushbutton_dir, "ClashViewsSummary.xaml")
         forms.WPFWindow.__init__(self, xaml_file)
@@ -2374,6 +2605,12 @@ class ClashViewsSummaryWindow(forms.WPFWindow):
         self._view_names = view_names
         self._total_clashes = total_clashes
         self._clash_pairs = clash_pairs
+        self._marker_driver = None
+        marker_data = marker_data or {}
+        self._markers_available = bool(marker_data.get('available'))
+        self._marker_view_points = dict(marker_data.get('view_points') or {})
+
+        self.Closing += self._on_window_closing
 
         # Populate header info
         try:
@@ -2397,6 +2634,26 @@ class ClashViewsSummaryWindow(forms.WPFWindow):
 
         # Populate views list
         self._populate_views_list()
+
+        # Clash markers (TemporaryGraphicsManager, Revit 2022+)
+        if hasattr(self, "markersToggle") and self.markersToggle:
+            if not self._markers_available:
+                self.markersToggle.IsChecked = False
+                self.markersToggle.IsEnabled = False
+                if hasattr(self, "markersHelpText") and self.markersHelpText:
+                    self.markersHelpText.Text = (
+                        "Clash markers require Revit 2022 or newer "
+                        "(TemporaryGraphicsManager API).")
+            elif self._marker_view_points:
+                toggle_on = True
+                if is_marker_toggle_active is not None:
+                    toggle_on = is_marker_toggle_active(doc)
+                self.markersToggle.IsChecked = toggle_on
+                if toggle_on:
+                    self._start_marker_driver()
+            else:
+                self.markersToggle.IsChecked = False
+                self.markersToggle.IsEnabled = False
 
         # Initially hide annotations
         self._annotations_visible = False
@@ -2456,8 +2713,65 @@ class ClashViewsSummaryWindow(forms.WPFWindow):
         status = "shown" if is_checked else "hidden"
         logger.debug("Annotations {} in all clash views".format(status))
 
+    def _start_marker_driver(self):
+        if not _CLASH_MARKERS_AVAILABLE or start_or_get_driver is None:
+            return
+        if not self._marker_view_points:
+            return
+        try:
+            driver = start_or_get_driver(
+                __revit__, doc, self._marker_view_points,
+                get_element_id_value, logger=None)
+            if driver is None:
+                return
+            enabled = True
+            if hasattr(self, "markersToggle") and self.markersToggle:
+                enabled = bool(self.markersToggle.IsChecked)
+            driver.set_enabled(enabled)
+            self._marker_driver = driver
+            if set_marker_toggle_active is not None and hasattr(self, "markersToggle"):
+                set_marker_toggle_active(doc, enabled)
+        except Exception as ex:
+            logger.warning("Failed to start clash marker driver: {}".format(ex))
+
+    def _stop_marker_driver(self):
+        """Stop global clash marker session (ribbon OFF / explicit cleanup)."""
+        if clean_marker_session is not None:
+            clean_marker_session(doc)
+        else:
+            if self._marker_driver is not None:
+                try:
+                    self._marker_driver.stop()
+                except Exception:
+                    pass
+        self._marker_driver = None
+
+    def _release_marker_driver_ref(self):
+        """Drop summary-window ref without stopping the shared session driver."""
+        self._marker_driver = None
+
+    def MarkersToggle_Changed(self, sender, args):
+        if not self._markers_available:
+            return
+        is_checked = bool(self.markersToggle.IsChecked)
+        if set_marker_toggle_active is not None:
+            set_marker_toggle_active(doc, is_checked)
+        if not is_checked:
+            self._stop_marker_driver()
+        else:
+            if self._marker_driver is None and find_marker_driver is not None:
+                self._marker_driver = find_marker_driver(doc)
+            if self._marker_driver is None:
+                self._start_marker_driver()
+            elif self._marker_driver is not None:
+                self._marker_driver.set_enabled(True)
+
+    def _on_window_closing(self, sender, args):
+        self._release_marker_driver_ref()
+
     def closeButton_Click(self, sender, args):
         """Close the dialog."""
+        self._release_marker_driver_ref()
         self.Close()
 
 

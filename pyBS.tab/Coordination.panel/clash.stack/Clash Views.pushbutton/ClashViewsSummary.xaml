@@ -78,7 +78,15 @@
                           Checked="AnnotationsToggle_Changed" Unchecked="AnnotationsToggle_Changed"
                           Style="{DynamicResource StandardCheckBoxStyle}"/>
                 <TextBlock Text="Annotations are hidden by default to keep clash views clean. Toggle to show/hide all annotation categories."
-                           Style="{DynamicResource SecondaryTextBlockStyle}" Margin="24,4,0,0" FontSize="11" FontStyle="Italic"/>
+                           Style="{DynamicResource SecondaryTextBlockStyle}" Margin="24,4,0,8" FontSize="11" FontStyle="Italic"/>
+                <CheckBox x:Name="markersToggle" Content="Show clash markers in views"
+                          IsChecked="True"
+                          Checked="MarkersToggle_Changed" Unchecked="MarkersToggle_Changed"
+                          Style="{DynamicResource StandardCheckBoxStyle}"/>
+                <TextBlock x:Name="markersHelpText"
+                           Style="{DynamicResource SecondaryTextBlockStyle}" Margin="24,4,0,0" FontSize="11" FontStyle="Italic"
+                           TextWrapping="Wrap"
+                           Text="On the sheet: one grouped badge per clash viewport (hover: Double-click to view clashes). In an open clash 3D view: markers only in that view. Zoom to cluster or expand. Use Markers ribbon to toggle or Shift+Click refresh (Revit 2022+)."/>
             </StackPanel>
         </Border>
 
