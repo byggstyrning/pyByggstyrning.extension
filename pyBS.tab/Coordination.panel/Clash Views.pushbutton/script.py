@@ -37,12 +37,6 @@ from Autodesk.Revit.DB import (
     BooleanOperationsUtils, BooleanOperationsType, Solid, SolidUtils,
     Options, GeometryInstance, ViewDetailLevel,
 )
-try:
-    from Autodesk.Revit.DB import RevitLinkGraphicsSettings, LinkVisibility, ViewDiscipline
-except ImportError:
-    RevitLinkGraphicsSettings = None
-    LinkVisibility = None
-    ViewDiscipline = None
 from Autodesk.Revit.UI import RevitCommandId, PostableCommand
 
 import sys
@@ -68,8 +62,7 @@ logger = script.get_logger()
 
 DEBUG_MODE = False
 
-# Experimental branch: color clash sides via SetCategoryOverrides /
-# SetLinkOverrides (category targeting) instead of per-element overrides.
+# Color clash sides via SetCategoryOverrides (link B uses host VG inheritance).
 USE_CATEGORY_LINK_OVERRIDES = True
 
 doc = __revit__.ActiveUIDocument.Document
@@ -509,14 +502,6 @@ def _hide_non_target_model_categories(view, keep_cat_id_values):
             keep_set.add(int(get_element_id_value(rvtlinks_cat.Id)))
     except Exception:
         pass
-    # #region agent log
-    import json as _j, time as _t
-    try:
-        with open(op.join(extension_dir, 'debug-822ea8.log'), 'a') as _f:
-            _f.write(_j.dumps({"sessionId": "822ea8", "hypothesisId": "H1", "location": "script.py:_hide_non_target_model_categories", "message": "keep_set computed", "data": {"keep_set": sorted(list(keep_set))}, "timestamp": int(_t.time() * 1000)}) + "\n")
-    except Exception:
-        pass
-    # #endregion
     hidden = 0
     skipped = 0
     try:
@@ -541,14 +526,6 @@ def _hide_non_target_model_categories(view, keep_cat_id_values):
             except Exception:
                 continue
         if cid_val in keep_set:
-            # #region agent log
-            import json as _j, time as _t
-            try:
-                with open(op.join(extension_dir, 'debug-822ea8.log'), 'a') as _f:
-                    _f.write(_j.dumps({"sessionId": "822ea8", "hypothesisId": "H1", "location": "script.py:_hide_non_target_model_categories", "message": "unhiding kept category", "data": {"cid_val": cid_val, "cat_name": str(cat.Name)}, "timestamp": int(_t.time() * 1000)}) + "\n")
-            except Exception:
-                pass
-            # #endregion
             try:
                 if view.CanCategoryBeHidden(cid):
                     view.SetCategoryHidden(cid, False)
@@ -624,10 +601,12 @@ class LinkVisibilityRefinementDriver(object):
     """Idling-event state machine that hides unwanted elements from the link
     in each created clash view, one view per idle tick.
 
-    Two kinds of elements are hidden per view:
-      1. All link-A-category elements (same category as host A, e.g. Walls in
-         the link that are visible because ByHostView inherits host VG).
-      2. Non-clash link-B-category elements (structural columns that don't clash).
+    Two kinds of elements are hidden per view (when A and B differ):
+      1. All link-A-category elements (e.g. Walls in the link when B is Floors).
+      2. Non-clash link-B-category elements in the section-box area.
+
+    When A and B share a category (e.g. Walls vs Walls), step 1 is skipped —
+    otherwise every link wall is hidden, including clash B walls.
 
     Workaround for View.HideElements rejecting linked element ids (forum-validated):
       build Reference.CreateLinkReference, set as uidoc.Selection, post HideElements.
@@ -635,23 +614,21 @@ class LinkVisibilityRefinementDriver(object):
 
     MAX_COMPLEMENT_SIZE = 500
 
-    def __init__(self, uiapp, jobs, document, log_path, return_to_sheet_id=None,
+    def __init__(self, uiapp, jobs, document, return_to_sheet_id=None,
                  summary_data=None, show_summary_callback=None, progress_close_callback=None,
                  progress_update_callback=None):
         self._uiapp = uiapp
         self._jobs = list(jobs)
         self._idx = 0
         self._doc = document
-        self._log_path = log_path   # stored on instance — survives scope cleanup
         self._handler = None
-        self._return_to_sheet_id = return_to_sheet_id  # ElementId to return to after all jobs
-        self._summary_data = summary_data  # Dict with sheet, view_names, clashes info
-        self._show_summary_callback = show_summary_callback  # Function to show summary dialog
-        self._progress_close_callback = progress_close_callback  # Function to close progress window
-        self._progress_update_callback = progress_update_callback  # Function to update progress
-        # Capture all module-level names needed by _process at init-time.
-        # pyRevit disposes the script module after the pushbutton returns, so
-        # bare module names are unavailable when the Idling callback fires.
+        self._return_to_sheet_id = return_to_sheet_id
+        self._summary_data = summary_data
+        self._show_summary_callback = show_summary_callback
+        self._progress_close_callback = progress_close_callback
+        self._progress_update_callback = progress_update_callback
+        # Capture module-level names needed by _process at init-time.
+        # pyRevit disposes the script module after the pushbutton returns.
         self._ElementId = ElementId
         self._FilteredElementCollector = FilteredElementCollector
         self._BoundingBoxIntersectsFilter = BoundingBoxIntersectsFilter
@@ -672,11 +649,6 @@ class LinkVisibilityRefinementDriver(object):
         if not hasattr(sys, _SYS_KEY):
             setattr(sys, _SYS_KEY, [])
         getattr(sys, _SYS_KEY).append(self)
-        # #region agent log
-        import json as _j, time as _t
-        with open(self._log_path, 'a') as _f:
-            _f.write(_j.dumps({"sessionId": "64b963", "hypothesisId": "A", "location": "script.py:driver.start", "message": "driver started (sys-stored)", "data": {"jobs": len(self._jobs)}, "timestamp": int(_t.time() * 1000)}) + "\n")
-        # #endregion
 
     def stop(self):
         if self._handler is not None:
@@ -692,19 +664,12 @@ class LinkVisibilityRefinementDriver(object):
             pass
 
     def _on_idling(self, sender, e):
-        # #region agent log
-        import json as _j, time as _t
-        with open(self._log_path, 'a') as _f:
-            _f.write(_j.dumps({"sessionId": "64b963", "hypothesisId": "B", "location": "script.py:_on_idling", "message": "idling fired", "data": {"idx": self._idx, "total": len(self._jobs)}, "timestamp": int(_t.time() * 1000)}) + "\n")
-        # #endregion
         if self._idx >= len(self._jobs):
-            # All jobs done — close progress bar first
             if self._progress_close_callback is not None:
                 try:
                     self._progress_close_callback()
                 except Exception as ex:
                     logger.debug("Failed to close progress window: {}".format(ex))
-            # Return to sheet if specified
             if self._return_to_sheet_id is not None:
                 try:
                     uidoc = self._uiapp.ActiveUIDocument
@@ -712,7 +677,6 @@ class LinkVisibilityRefinementDriver(object):
                         sheet = self._doc.GetElement(self._return_to_sheet_id)
                         if sheet is not None:
                             uidoc.RequestViewChange(sheet)
-                            # Show summary dialog after returning to sheet
                             if self._show_summary_callback is not None and self._summary_data is not None:
                                 try:
                                     self._show_summary_callback(self._summary_data)
@@ -727,31 +691,18 @@ class LinkVisibilityRefinementDriver(object):
         if uidoc is None:
             self.stop()
             return
-        # Two-phase per job:
-        #   Phase 1 — active view ≠ target: call RequestViewChange and return WITHOUT
-        #             advancing idx so next Idling tick finds the view active.
-        #   Phase 2 — active view = target: build refs, PostCommand, advance idx.
         current = uidoc.ActiveView
         if current is None or current.Id != job.view_id:
             view = self._doc.GetElement(job.view_id)
             if view is None:
-                self._idx += 1  # skip bad job
+                self._idx += 1
                 return
             try:
                 uidoc.RequestViewChange(view)
-                # #region agent log
-                with open(self._log_path, 'a') as _f:
-                    _f.write(_j.dumps({"sessionId": "64b963", "hypothesisId": "D", "location": "script.py:_on_idling.RequestViewChange", "message": "view change requested", "data": {"view_id": str(job.view_id)}, "timestamp": int(_t.time() * 1000)}) + "\n")
-                # #endregion
-            except Exception as ex:
-                import json as _j, time as _t
-                with open(self._log_path, 'a') as _f:
-                    _f.write(_j.dumps({"sessionId": "64b963", "hypothesisId": "D", "location": "script.py:_on_idling.RequestViewChange.except", "message": str(ex), "data": {}, "timestamp": int(_t.time() * 1000)}) + "\n")
-                self._idx += 1  # can't activate — skip
-            return  # wait for view to actually activate
-        # View is active — proceed with hiding
+            except Exception:
+                self._idx += 1
+            return
         self._idx += 1
-        # Update progress window
         if self._progress_update_callback is not None:
             try:
                 self._progress_update_callback(self._idx)
@@ -760,9 +711,7 @@ class LinkVisibilityRefinementDriver(object):
         try:
             self._process(job, uidoc)
         except Exception as ex:
-            import json as _j, time as _t
-            with open(self._log_path, 'a') as _f:
-                _f.write(_j.dumps({"sessionId": "64b963", "hypothesisId": "B", "location": "script.py:_on_idling.except", "message": str(ex), "data": {}, "timestamp": int(_t.time() * 1000)}) + "\n")
+            logger.debug("Link refinement failed: {}".format(ex))
 
     def _process(self, job, uidoc):
         view = self._doc.GetElement(job.view_id)
@@ -774,45 +723,40 @@ class LinkVisibilityRefinementDriver(object):
         linked_doc = link_instance.GetLinkDocument()
         if linked_doc is None:
             return
-        # Collect refs to hide: all link-A elements + non-clash link-B elements
         refs = []
-        a_found = 0
-        a_ref_err = None
-        b_found = 0
-        b_complement = 0
-        b_ref_err = None
-        # (1) All link-A-category elements (e.g. walls in structural link that
-        #     show via ByHostView because OST_Walls must stay visible in host VG)
+        hide_link_eids = []
         _EId = self._ElementId
         _FEC = self._FilteredElementCollector
         _BBF = self._BoundingBoxIntersectsFilter
-        _Ol  = self._Outline
+        _Ol = self._Outline
         _XYZ = self._XYZ
         _Ref = self._Reference
         _giv = self._get_element_id_value
-        if job.a_cat_id is not None:
+        clash_set = set(job.b_clash_link_eids)
+        same_cat = False
+        if job.a_cat_id is not None and job.b_cat_id is not None:
+            try:
+                same_cat = int(_giv(job.a_cat_id)) == int(_giv(job.b_cat_id))
+            except Exception:
+                same_cat = str(job.a_cat_id) == str(job.b_cat_id)
+        if job.a_cat_id is not None and not same_cat:
             a_cat_fresh = _EId(_giv(job.a_cat_id))
             try:
                 a_eids = list(_FEC(linked_doc)
                               .OfCategoryId(a_cat_fresh)
                               .WhereElementIsNotElementType()
                               .ToElementIds())
-                a_found = len(a_eids)
                 for eid in a_eids:
                     el = linked_doc.GetElement(eid)
                     if el is None:
                         continue
                     try:
                         refs.append(_Ref(el).CreateLinkReference(link_instance))
-                    except Exception as _ex:
-                        if a_ref_err is None:
-                            a_ref_err = str(_ex)
+                        hide_link_eids.append(_giv(eid))
+                    except Exception:
                         continue
-            except Exception as _ex:
-                a_ref_err = str(_ex)
-        # (2) Non-clash link-B-category elements within section-box area
-        b_primary_err = None
-        b_fallback_err = None
+            except Exception:
+                pass
         if job.b_cat_id is not None:
             all_b_eids = []
             b_cat_fresh = _EId(_giv(job.b_cat_id))
@@ -828,36 +772,31 @@ class LinkVisibilityRefinementDriver(object):
                                   .WhereElementIsNotElementType()
                                   .WherePasses(_BBF(_Ol(link_min, link_max)))
                                   .ToElementIds())
-            except Exception as _ex:
-                b_primary_err = str(_ex)
+            except Exception:
                 try:
                     all_b_eids = list(_FEC(linked_doc)
                                       .OfCategoryId(b_cat_fresh)
                                       .WhereElementIsNotElementType()
                                       .ToElementIds())
-                except Exception as _ex2:
-                    b_fallback_err = str(_ex2)
+                except Exception:
                     all_b_eids = []
-            b_found = len(all_b_eids)
-            clash_set = set(job.b_clash_link_eids)
             for eid in all_b_eids:
                 if _giv(eid) in clash_set:
                     continue
-                b_complement += 1
                 el = linked_doc.GetElement(eid)
                 if el is None:
                     continue
                 try:
                     refs.append(_Ref(el).CreateLinkReference(link_instance))
-                except Exception as _ex:
-                    if b_ref_err is None:
-                        b_ref_err = str(_ex)
+                    hide_link_eids.append(_giv(eid))
+                except Exception:
                     continue
-        # #region agent log
-        import json as _j, time as _t
-        with open(self._log_path, 'a') as _f:
-            _f.write(_j.dumps({"sessionId": "64b963", "hypothesisId": "C-E", "location": "script.py:_process.refs", "message": "refs built", "data": {"refs_count": len(refs), "view_id": str(job.view_id), "a_cat_id": str(job.a_cat_id), "b_cat_id": str(job.b_cat_id), "a_found": a_found, "a_ref_err": a_ref_err, "b_found": b_found, "b_complement": b_complement, "b_ref_err": b_ref_err, "b_primary_err": b_primary_err, "b_fallback_err": b_fallback_err, "clash_set_size": len(clash_set) if job.b_cat_id is not None else 0}, "timestamp": int(_t.time() * 1000)}) + "\n")
-        # #endregion
+        clash_wrongly_hidden = sorted(clash_set.intersection(set(hide_link_eids)))
+        if clash_wrongly_hidden:
+            logger.warning(
+                "Link refinement: {} clash B link elements marked for hide in '{}' "
+                "(same_category={})".format(
+                    len(clash_wrongly_hidden), view.Name, same_cat))
         if not refs:
             return
         if len(refs) > self.MAX_COMPLEMENT_SIZE:
@@ -874,12 +813,7 @@ class LinkVisibilityRefinementDriver(object):
         try:
             cmd_id = self._RevitCommandId.LookupPostableCommandId(
                 self._PostableCommand.HideElements)
-            can_post = bool(self._uiapp.CanPostCommand(cmd_id))
-            # #region agent log
-            with open(self._log_path, 'a') as _f:
-                _f.write(_j.dumps({"sessionId": "64b963", "hypothesisId": "C", "location": "script.py:_process.PostCommand", "message": "CanPostCommand result", "data": {"can_post": can_post, "active_view_id": str(uidoc.ActiveView.Id) if uidoc.ActiveView else None}, "timestamp": int(_t.time() * 1000)}) + "\n")
-            # #endregion
-            if can_post:
+            if self._uiapp.CanPostCommand(cmd_id):
                 self._uiapp.PostCommand(cmd_id)
         except Exception as ex:
             logger.warning("Link refinement: PostCommand failed: {}".format(ex))
@@ -891,6 +825,12 @@ class LinkVisibilityRefinementDriver(object):
 
 CLASH_COLOR_A = RevitColor(230, 50, 50)
 CLASH_COLOR_B = RevitColor(40, 170, 70)
+
+# Clash views use fixed red (side A / host) and green (side B / link) for all pairs.
+# Distinctive per-category colors are not enabled yet. To add them later, map each
+# selected category to palette slots (e.g. warm pole for host, cool pole for link via
+# bic + side key) and pass per-pair overrides into _apply_clash_view_colors — see
+# revit.revit_utils.generate_color_range and ColorElements.generate_color_range.
 
 
 def _darken_color(color, factor=0.7):
@@ -954,80 +894,7 @@ def _build_clash_override(color, solid_fill_id):
     return ogs
 
 
-def _revit_version_int():
-    try:
-        return int(__revit__.Application.VersionNumber)
-    except Exception:
-        return 0
-
-
-def _supports_set_link_overrides():
-    return _revit_version_int() >= 2024 and RevitLinkGraphicsSettings is not None
-
-
-def _agent_log(location, message, data=None, hypothesis_id="LINK_OVR"):
-    """Append a debug line to debug-822ea8.log for link-override experiments."""
-    import json as _j, time as _t
-    try:
-        with open(op.join(extension_dir, 'debug-822ea8.log'), 'a') as _f:
-            _f.write(_j.dumps({
-                "sessionId": "822ea8",
-                "hypothesisId": hypothesis_id,
-                "location": location,
-                "message": message,
-                "data": data or {},
-                "timestamp": int(_t.time() * 1000),
-            }) + "\n")
-    except Exception:
-        pass
-
-
-def _build_custom_link_graphics_settings(view):
-    """Build RevitLinkGraphicsSettings with Custom object styles for link categories."""
-    gs = RevitLinkGraphicsSettings()
-    gs.LinkVisibilityType = LinkVisibility.Custom
-    gs.LinkedViewId = ElementId.InvalidElementId
-    gs.ViewFilterType = LinkVisibility.Custom
-    try:
-        gs.ViewRange = (
-            LinkVisibility.ByHostView
-            if RevitLinkGraphicsSettings.IsViewRangeSupported(view)
-            else LinkVisibility.ByHostView
-        )
-    except Exception:
-        gs.ViewRange = LinkVisibility.ByHostView
-    try:
-        has_color_fill = False
-        supported = view.SupportedColorFillCategoryIds()
-        if supported is not None:
-            for _cid in supported:
-                has_color_fill = True
-                break
-        gs.ColorFill = (
-            LinkVisibility.ByLinkView if has_color_fill else LinkVisibility.ByHostView
-        )
-    except Exception:
-        gs.ColorFill = LinkVisibility.ByHostView
-    # Per-link model category overrides (RVT Link Display Settings > Model Categories > Custom)
-    gs.ObjectStyles = LinkVisibility.Custom
-    gs.NestedLinks = LinkVisibility.ByHostView
-    try:
-        gs.SetDiscipline(LinkVisibility.Custom, view.Discipline)
-    except Exception:
-        try:
-            gs.SetDiscipline(LinkVisibility.Custom, ViewDiscipline.Coordination)
-        except Exception:
-            pass
-    try:
-        gs.SetPhase(LinkVisibility.Custom, ElementId.InvalidElementId)
-        gs.SetPhaseFilter(LinkVisibility.Custom, ElementId.InvalidElementId)
-        gs.SetViewDetailLevel(LinkVisibility.Custom, ViewDetailLevel.Fine)
-    except Exception:
-        pass
-    return gs
-
-
-def _apply_category_color_override(view, cat_id, ogs, context="host"):
+def _apply_category_color_override(view, cat_id, ogs):
     """Apply OverrideGraphicSettings to a category via SetCategoryOverrides."""
     if cat_id is None:
         return False, "cat_id is None"
@@ -1038,116 +905,146 @@ def _apply_category_color_override(view, cat_id, ogs, context="host"):
         return False, "IsCategoryOverridable: {}".format(ex)
     try:
         view.SetCategoryOverrides(cat_id, ogs)
-        _agent_log(
-            "script.py:_apply_category_color_override",
-            "SetCategoryOverrides OK",
-            {"context": context, "cat_id": str(cat_id)},
-        )
         return True, None
     except Exception as ex:
-        _agent_log(
-            "script.py:_apply_category_color_override",
-            "SetCategoryOverrides FAILED",
-            {"context": context, "cat_id": str(cat_id), "error": str(ex)},
-        )
         return False, str(ex)
 
 
+def _same_category_ids(cat_a_id, cat_b_id):
+    """True when both sides resolve to the same host Category.Id."""
+    if cat_a_id is None or cat_b_id is None:
+        return False
+    try:
+        return int(get_element_id_value(cat_a_id)) == int(get_element_id_value(cat_b_id))
+    except Exception:
+        return str(cat_a_id) == str(cat_b_id)
+
+
+def _apply_element_override_list(view, element_ids, ogs):
+    """Apply overrides to host-document ElementIds. Returns (success_count, fail_count)."""
+    success = 0
+    failures = 0
+    for eid in element_ids or []:
+        try:
+            view.SetElementOverrides(eid, ogs)
+            success += 1
+        except Exception:
+            failures += 1
+    return success, failures
+
+
 def _apply_link_category_color_override(view, link_instance_id, cat_id, ogs):
-    """Enable Custom link display, then override the target category color."""
+    """Color linked-model category via host view SetCategoryOverrides.
+
+    When link object styles follow the host view (ByHostView, Revit default),
+    category overrides on the host view apply to matching linked categories.
+    SetLinkOverrides with ObjectStyles=Custom is not supported by the API.
+    """
     if link_instance_id is None or cat_id is None:
         return False, "missing link_instance_id or cat_id"
-    if not _supports_set_link_overrides():
-        return False, "SetLinkOverrides not supported (Revit < 2024)"
+
+    ok, err = _apply_category_color_override(view, cat_id, ogs)
+    if ok:
+        return True, None
 
     try:
-        gs = _build_custom_link_graphics_settings(view)
-        view.SetLinkOverrides(link_instance_id, gs)
-        _agent_log(
-            "script.py:_apply_link_category_color_override",
-            "SetLinkOverrides OK",
-            {
-                "link_instance_id": str(link_instance_id),
-                "link_visibility": str(gs.LinkVisibilityType),
-                "object_styles": str(gs.ObjectStyles),
-            },
-        )
+        view.SetElementOverrides(link_instance_id, ogs)
+        return True, None
     except Exception as ex:
-        _agent_log(
-            "script.py:_apply_link_category_color_override",
-            "SetLinkOverrides FAILED",
-            {"link_instance_id": str(link_instance_id), "error": str(ex)},
-        )
-        return False, "SetLinkOverrides: {}".format(ex)
-
-    return _apply_category_color_override(view, cat_id, ogs, context="link_b")
+        return False, err or str(ex)
 
 
 def _apply_clash_view_colors(view, ovr_a, ovr_b, is_link_mode=False,
                              link_instance_id=None, cat_a_id=None, cat_b_id=None,
                              a_eids=None, b_eids=None):
-    """Apply clash colors via category / link overrides (experimental branch)."""
+    """Apply clash colors via category overrides (or per-element fallback)."""
     a_eids = a_eids or []
     b_eids = b_eids or []
+    same_cat = _same_category_ids(cat_a_id, cat_b_id)
     results = {
         "use_category_link_overrides": USE_CATEGORY_LINK_OVERRIDES,
         "is_link_mode": is_link_mode,
+        "same_category": same_cat,
         "a": None,
         "b": None,
         "fallbacks": [],
     }
 
-    if USE_CATEGORY_LINK_OVERRIDES and cat_a_id is not None:
-        ok, err = _apply_category_color_override(view, cat_a_id, ovr_a, context="host_a")
+    if USE_CATEGORY_LINK_OVERRIDES and same_cat:
+        if is_link_mode and link_instance_id is not None:
+            # API cannot SetElementOverrides on individual link elements.
+            # Category green on shared cat + per-element red on host clash A walls.
+            ok_b, err_b = _apply_category_color_override(view, cat_b_id, ovr_b)
+            count_a, fail_a = _apply_element_override_list(view, a_eids, ovr_a)
+            results["a"] = {
+                "method": "SetElementOverrides(same_cat_host_a)",
+                "count": count_a,
+                "failures": fail_a,
+            }
+            results["b"] = {
+                "method": "SetCategoryOverrides(same_cat_link_b)",
+                "ok": ok_b,
+                "error": err_b,
+            }
+            results["fallbacks"].append("same_category_link_hybrid")
+        else:
+            count_a, fail_a = _apply_element_override_list(view, a_eids, ovr_a)
+            count_b, fail_b = _apply_element_override_list(view, b_eids, ovr_b)
+            results["a"] = {
+                "method": "SetElementOverrides(same_cat_a)",
+                "count": count_a,
+                "failures": fail_a,
+            }
+            results["b"] = {
+                "method": "SetElementOverrides(same_cat_b)",
+                "count": count_b,
+                "failures": fail_b,
+            }
+            results["fallbacks"].append("same_category_host_per_element")
+    elif USE_CATEGORY_LINK_OVERRIDES and cat_a_id is not None:
+        ok, err = _apply_category_color_override(view, cat_a_id, ovr_a)
         results["a"] = {"method": "SetCategoryOverrides", "ok": ok, "error": err}
     else:
-        count = 0
-        for eid in a_eids:
-            try:
-                view.SetElementOverrides(eid, ovr_a)
-                count += 1
-            except Exception:
-                continue
-        results["a"] = {"method": "SetElementOverrides", "count": count}
+        count, failures = _apply_element_override_list(view, a_eids, ovr_a)
+        results["a"] = {
+            "method": "SetElementOverrides",
+            "count": count,
+            "failures": failures,
+        }
         results["fallbacks"].append("host_a per-element")
 
-    if is_link_mode and link_instance_id is not None:
-        if USE_CATEGORY_LINK_OVERRIDES and cat_b_id is not None:
-            ok, err = _apply_link_category_color_override(
-                view, link_instance_id, cat_b_id, ovr_b)
-            results["b"] = {
-                "method": "SetLinkOverrides+SetCategoryOverrides",
-                "ok": ok,
-                "error": err,
-            }
-            if not ok:
+    if not (USE_CATEGORY_LINK_OVERRIDES and same_cat):
+        if is_link_mode and link_instance_id is not None:
+            if USE_CATEGORY_LINK_OVERRIDES and cat_b_id is not None:
+                ok, err = _apply_link_category_color_override(
+                    view, link_instance_id, cat_b_id, ovr_b)
+                results["b"] = {
+                    "method": "SetCategoryOverrides(link_b)",
+                    "ok": ok,
+                    "error": err,
+                }
+            else:
                 try:
                     view.SetElementOverrides(link_instance_id, ovr_b)
-                    results["fallbacks"].append("link_instance SetElementOverrides")
-                    results["b"]["fallback"] = "SetElementOverrides(link)"
-                except Exception as ex2:
-                    results["b"]["fallback_error"] = str(ex2)
+                    results["b"] = {"method": "SetElementOverrides(link)", "ok": True}
+                except Exception as ex:
+                    results["b"] = {
+                        "method": "SetElementOverrides(link)",
+                        "ok": False,
+                        "error": str(ex),
+                    }
+        elif USE_CATEGORY_LINK_OVERRIDES and cat_b_id is not None:
+            ok, err = _apply_category_color_override(view, cat_b_id, ovr_b)
+            results["b"] = {"method": "SetCategoryOverrides", "ok": ok, "error": err}
         else:
-            try:
-                view.SetElementOverrides(link_instance_id, ovr_b)
-                results["b"] = {"method": "SetElementOverrides(link)", "ok": True}
-            except Exception as ex:
-                results["b"] = {"method": "SetElementOverrides(link)", "ok": False, "error": str(ex)}
-    elif USE_CATEGORY_LINK_OVERRIDES and cat_b_id is not None:
-        ok, err = _apply_category_color_override(view, cat_b_id, ovr_b, context="host_b")
-        results["b"] = {"method": "SetCategoryOverrides", "ok": ok, "error": err}
-    else:
-        count = 0
-        for eid in b_eids:
-            try:
-                view.SetElementOverrides(eid, ovr_b)
-                count += 1
-            except Exception:
-                continue
-        results["b"] = {"method": "SetElementOverrides", "count": count}
-        results["fallbacks"].append("host_b per-element")
+            count, failures = _apply_element_override_list(view, b_eids, ovr_b)
+            results["b"] = {
+                "method": "SetElementOverrides",
+                "count": count,
+                "failures": failures,
+            }
+            results["fallbacks"].append("host_b per-element")
 
-    _agent_log("script.py:_apply_clash_view_colors", "color apply summary", results)
     if DEBUG_MODE:
         logger.debug("Clash view colors: {}".format(results))
     return results
@@ -2009,7 +1906,8 @@ class ClashViewsWindow(forms.WPFWindow):
         def _show_summary(data):
             try:
                 summary_window = ClashViewsSummaryWindow(
-                    data['sheet'], data['view_names'], data['total_clashes'], data['clash_pairs'])
+                    data['sheet'], data['view_names'], data['total_clashes'],
+                    data['clash_pairs'])
                 summary_window.ShowDialog()
             except Exception as ex:
                 logger.debug("Failed to show summary window: {}".format(ex))
@@ -2040,7 +1938,6 @@ class ClashViewsWindow(forms.WPFWindow):
 
             driver = LinkVisibilityRefinementDriver(
                 __revit__, refinement_queue, doc,
-                op.join(extension_dir, 'debug-64b963.log'),
                 return_to_sheet_id=return_sheet_id,
                 summary_data=summary_data,
                 show_summary_callback=_show_summary,
@@ -2071,8 +1968,10 @@ class ClashViewsWindow(forms.WPFWindow):
         Host mode: isolate A+B, color A=red, B=green via category overrides.
         Link mode: isolate host (A) elements + the link instance itself.
         Color A via host SetCategoryOverrides; color link B via
-        SetLinkOverrides (Custom object styles) + SetCategoryOverrides on
-        cat_b_id. Falls back to SetElementOverrides(link) if link API fails.
+        SetCategoryOverrides on cat_b_id (link follows host VG). Same category
+        on both sides uses per-element overrides (host) or hybrid (link: category
+        B + per-element host A). Falls back to SetElementOverrides(link) if
+        category override fails.
         After isolation is made permanent, non-target Model categories are
         hidden so host and link VG both scope to the two clashing categories.
         """
@@ -2143,26 +2042,16 @@ class ClashViewsWindow(forms.WPFWindow):
                     continue
 
         if isolate_list.Count > 0:
-            _iso_err = None
-            _conv_err = None
             try:
                 view.IsolateElementsTemporary(isolate_list)
             except Exception as ex:
-                _iso_err = str(ex)
                 if DEBUG_MODE:
                     logger.debug("IsolateElementsTemporary failed: {}".format(ex))
             try:
                 view.ConvertTemporaryHideIsolateToPermanent()
             except Exception as ex:
-                _conv_err = str(ex)
-            # #region agent log
-            import json as _j, time as _t
-            try:
-                with open(op.join(extension_dir, 'debug-822ea8.log'), 'a') as _f:
-                    _f.write(_j.dumps({"sessionId": "822ea8", "hypothesisId": "I1", "location": "script.py:isolation", "message": "host isolation result", "data": {"is_link_mode": is_link_mode, "isolate_count": isolate_list.Count, "a_eids_count": len(a_eids), "cat_a_id": str(cat_a_id), "cat_b_id": str(cat_b_id), "iso_err": _iso_err, "conv_err": _conv_err}, "timestamp": int(_t.time() * 1000)}) + "\n")
-            except Exception:
-                pass
-            # #endregion
+                if DEBUG_MODE:
+                    logger.debug("ConvertTemporaryHideIsolateToPermanent failed: {}".format(ex))
 
         # Hide all annotation categories by default for clean clash views
         try:
@@ -2178,29 +2067,10 @@ class ClashViewsWindow(forms.WPFWindow):
                         keep_values.append(get_element_id_value(cid))
                     except Exception:
                         pass
-            # #region agent log
-            import json as _j, time as _t
             try:
-                with open(op.join(extension_dir, 'debug-822ea8.log'), 'a') as _f:
-                    _f.write(_j.dumps({"sessionId": "822ea8", "hypothesisId": "H1", "location": "script.py:before_category_hide", "message": "about to call _hide_non_target_model_categories", "data": {"is_link_mode": is_link_mode, "keep_values": keep_values, "cat_a_id": str(cat_a_id), "cat_b_id": str(cat_b_id)}, "timestamp": int(_t.time() * 1000)}) + "\n")
-            except Exception:
-                pass
-            # #endregion
-            try:
-                _hidden, _skipped = _hide_non_target_model_categories(view, keep_values)
-                # #region agent log
-                import json as _j, time as _t
-                try:
-                    with open(op.join(extension_dir, 'debug-822ea8.log'), 'a') as _f:
-                        _f.write(_j.dumps({"sessionId": "822ea8", "hypothesisId": "H1", "location": "script.py:after_category_hide", "message": "_hide_non_target_model_categories result", "data": {"hidden": _hidden, "skipped": _skipped, "keep_values": keep_values}, "timestamp": int(_t.time() * 1000)}) + "\n")
-                except Exception:
-                    pass
-                # #endregion
+                _hide_non_target_model_categories(view, keep_values)
             except Exception as ex:
                 logger.debug("_hide_non_target_model_categories failed: {}".format(ex))
-            # Defensive: ensure link instance and OST_RvtLinks are visible
-            # (category hider now always exempts OST_RvtLinks, but this guard
-            #  handles unexpected view-family defaults and re-entrancy)
             if link_instance_id is not None:
                 _ensure_link_instance_visible(view, link_instance_id, doc)
 
@@ -2380,33 +2250,14 @@ def _set_annotation_categories_visible(view, visible):
     document = view.Document
     shown = 0
     hidden = 0
-    checked = 0
-    matched = 0
-    # #region agent log
-    import json as _j, time as _t
-    try:
-        with open(op.join(extension_dir, 'debug-822ea8.log'), 'a') as _f:
-            _f.write(_j.dumps({"sessionId": "822ea8", "hypothesisId": "ANNOT", "location": "_set_annotation_categories_visible:start", "message": "hiding annotations", "data": {"view_name": str(view.Name), "visible": visible}, "timestamp": int(_t.time() * 1000)}) + "\n")
-    except Exception:
-        pass
-    # #endregion
     for cat in document.Settings.Categories:
         try:
             bic = cat.BuiltInCategory
             bic_str = str(bic)
         except Exception:
             continue
-        checked += 1
         if bic_str not in _ANNOTATION_CATEGORIES:
             continue
-        matched += 1
-        # #region agent log
-        try:
-            with open(op.join(extension_dir, 'debug-822ea8.log'), 'a') as _f:
-                _f.write(_j.dumps({"sessionId": "822ea8", "hypothesisId": "ANNOT", "location": "_set_annotation_categories_visible:match", "message": "matched annotation category", "data": {"cat_name": str(cat.Name), "bic": bic_str}, "timestamp": int(_t.time() * 1000)}) + "\n")
-        except Exception:
-            pass
-        # #endregion
         try:
             if not view.CanCategoryBeHidden(cat.Id):
                 continue
@@ -2418,22 +2269,8 @@ def _set_annotation_categories_visible(view, visible):
                 shown += 1
             else:
                 hidden += 1
-        except Exception as ex:
-            # #region agent log
-            try:
-                with open(op.join(extension_dir, 'debug-822ea8.log'), 'a') as _f:
-                    _f.write(_j.dumps({"sessionId": "822ea8", "hypothesisId": "ANNOT", "location": "_set_annotation_categories_visible:error", "message": "SetCategoryHidden failed", "data": {"cat_name": str(cat.Name), "error": str(ex)}, "timestamp": int(_t.time() * 1000)}) + "\n")
-            except Exception:
-                pass
-            # #endregion
+        except Exception:
             pass
-    # #region agent log
-    try:
-        with open(op.join(extension_dir, 'debug-822ea8.log'), 'a') as _f:
-            _f.write(_j.dumps({"sessionId": "822ea8", "hypothesisId": "ANNOT", "location": "_set_annotation_categories_visible:done", "message": "annotation hiding complete", "data": {"checked": checked, "matched": matched, "shown": shown, "hidden": hidden}, "timestamp": int(_t.time() * 1000)}) + "\n")
-    except Exception:
-        pass
-    # #endregion
     return (shown, hidden)
 
 
