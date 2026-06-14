@@ -3,7 +3,6 @@
 
 __title__ = "Clash\nViews"
 __author__ = "pyByggstyrning"
-__highlight__ = "new"
 __doc__ = """Pick two or more model categories. All unique pairs (C(N,2)) are clash-detected
 using a bounding-box pre-filter plus geometric confirmation in the host document.
 Each pair (sub-grouped by level) becomes an isolated 3D view; every view is placed
