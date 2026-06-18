@@ -1,0 +1,67 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="CDE Login &amp; Project Mapping"
+        Width="460"
+        Height="540"
+        ResizeMode="CanResize"
+        WindowStartupLocation="CenterScreen"
+        ShowInTaskbar="True"
+        Background="{DynamicResource WindowBackgroundBrush}">
+
+    <Grid Margin="{DynamicResource GridMargin}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <TextBlock Grid.Row="0" Text="Connect to the CDE"
+                   Style="{DynamicResource HeaderTextBlockStyle}" Margin="0,0,0,10"/>
+
+        <!-- Account -->
+        <Border Grid.Row="1" Style="{DynamicResource PanelBorderStyle}" Margin="0,0,0,12">
+            <StackPanel Margin="10">
+                <TextBlock Text="Account" Style="{DynamicResource SubheaderTextBlockStyle}" Margin="0,0,0,8"/>
+                <TextBlock x:Name="accountText" Text="Not signed in."
+                           Style="{DynamicResource DefaultTextBlockStyle}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                <StackPanel Orientation="Horizontal">
+                    <Button x:Name="loginButton" Content="Sign in" Width="120"
+                            Style="{DynamicResource DefaultButtonStyle}" Click="on_login_click"/>
+                    <Button x:Name="signoutButton" Content="Sign out" Width="120" Margin="8,0,0,0"
+                            Style="{DynamicResource SecondaryButtonStyle}" Click="on_signout_click"/>
+                </StackPanel>
+                <CheckBox x:Name="offlineCheck" Content="Use sample data (offline demo)"
+                          Style="{DynamicResource DefaultCheckBoxStyle}" Margin="0,10,0,0"
+                          Click="on_offline_toggled"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Project mapping -->
+        <Border Grid.Row="2" Style="{DynamicResource PanelBorderStyle}">
+            <StackPanel Margin="10">
+                <TextBlock Text="Project mapping" Style="{DynamicResource SubheaderTextBlockStyle}" Margin="0,0,0,8"/>
+                <TextBlock x:Name="currentMappingText" Text="This model is not mapped to a CDE project."
+                           Style="{DynamicResource StatusTextBlockStyle}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+
+                <TextBlock Text="Project" Style="{DynamicResource LabelTextBlockStyle}" Margin="0,0,0,4"/>
+                <ComboBox x:Name="projectCombo" Style="{DynamicResource DefaultComboBoxStyle}"
+                          DisplayMemberPath="name" SelectionChanged="on_project_changed" Margin="0,0,0,10"/>
+
+                <TextBlock Text="Revision" Style="{DynamicResource LabelTextBlockStyle}" Margin="0,0,0,4"/>
+                <ComboBox x:Name="revisionCombo" Style="{DynamicResource DefaultComboBoxStyle}"
+                          DisplayMemberPath="name" Margin="0,0,0,10"/>
+
+                <Button x:Name="mapButton" Content="Map this model to selected project"
+                        Style="{DynamicResource DefaultButtonStyle}" Click="on_map_click"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Status bar -->
+        <Border Grid.Row="3" Style="{DynamicResource StatusBarBorderStyle}" Margin="0,12,0,0">
+            <TextBlock x:Name="statusText" Text="Ready."
+                       Style="{DynamicResource StatusTextBlockStyle}" Margin="6,3,6,3"/>
+        </Border>
+    </Grid>
+</Window>
