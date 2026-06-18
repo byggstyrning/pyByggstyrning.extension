@@ -8,6 +8,14 @@
         ShowInTaskbar="True"
         Background="{DynamicResource WindowBackgroundBrush}">
 
+    <Window.Resources>
+        <!-- DisplayMemberPath fails on IronPython objects; bind DisplayName instead. -->
+        <DataTemplate x:Key="CdeComboItemTemplate">
+            <TextBlock Text="{Binding DisplayName}"
+                       Foreground="{DynamicResource TextBrush}"/>
+        </DataTemplate>
+    </Window.Resources>
+
     <Grid Margin="{DynamicResource GridMargin}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -47,11 +55,13 @@
 
                 <TextBlock Text="Project" Style="{DynamicResource LabelTextBlockStyle}" Margin="0,0,0,4"/>
                 <ComboBox x:Name="projectCombo" Style="{DynamicResource DefaultComboBoxStyle}"
-                          DisplayMemberPath="name" SelectionChanged="on_project_changed" Margin="0,0,0,10"/>
+                          ItemTemplate="{StaticResource CdeComboItemTemplate}"
+                          SelectionChanged="on_project_changed" Margin="0,0,0,10"/>
 
-                <TextBlock Text="Revision" Style="{DynamicResource LabelTextBlockStyle}" Margin="0,0,0,4"/>
-                <ComboBox x:Name="revisionCombo" Style="{DynamicResource DefaultComboBoxStyle}"
-                          DisplayMemberPath="name" Margin="0,0,0,10"/>
+                <TextBlock Text="Models" Style="{DynamicResource LabelTextBlockStyle}" Margin="0,0,0,4"/>
+                <ComboBox x:Name="modelCombo" Style="{DynamicResource DefaultComboBoxStyle}"
+                          ItemTemplate="{StaticResource CdeComboItemTemplate}"
+                          Margin="0,0,0,10"/>
 
                 <Button x:Name="mapButton" Content="Map this model to selected project"
                         Style="{DynamicResource DefaultButtonStyle}" Click="on_map_click"/>

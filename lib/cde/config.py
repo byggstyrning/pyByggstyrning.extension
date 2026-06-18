@@ -21,11 +21,13 @@ DEFAULT_BASE_URL = "https://nobelhub-api.byggstyrning.se"
 CONFIG_SECTION = "CDE"
 CONFIG_KEY_BASE_URL = "baseUrl"
 
-# Loopback redirect used to capture the OIDC ``code``. We try ports in this
-# range until one binds (locked-down machines may reserve some).
+# Loopback redirect used to capture the OIDC ``code``. Must match the URI
+# whitelisted on the CDE backend.
 LOOPBACK_HOST = "localhost"
-LOOPBACK_PORT_RANGE = range(48800, 48820)
+LOOPBACK_PORT = 48800
 LOOPBACK_CALLBACK_PATH = "/callback"
+LOOPBACK_REDIRECT_URI = "http://{}:{}{}".format(
+    LOOPBACK_HOST, LOOPBACK_PORT, LOOPBACK_CALLBACK_PATH)
 
 # How many seconds to wait for the user to complete the browser login.
 LOGIN_TIMEOUT_SECONDS = 300
@@ -33,6 +35,22 @@ LOGIN_TIMEOUT_SECONDS = 300
 # Treat a token as expired this many seconds before its real expiry, to avoid
 # racing the backend clock.
 TOKEN_EXPIRY_SKEW_SECONDS = 60
+
+# Cloudflare on nobelhub-api blocks default Python-urllib signatures (Error 1010).
+# Use a normal browser UA plus a product token the API owner can allowlist.
+HTTP_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 "
+    "pyByggstyrning-pyRevit/1.0"
+)
+
+
+def apply_http_headers(req, extra=None):
+    """Apply default headers expected by the CDE API / Cloudflare edge."""
+    req.add_header("User-Agent", HTTP_USER_AGENT)
+    req.add_header("Accept", "application/json")
+    for key, value in (extra or {}).items():
+        req.add_header(key, value)
 
 
 # --- Per-user base URL ----------------------------------------------------
@@ -98,6 +116,11 @@ def auth_exchange_url(base_url=None):
 
 def projects_url(base_url=None):
     return "{}/api/v1/projects".format(base_url or get_base_url())
+
+
+def live_drops_url(project_id, base_url=None):
+    return "{}/api/v1/projects/{}/live-drops".format(
+        base_url or get_base_url(), project_id)
 
 
 def project_api_keys_url(project_id, base_url=None):

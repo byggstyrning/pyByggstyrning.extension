@@ -38,7 +38,7 @@ class CDEClient(object):
 
     def _send(self, url, method="GET", payload=None):
         data = None
-        headers = {"Accept": "application/json"}
+        headers = {}
         headers.update(self.auth.authorized_header())
         if payload is not None:
             data = json.dumps(payload).encode("utf-8")
@@ -46,8 +46,7 @@ class CDEClient(object):
 
         req = urllib2.Request(url, data=data)
         req.get_method = lambda: method
-        for key, value in headers.items():
-            req.add_header(key, value)
+        config.apply_http_headers(req, extra=headers)
 
         try:
             response = urllib2.urlopen(req)

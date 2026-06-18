@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """Loopback redirect listener for the interactive OIDC login.
 
-Starts a ``System.Net.HttpListener`` on a free loopback port, hands its URL to
-the CDE backend as ``return_to``, and captures the ``?code=`` (or ``?error=``)
+Starts a ``System.Net.HttpListener`` on ``http://localhost:48800/callback``, hands
+that URL to the CDE backend as ``return_to``, and captures the ``?code=`` (or ``?error=``)
 that the backend redirects back with. Runs the blocking listen loop on a
 background .NET thread; nothing here touches the Revit API, so it is safe off
 the UI thread.
@@ -30,6 +30,18 @@ _SUCCESS_HTML = (
     "</body></html>"
 )
 
+# Only one loopback listener should be active at a time. Stopping the previous
+# instance before bind frees localhost:48800 when a prior login was abandoned.
+_active_listener = None
+
+
+def stop_active_listener():
+    """Stop whichever loopback listener is currently bound, if any."""
+    global _active_listener
+    listener = _active_listener
+    if listener is not None:
+        listener.stop()
+
 
 class LoopbackRedirectListener(object):
     """One-shot loopback listener that captures the OIDC redirect code."""
@@ -46,33 +58,37 @@ class LoopbackRedirectListener(object):
     def redirect_uri(self):
         if self._port is None:
             return None
-        return "http://{}:{}{}".format(
-            config.LOOPBACK_HOST, self._port, config.LOOPBACK_CALLBACK_PATH)
+        return config.LOOPBACK_REDIRECT_URI
 
     def start(self):
-        """Bind to the first available loopback port and start listening."""
-        last_ex = None
-        for port in config.LOOPBACK_PORT_RANGE:
-            listener = HttpListener()
-            # HttpListener prefixes must end with '/'.
-            prefix = "http://{}:{}{}/".format(
-                config.LOOPBACK_HOST, port,
-                config.LOOPBACK_CALLBACK_PATH.rstrip("/"))
-            listener.Prefixes.Add(prefix)
-            try:
-                listener.Start()
-            except Exception as ex:
-                last_ex = ex
-                continue
-            self._listener = listener
-            self._port = port
-            self._thread = Thread(ThreadStart(self._listen_loop))
-            self._thread.IsBackground = True
-            self._thread.Start()
-            logger.debug("CDE: loopback listening on {}".format(prefix))
-            return self.redirect_uri
-        raise IOError(
-            "Could not bind a loopback port for OIDC redirect: {}".format(last_ex))
+        """Bind to the fixed loopback redirect URI and start listening."""
+        global _active_listener
+
+        if _active_listener is not None and _active_listener is not self:
+            logger.debug("CDE: stopping previous loopback listener before bind")
+            _active_listener.stop()
+
+        port = config.LOOPBACK_PORT
+        listener = HttpListener()
+        # HttpListener prefixes must end with '/'.
+        prefix = "http://{}:{}{}/".format(
+            config.LOOPBACK_HOST, port,
+            config.LOOPBACK_CALLBACK_PATH.rstrip("/"))
+        listener.Prefixes.Add(prefix)
+        try:
+            listener.Start()
+        except Exception as ex:
+            raise IOError(
+                "Could not bind {} for OIDC redirect: {}".format(
+                    config.LOOPBACK_REDIRECT_URI, ex))
+        self._listener = listener
+        self._port = port
+        self._thread = Thread(ThreadStart(self._listen_loop))
+        self._thread.IsBackground = True
+        self._thread.Start()
+        _active_listener = self
+        logger.debug("CDE: loopback listening on {}".format(prefix))
+        return self.redirect_uri
 
     def _listen_loop(self):
         try:
@@ -89,8 +105,10 @@ class LoopbackRedirectListener(object):
                 self._respond(context, _SUCCESS_HTML)
 
                 if code or error:
-                    self.code = code
-                    self.error = error
+                    if code and self.code is None:
+                        self.code = code
+                    if error:
+                        self.error = error
                     self._done.Set()
                     break
         except Exception as ex:
@@ -122,14 +140,37 @@ class LoopbackRedirectListener(object):
         return self.code
 
     def stop(self):
+        """Stop listening and unblock any thread waiting on :meth:`wait_for_code`."""
+        global _active_listener
+        if _active_listener is self:
+            _active_listener = None
+
         listener = self._listener
         self._listener = None
+        self._port = None
+
         if listener is not None:
             try:
-                listener.Stop()
+                if listener.IsListening:
+                    listener.Stop()
                 listener.Close()
+            except Exception as ex:
+                logger.debug("CDE: error stopping loopback listener: {}".format(ex))
+
+        thread = self._thread
+        self._thread = None
+        if thread is not None and thread.IsAlive:
+            try:
+                thread.Join(2000)
             except Exception:
                 pass
+
+        if self.code or self.error:
+            if not self._done.WaitOne(0):
+                self._done.Set()
+        elif not self._done.WaitOne(0):
+            self.error = "Login cancelled."
+            self._done.Set()
 
     def __enter__(self):
         return self

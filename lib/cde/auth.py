@@ -18,7 +18,7 @@ clr.AddReference("System")
 from pyrevit import script
 
 from cde import config
-from cde.oidc_listener import LoopbackRedirectListener
+from cde.oidc_listener import LoopbackRedirectListener, stop_active_listener
 
 logger = script.get_logger()
 
@@ -30,15 +30,24 @@ def _post_json(url, payload, headers=None):
     """
     data = json.dumps(payload).encode("utf-8")
     req = urllib2.Request(url, data=data)
+    config.apply_http_headers(req, extra=headers)
     req.add_header("Content-Type", "application/json; charset=utf-8")
-    req.add_header("Accept", "application/json")
-    for key, value in (headers or {}).items():
-        req.add_header(key, value)
     response = urllib2.urlopen(req)
     body = response.read()
     if not body:
         return {}
     return json.loads(body)
+
+
+def _read_http_error_body(ex):
+    """Return a truncated response body from an HTTPError, if any."""
+    try:
+        raw = ex.read()
+        if not raw:
+            return ""
+        return raw.decode("utf-8", errors="replace")[:500]
+    except Exception:
+        return ""
 
 
 def _open_browser(url):
@@ -70,6 +79,7 @@ class CDEAuthClient(object):
         self.user = None
         self.api_key = None
         self.last_error = None
+        self._login_listener = None
         self._load()
 
     # --- state ----------------------------------------------------------
@@ -98,15 +108,27 @@ class CDEAuthClient(object):
 
     # --- interactive login ---------------------------------------------
 
+    def cancel_login(self):
+        """Abort an in-flight browser login and release the loopback listener."""
+        listener = self._login_listener
+        if listener is not None:
+            listener.stop()
+            self._login_listener = None
+
     def login_interactive(self, timeout_seconds=None):
         """Run the full browser redirect login. Returns True on success."""
         self.last_error = None
+        self.cancel_login()
+        stop_active_listener()
+
         listener = LoopbackRedirectListener()
+        self._login_listener = listener
         try:
             redirect_uri = listener.start()
         except Exception as ex:
             self.last_error = "Could not start local login listener: {}".format(ex)
             logger.error("CDE: {}".format(self.last_error))
+            self._login_listener = None
             return False
 
         try:
@@ -119,7 +141,11 @@ class CDEAuthClient(object):
 
             code = listener.wait_for_code(timeout_seconds)
             if listener.error:
-                self.last_error = "Login failed: {}".format(listener.error)
+                if listener.error == "Login cancelled.":
+                    self.last_error = listener.error
+                    logger.debug("CDE: interactive login cancelled")
+                else:
+                    self.last_error = "Login failed: {}".format(listener.error)
                 return False
             if not code:
                 self.last_error = "No authorization code received."
@@ -128,12 +154,18 @@ class CDEAuthClient(object):
             return self._exchange_code(code)
         finally:
             listener.stop()
+            if self._login_listener is listener:
+                self._login_listener = None
 
     def _exchange_code(self, code):
         try:
-            result = _post_json(config.auth_exchange_url(self.base_url), {"code": code})
+            result = _post_json(
+                config.auth_exchange_url(self.base_url), {"code": code})
         except urllib2.HTTPError as ex:
-            self.last_error = "Token exchange failed: HTTP {} {}".format(ex.code, ex.reason)
+            body = _read_http_error_body(ex)
+            self.last_error = "Token exchange failed: HTTP {} {}{}".format(
+                ex.code, ex.reason,
+                " - {}".format(body) if body else "")
             logger.error("CDE: {}".format(self.last_error))
             return False
         except Exception as ex:

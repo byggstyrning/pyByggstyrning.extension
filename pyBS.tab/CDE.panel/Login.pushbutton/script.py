@@ -1,17 +1,19 @@
 # -*- coding: utf-8 -*-
-"""Sign in to the CDE and map this Revit model to a CDE project + revision.
+"""Sign in to the CDE and map this Revit model to a CDE project + model.
 
 Runs the interactive Azure-OIDC redirect login (brokered by the CDE backend),
-lists the user's projects/revisions and persists the chosen mapping into the
+lists the user's projects/models and persists the chosen mapping into the
 model via Extensible Storage. An offline "sample data" mode lets the flow be
 exercised without a live backend.
 """
 __title__ = "CDE\nLogin"
 __author__ = "Byggstyrning AB"
-__doc__ = "Sign in to the CDE and map this model to a CDE project + revision."
+__doc__ = "Sign in to the CDE and map this model to a CDE project + model."
 
+import json
 import os.path as op
 import sys
+import time
 
 import clr
 clr.AddReference("PresentationFramework")
@@ -31,20 +33,49 @@ if _lib_path not in sys.path:
     sys.path.insert(0, _lib_path)
 
 from styles import load_styles_to_window
-from cde import config, storage
+from cde import config as cde_config
+import cde.service as cde_service
+reload(cde_config)
+reload(cde_service)
+from cde import storage
 from cde.auth import CDEAuthClient
 from cde.service import CDEService, MockCDEService
 
 logger = script.get_logger()
 doc = revit.doc
+_DEBUG_LOG = op.join(_pushbutton_dir, "debug-cde-login.log")
 
 
-class _ComboItem(object):
-    """Display wrapper so ComboBox.DisplayMemberPath='name' is reliable."""
+def _debug_log(message, data=None, hypothesis_id=None):
+    """NDJSON debug log for Login dropdown verification."""
+    try:
+        entry = {
+            "timestamp": int(time.time() * 1000),
+            "message": message,
+            "data": data or {},
+        }
+        if hypothesis_id:
+            entry["hypothesisId"] = hypothesis_id
+        with open(_DEBUG_LOG, "a") as log_file:
+            log_file.write(json.dumps(entry) + "\n")
+    except Exception as ex:
+        logger.debug("CDE Login debug log failed: {}".format(ex))
 
-    def __init__(self, name, value):
-        self.name = name
+
+class _ComboItem(forms.Reactive):
+    """ComboBox row; ItemTemplate binds DisplayName (IronPython-safe)."""
+
+    def __init__(self, display_name, value):
+        super(_ComboItem, self).__init__()
+        self._display_name = display_name or ""
         self.value = value
+
+    @property
+    def DisplayName(self):
+        return self._display_name
+
+    def ToString(self):
+        return self._display_name
 
 
 class LoginWindow(forms.WPFWindow):
@@ -56,7 +87,10 @@ class LoginWindow(forms.WPFWindow):
 
         self.auth = CDEAuthClient()
         self.offline = False
+        self._closing = False
         self.service = self._make_service()
+
+        self.Closing += self.window_closing
 
         self._refresh_account()
         self._refresh_current_mapping()
@@ -111,6 +145,8 @@ class LoginWindow(forms.WPFWindow):
             return self.auth.login_interactive()
 
         def done(success, error):
+            if self._closing:
+                return
             self.loginButton.IsEnabled = True
             if error is not None:
                 self._set_status("Login error: {}".format(error))
@@ -127,7 +163,7 @@ class LoginWindow(forms.WPFWindow):
     def on_signout_click(self, sender, args):
         self.auth.logout()
         self.projectCombo.ItemsSource = None
-        self.revisionCombo.ItemsSource = None
+        self.modelCombo.ItemsSource = None
         self._refresh_account()
         self._set_status("Signed out.")
 
@@ -139,9 +175,9 @@ class LoginWindow(forms.WPFWindow):
             self._load_projects_async()
         else:
             self.projectCombo.ItemsSource = None
-            self.revisionCombo.ItemsSource = None
+            self.modelCombo.ItemsSource = None
 
-    # --- projects / revisions ------------------------------------------
+    # --- projects / models ---------------------------------------------
 
     def _load_projects_async(self):
         self._set_status("Loading projects...")
@@ -151,11 +187,18 @@ class LoginWindow(forms.WPFWindow):
 
         def done(projects, error):
             if error is not None:
+                _debug_log("list_projects_error", {"error": str(error)}, "H1")
                 self._set_status("Could not load projects: {}".format(error))
                 return
             items = [_ComboItem(p.name, p) for p in (projects or [])]
             self.projectCombo.ItemsSource = items
-            self._set_status("Loaded {} project(s).".format(len(items)))
+            sample_label = items[0].DisplayName if items else ""
+            _debug_log("list_projects_done", {
+                "count": len(items),
+                "sample_label": sample_label,
+                "uses_list_models": hasattr(self.service, "list_models"),
+            }, "H1")
+            self._set_status("Loaded {} active project(s).".format(len(items)))
             self._preselect_mapping()
 
         self._run_async(work, done)
@@ -165,25 +208,49 @@ class LoginWindow(forms.WPFWindow):
         if item is None:
             return
         project = item.value
-        self._set_status("Loading revisions...")
+        self._set_status("Loading models...")
 
         def work():
-            return self.service.list_revisions(project.id)
+            return self.service.list_models(project.id)
 
-        def done(revisions, error):
+        def done(models, error):
             if error is not None:
-                self._set_status("Could not load revisions: {}".format(error))
+                _debug_log("list_models_error", {
+                    "project_id": project.id,
+                    "error": str(error),
+                }, "H2")
+                self._set_status("Could not load models: {}".format(error))
                 return
-            items = [_ComboItem(r.name, r) for r in (revisions or [])]
-            self.revisionCombo.ItemsSource = items
-            # Default to the current revision when present.
-            for i, it in enumerate(items):
-                if getattr(it.value, "is_current", False):
-                    self.revisionCombo.SelectedIndex = i
-                    break
-            self._set_status("Loaded {} revision(s).".format(len(items)))
+            items = [_ComboItem(m.name, m) for m in (models or [])]
+            self.modelCombo.ItemsSource = items
+            projected = [m for m in (models or []) if m.is_projected]
+            if projected:
+                for i, it in enumerate(items):
+                    if it.value.is_projected:
+                        self.modelCombo.SelectedIndex = i
+                        break
+            self._preselect_model(mapping_revision_id=(
+                storage.load_mapping(doc) or {}).get("revision_id"))
+            sample_names = [m.name for m in (models or [])[:3]]
+            _debug_log("list_models_done", {
+                "project_id": project.id,
+                "count": len(items),
+                "projected": len(projected),
+                "sample_names": sample_names,
+            }, "H2")
+            self._set_status("Loaded {} model(s), {} projected.".format(
+                len(items), len(projected)))
 
         self._run_async(work, done)
+
+    def _preselect_model(self, mapping_revision_id=None):
+        if not mapping_revision_id:
+            return
+        for i in range(self.modelCombo.Items.Count):
+            item = self.modelCombo.Items[i]
+            if item.value.id == mapping_revision_id:
+                self.modelCombo.SelectedIndex = i
+                break
 
     def _preselect_mapping(self):
         mapping = storage.load_mapping(doc)
@@ -200,7 +267,7 @@ class LoginWindow(forms.WPFWindow):
     def _refresh_current_mapping(self):
         mapping = storage.load_mapping(doc)
         if mapping:
-            self.currentMappingText.Text = "Mapped to '{}' (revision {}).".format(
+            self.currentMappingText.Text = "Mapped to '{}' (model {}).".format(
                 mapping["project_name"] or mapping["project_id"],
                 mapping["revision_id"] or "n/a")
         else:
@@ -212,16 +279,35 @@ class LoginWindow(forms.WPFWindow):
             self._set_status("Select a project first.")
             return
         project = project_item.value
-        revision_item = self.revisionCombo.SelectedItem
-        revision_id = revision_item.value.id if revision_item is not None else ""
+        model_item = self.modelCombo.SelectedItem
+        if model_item is None:
+            self._set_status("Select a model first.")
+            return
+        model = model_item.value
+        if not model.id:
+            self._set_status(
+                "Selected model is not projected yet (no revision id). "
+                "Wait for CDE ingest to finish.")
+            return
+        revision_id = model.id
 
         ok = storage.save_mapping(
-            doc, project.id, project.name, revision_id, config.get_base_url())
+            doc, project.id, project.name, revision_id, cde_config.get_base_url())
         if ok:
             self._refresh_current_mapping()
-            self._set_status("Model mapped to '{}'.".format(project.name))
+            self._set_status("Model mapped to '{}' / {}.".format(
+                project.name, model.name))
         else:
             self._set_status("Failed to save mapping (see log).")
+
+    # --- lifecycle ------------------------------------------------------
+
+    def window_closing(self, sender, args):
+        self._closing = True
+        try:
+            self.auth.cancel_login()
+        except Exception as ex:
+            logger.debug("CDE: error cancelling login on close: {}".format(ex))
 
 
 if __name__ == "__main__":

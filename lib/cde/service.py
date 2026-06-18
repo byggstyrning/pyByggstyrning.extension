@@ -23,6 +23,8 @@ logger = script.get_logger()
 
 Project = namedtuple("Project", ["id", "name"])
 Revision = namedtuple("Revision", ["id", "name", "is_current"])
+# id = NgModelRevision id (GraphQL revisionId); name = IFC file name.
+Model = namedtuple("Model", ["id", "name", "version_id", "file_id", "is_projected"])
 # value_type: "string" | "bool" | "number" | "enum"
 ParameterDef = namedtuple(
     "ParameterDef", ["key", "label", "value_type", "allowed_values", "group"])
@@ -46,16 +48,66 @@ class CDEService(object):
     # --- projects / revisions ------------------------------------------
 
     def list_projects(self):
-        """Return [Project]. Confirmed-ish: GET /api/v1/projects."""
+        """Return active [Project]. GET /api/v1/projects (``is_active`` only)."""
         data = self.client.get(config.projects_url(self.client.base_url))
         items = data.get("projects", data) if isinstance(data, dict) else data
+        logger.info("CDE: list_projects raw count={}".format(len(items or [])))
+        if items:
+            sample = items[0]
+            if isinstance(sample, dict):
+                logger.debug("CDE: list_projects sample keys={}".format(
+                    sorted(sample.keys())))
         projects = []
         for item in (items or []):
+            if not item.get("is_active", False):
+                continue
             pid = item.get("id") or item.get("project_id")
             name = item.get("name") or item.get("display_name") or str(pid)
             if pid:
                 projects.append(Project(str(pid), name))
+        logger.info("CDE: list_projects active count={}".format(len(projects)))
         return projects
+
+    def list_models(self, project_id):
+        """Return [Model] (IFC live drops) for a project.
+
+        Uses GET /api/v1/projects/{id}/live-drops. ``Model.id`` is the
+        projected NgModelRevision id (GraphQL ``revisionId``).
+        """
+        data = self.client.get(
+            config.live_drops_url(project_id, self.client.base_url))
+        items = data if isinstance(data, list) else (data or {}).get("items", [])
+        logger.info("CDE: list_models project={} raw count={}".format(
+            project_id, len(items or [])))
+        if items:
+            sample = items[0]
+            if isinstance(sample, dict):
+                logger.debug("CDE: list_models sample keys={}".format(
+                    sorted(sample.keys())))
+                ingest = sample.get("ingest")
+                if isinstance(ingest, dict):
+                    logger.debug("CDE: list_models sample ingest keys={}".format(
+                        sorted(ingest.keys())))
+        models = []
+        for item in (items or []):
+            ingest = item.get("ingest") or {}
+            revision_id = ingest.get("revisionId") or ingest.get("revision_id")
+            name = (item.get("original_name") or item.get("name")
+                    or str(item.get("version_id") or ""))
+            version_id = item.get("version_id")
+            file_id = item.get("file_id")
+            is_projected = bool(revision_id) or bool(ingest.get("projected"))
+            models.append(Model(
+                str(revision_id) if revision_id else "",
+                name,
+                str(version_id) if version_id else "",
+                str(file_id) if file_id else "",
+                is_projected))
+        logger.info("CDE: list_models project={} projected count={}/{}".format(
+            project_id,
+            sum(1 for m in models if m.is_projected),
+            len(models)))
+        return models
 
     def list_revisions(self, project_id):
         """Return [Revision] for a project.
@@ -184,6 +236,12 @@ class MockCDEService(object):
     def list_revisions(self, project_id):
         return [Revision("rev-2", "Revision 2", True),
                 Revision("rev-1", "Revision 1", False)]
+
+    def list_models(self, project_id):
+        return [
+            Model("rev-2", "Demo-Model-A.ifc", "ver-2", "file-2", True),
+            Model("rev-1", "Demo-Model-B.ifc", "ver-1", "file-1", True),
+        ]
 
     def get_parameter_defs(self, project_id, ifc_class=DEFAULT_IFC_CLASS):
         return [

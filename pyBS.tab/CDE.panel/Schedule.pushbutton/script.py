@@ -100,6 +100,8 @@ class ScheduleWindow(forms.WPFWindow):
         self._revit_infos = {}
         self._runner = ExternalEventRunner()
         self._watcher = ActiveViewWatcher(self.uiapp, self._on_active_view_changed)
+        # Capture module refs for ExternalEvent callbacks (pyRevit may dispose script scope).
+        self._logger = logger
 
         self._init_combos()
         self.mapping = storage.load_mapping(self.doc)
@@ -163,7 +165,7 @@ class ScheduleWindow(forms.WPFWindow):
                     infos[guid] = matching.get_revit_info(doc, element, self.vm.ifc_class)
             self._revit_infos = infos
         except Exception as ex:
-            logger.error("CDE: collect Revit failed: {}".format(ex))
+            self._logger.error("CDE: collect Revit failed: {}".format(ex))
             self._revit_infos = {}
         # Step 2: hop back to the UI thread to fetch CDE data.
         self.Dispatcher.Invoke(Action(self._fetch_cde))
@@ -239,7 +241,7 @@ class ScheduleWindow(forms.WPFWindow):
             if path:
                 view.GroupDescriptions.Add(PropertyGroupDescription(path))
         except Exception as ex:
-            logger.debug("CDE: grouping failed: {}".format(ex))
+            self._logger.debug("CDE: grouping failed: {}".format(ex))
 
     def on_category_changed(self, sender, args):
         if self.IsLoaded:
