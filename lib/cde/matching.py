@@ -88,6 +88,22 @@ def build_guid_index(doc, ifc_class, view=None):
     return index
 
 
+def collect_revit_infos(doc, ifc_class, view=None, include_params=False, param_reader=None):
+    """Return {global_id: revit_info} in a single collector pass (no re-GetElement)."""
+    infos = {}
+    for element in collect_revit_elements(doc, ifc_class, view):
+        guid = read_ifc_guid(element)
+        if not guid:
+            continue
+        info = get_revit_info(doc, element, ifc_class)
+        if include_params and param_reader is not None:
+            info["revit_params"] = param_reader(element)
+        else:
+            info["revit_params"] = {}
+        infos[guid] = info
+    return infos
+
+
 def get_active_view_guids(doc, view, ifc_class):
     """Return the set of IFC GlobalIds present in ``view``."""
     return set(build_guid_index(doc, ifc_class, view).keys())
@@ -152,3 +168,121 @@ def get_revit_info(doc, element, ifc_class="IfcDoor"):
     if ifc_class == "IfcDoor":
         info["from_room"], info["to_room"] = get_door_rooms(element)
     return info
+
+
+# --- Revit parameter scan (schedule column source) -------------------------
+
+REVIT_KEY_PREFIX = "Revit:"
+
+
+def _revit_param_key(name):
+    return "{}{}".format(REVIT_KEY_PREFIX, name)
+
+
+def _revit_value_type(param):
+    """Map a Revit parameter to schedule value_type (best-effort)."""
+    try:
+        from Autodesk.Revit.DB import StorageType
+        st = param.StorageType
+        if st == StorageType.Integer:
+            try:
+                from Autodesk.Revit.DB import ParameterType
+                if param.Definition.ParameterType == ParameterType.YesNo:
+                    return "bool"
+            except Exception:
+                pass
+            return "number"
+        if st == StorageType.Double:
+            return "number"
+    except Exception:
+        pass
+    return "string"
+
+
+def _read_param_value(param):
+    """Read a parameter value into a Python type suitable for the grid."""
+    try:
+        from Autodesk.Revit.DB import StorageType
+        if not param.HasValue:
+            return ""
+        st = param.StorageType
+        if st == StorageType.Integer:
+            try:
+                from Autodesk.Revit.DB import ParameterType
+                if param.Definition.ParameterType == ParameterType.YesNo:
+                    return bool(param.AsInteger())
+            except Exception:
+                pass
+            return param.AsInteger()
+        if st == StorageType.Double:
+            return param.AsDouble()
+        if st == StorageType.String:
+            return param.AsString() or ""
+        if st == StorageType.ElementId:
+            return param.AsValueString() or ""
+    except Exception:
+        pass
+    try:
+        return param.AsValueString() or ""
+    except Exception:
+        return ""
+
+
+def read_revit_parameters(element):
+    """Return {param_key: value} for instance/type params on one element."""
+    values = {}
+    try:
+        for param in element.Parameters:
+            if param is None or param.IsReadOnly:
+                continue
+            try:
+                name = param.Definition.Name
+            except Exception:
+                continue
+            if not name:
+                continue
+            key = _revit_param_key(name)
+            values[key] = _read_param_value(param)
+    except Exception:
+        pass
+    return values
+
+
+def collect_revit_parameter_defs(doc, revit_infos, param_def_fn, max_elements=25):
+    """Scan matched Revit elements and return ParameterDef rows (source=revit)."""
+    defs = []
+    seen = set()
+    count = 0
+    for info in (revit_infos or {}).values():
+        if count >= max_elements:
+            break
+        eid = info.get("element_id")
+        if eid is None:
+            continue
+        try:
+            element = doc.GetElement(eid)
+        except Exception:
+            continue
+        if element is None:
+            continue
+        count += 1
+        try:
+            for param in element.Parameters:
+                if param is None or param.IsReadOnly:
+                    continue
+                try:
+                    name = param.Definition.Name
+                except Exception:
+                    continue
+                if not name:
+                    continue
+                key = _revit_param_key(name)
+                if key in seen:
+                    continue
+                seen.add(key)
+                defs.append(param_def_fn(
+                    key, name, _revit_value_type(param), group="Revit", source="revit"))
+        except Exception:
+            pass
+    defs.sort(key=lambda d: d.label.upper())
+    return defs

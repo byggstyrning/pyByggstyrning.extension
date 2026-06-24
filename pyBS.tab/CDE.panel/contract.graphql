@@ -1,0 +1,240 @@
+"""Read-only GraphQL contract for next-generation CDE (v0 draft)."""
+schema {
+  query: Query
+}
+
+type Query {
+  modelRevision(projectId: ID!, modelId: ID!, revisionRef: String!): ModelRevision
+  element(projectId: ID!, revisionId: ID!, globalId: String!): Element
+  elements(projectId: ID!, revisionId: ID!, filter: ElementFilterInput, first: Int = 50, after: String): ElementConnection!
+  relationships(projectId: ID!, revisionId: ID!, globalId: String, first: Int = 50, after: String): RelationshipConnection!
+  mutation(id: ID!): MutationView
+  mutations(projectId: ID!, state: MutationState, first: Int = 50, after: String): MutationConnection!
+  conflicts(projectId: ID!, globalId: String, mutationId: ID, first: Int = 50, after: String): ConflictConnection!
+  auditTrail(projectId: ID!, entityType: String!, entityId: ID!, first: Int = 50, after: String): AuditEventConnection!
+  recipe(id: ID!): RecipeView
+}
+
+type ModelRevision {
+  id: ID!
+  modelId: ID!
+  projectId: ID!
+  revisionTag: String
+  createdAt: DateTime!
+}
+
+type Element {
+  globalId: String!
+  ifcClass: String!
+  name: String
+  authoredValues: [PropertyValue!]!
+  derivedValues: [PropertyValue!]!
+  effectiveValues: [PropertyValue!]!
+  ruleTrace: [RuleTrace!]!
+  relationships: [ElementRelationship!]!
+  lockInfo: LockInfo
+  etag: String
+}
+
+type PropertyValue {
+  psetName: String!
+  propertyName: String!
+  value: String
+  datatype: String
+  unit: String
+  state: ValueState
+  sourceKind: String
+}
+
+type RuleTrace {
+  ruleId: ID!
+  ruleVersion: String!
+  sourceAuthority: String
+  validationState: String
+  executedAt: DateTime
+}
+
+type LockInfo {
+  locked: Boolean!
+  owner: String
+  expiresAt: DateTime
+}
+
+type ElementRelationship {
+  relationshipRef: ID!
+  family: RelationshipFamily!
+  type: String!
+  state: RelationshipState!
+  sourceKind: String
+  confidence: Int
+  subjectGlobalId: String!
+  objectGlobalId: String!
+  direction: String
+  constraints: [DesignConstraint!]!
+  evidence: JSON
+}
+
+type DesignConstraint {
+  constraintType: String!
+  operator: String
+  value: String
+  unit: String
+  direction: String
+  connectionType: String
+  description: String
+  status: String!
+}
+
+type MutationView {
+  id: ID!
+  lane: MutationLane!
+  state: MutationState!
+  requestedBy: String
+  requestedAt: DateTime
+  startedAt: DateTime
+  finishedAt: DateTime
+  summary: MutationSummary
+}
+
+type MutationSummary {
+  totalOperations: Int
+  applied: Int
+  conflicts: Int
+  failed: Int
+}
+
+type Conflict {
+  id: ID!
+  projectId: ID!
+  globalId: String!
+  psetName: String
+  propertyName: String
+  reasonCode: String!
+  severity: String!
+  createdAt: DateTime!
+}
+
+type AuditEvent {
+  id: ID!
+  entityType: String!
+  entityId: ID!
+  action: String!
+  actorId: String
+  createdAt: DateTime!
+  correlationId: String
+}
+
+type RecipeView {
+  id: ID!
+  recipeProfile: String!
+  selectorProfile: String!
+  version: String!
+  status: String
+}
+
+type ElementConnection {
+  edges: [ElementEdge!]!
+  pageInfo: PageInfo!
+}
+
+type ElementEdge {
+  cursor: String!
+  node: Element!
+}
+
+type MutationConnection {
+  edges: [MutationEdge!]!
+  pageInfo: PageInfo!
+}
+
+type MutationEdge {
+  cursor: String!
+  node: MutationView!
+}
+
+type ConflictConnection {
+  edges: [ConflictEdge!]!
+  pageInfo: PageInfo!
+}
+
+type ConflictEdge {
+  cursor: String!
+  node: Conflict!
+}
+
+type RelationshipConnection {
+  edges: [RelationshipEdge!]!
+  pageInfo: PageInfo!
+}
+
+type RelationshipEdge {
+  cursor: String!
+  node: ElementRelationship!
+}
+
+type AuditEventConnection {
+  edges: [AuditEventEdge!]!
+  pageInfo: PageInfo!
+}
+
+type AuditEventEdge {
+  cursor: String!
+  node: AuditEvent!
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  endCursor: String
+}
+
+input ElementFilterInput {
+  ifcClasses: [String!]
+  selector: String
+}
+
+enum MutationLane {
+  batch
+  transactional
+}
+
+enum MutationState {
+  RECEIVED
+  DEDUPED
+  PLANNED
+  PRECHECK_FAILED
+  LOCKING
+  LOCKED
+  DRY_RUN_READY
+  EXECUTING
+  PARTIAL_FAILED
+  VALIDATING
+  COMMITTING
+  COMMITTED
+  COMPENSATING
+  ROLLED_BACK
+  FAILED_TERMINAL
+  CANCELLED
+  EXPIRED
+}
+
+enum ValueState {
+  assumed
+  confirmed
+  outdated
+}
+
+enum RelationshipFamily {
+  correspondence
+  spatial
+  design_intent
+  dependency
+}
+
+enum RelationshipState {
+  assumed
+  confirmed
+  outdated
+}
+
+scalar DateTime
+scalar JSON

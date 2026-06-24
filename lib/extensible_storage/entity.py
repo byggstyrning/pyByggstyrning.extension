@@ -76,6 +76,9 @@ class Entity(revit.BaseWrapper):
         data_type = determine_field_type(field)
         value = self._wrapped.Get[data_type](field, unit_type_id)
 
+        if field_name == "base_url":
+            logger.debug("Mapping base_url value: '{}'".format(value or ""))
+
         if field.ContainerType == ES.ContainerType.Array:
             return list(value)
         if field.ContainerType == ES.ContainerType.Map:

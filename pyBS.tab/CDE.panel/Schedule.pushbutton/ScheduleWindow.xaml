@@ -8,11 +8,37 @@
         ShowInTaskbar="True"
         Background="{DynamicResource WindowBackgroundBrush}">
 
+    <Window.Resources>
+        <DataTemplate x:Key="ParamItemTemplate">
+            <StackPanel Orientation="Horizontal" Margin="2,1">
+                <TextBlock Text="{Binding source_icon}" FontFamily="Segoe MDL2 Assets"
+                           Foreground="{Binding source_brush}" Width="18" FontSize="13"
+                           VerticalAlignment="Center" Margin="0,0,6,0"/>
+                <TextBlock Text="{Binding display_name}" VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextBrush}"/>
+            </StackPanel>
+        </DataTemplate>
+        <DataTemplate x:Key="ColumnPickerItemTemplate">
+            <StackPanel Orientation="Horizontal" Margin="2,1">
+                <CheckBox IsChecked="{Binding is_checked, Mode=TwoWay}"
+                          VerticalAlignment="Center" Margin="0,0,4,0"
+                          Click="on_column_picker_checked"/>
+                <TextBlock Text="{Binding source_icon}" FontFamily="Segoe MDL2 Assets"
+                           Foreground="{Binding source_brush}" Width="18" FontSize="13"
+                           VerticalAlignment="Center" Margin="0,0,6,0"/>
+                <TextBlock Text="{Binding display_name}" VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextBrush}"/>
+            </StackPanel>
+        </DataTemplate>
+    </Window.Resources>
+
     <Grid Margin="{DynamicResource GridMargin}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
+            <RowDefinition Height="2*" MinHeight="80"/>
+            <RowDefinition Height="5"/>
+            <RowDefinition Height="*" MinHeight="80"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
@@ -21,7 +47,7 @@
         <WrapPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,6">
             <TextBlock Text="Category" Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center" Margin="0,0,6,0"/>
             <ComboBox x:Name="categoryCombo" Width="130" Style="{DynamicResource DefaultComboBoxStyle}"
-                      DisplayMemberPath="name" SelectionChanged="on_category_changed"/>
+                      SelectionChanged="on_category_changed"/>
             <CheckBox x:Name="activeViewCheck" Content="Active view only" Margin="14,0,0,0"
                       VerticalAlignment="Center" Style="{DynamicResource DefaultCheckBoxStyle}"
                       Click="on_active_view_toggled"/>
@@ -38,37 +64,64 @@
         <!-- Toolbar row 2: parameter actions -->
         <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
             <TextBlock Text="Parameter" Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center" Margin="0,0,6,0"/>
-            <ComboBox x:Name="paramCombo" Width="160" Style="{DynamicResource DefaultComboBoxStyle}"
-                      DisplayMemberPath="name"/>
-            <Button x:Name="addColumnButton" Content="Add column" Width="100" Margin="8,0,0,0"
-                    Style="{DynamicResource SecondaryButtonStyle}" Click="on_add_column_click"/>
+            <ComboBox x:Name="paramCombo" Width="220"
+                      Style="{DynamicResource SearchableComboBoxStyle}"
+                      Tag="Select parameter..."
+                      ItemTemplate="{StaticResource ParamItemTemplate}"
+                      DropDownOpened="on_param_dropdown_opened"/>
+            <ComboBox x:Name="columnsCombo" Width="200" Margin="8,0,0,0"
+                      Style="{DynamicResource SearchableComboBoxStyle}"
+                      Tag="Choose columns..."
+                      ItemTemplate="{StaticResource ColumnPickerItemTemplate}"
+                      DropDownOpened="on_columns_dropdown_opened"
+                      DropDownClosed="on_columns_dropdown_closed"/>
             <Button x:Name="colorButton" Content="Color by" Width="90" Margin="8,0,0,0"
                     Style="{DynamicResource DefaultButtonStyle}" Click="on_color_click"/>
             <Button x:Name="resetColorButton" Content="Reset colors" Width="100" Margin="8,0,0,0"
                     Style="{DynamicResource SecondaryButtonStyle}" Click="on_reset_color_click"/>
-            <Button x:Name="selectButton" Content="Select in Revit" Width="120" Margin="18,0,0,0"
-                    Style="{DynamicResource SecondaryButtonStyle}" Click="on_select_click"/>
             <TextBlock Text="Set value" Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center" Margin="18,0,6,0"/>
             <TextBox x:Name="valueBox" Width="120" Style="{DynamicResource PlaceholderTextBoxStyle}" Tag="value"/>
-            <Button x:Name="setValueButton" Content="Apply to selected" Width="130" Margin="8,0,0,0"
+            <Button x:Name="setValueButton" Content="Stage on selected" Width="130" Margin="8,0,0,0"
                     Style="{DynamicResource DefaultButtonStyle}" Click="on_set_value_click"/>
+            <TextBlock x:Name="pendingCountText" Text="Pending: 0"
+                       Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center"
+                       Margin="18,0,6,0"/>
+            <Button x:Name="applyPendingButton" Content="Apply" Width="80" Margin="0,0,6,0"
+                    Style="{DynamicResource DefaultButtonStyle}" Click="on_apply_pending_click"
+                    IsEnabled="False"/>
+            <Button x:Name="discardPendingButton" Content="Discard" Width="80"
+                    Style="{DynamicResource SecondaryButtonStyle}" Click="on_discard_pending_click"
+                    IsEnabled="False"/>
         </WrapPanel>
 
         <!-- Door table -->
         <DataGrid x:Name="doorGrid" Grid.Row="2"
+                  SelectionChanged="on_grid_selection_changed"
+                  Sorting="on_grid_sorting"
+                  CellEditEnding="on_cell_edit_ending"
                   Style="{DynamicResource DefaultDataGridStyle}"
                   ColumnHeaderStyle="{DynamicResource DefaultDataGridColumnHeaderStyle}"
+                  RowHeight="28"
+                  VerticalAlignment="Stretch"
                   SelectionMode="Extended" SelectionUnit="FullRow"
-                  CanUserSortColumns="True" AutoGenerateColumns="False" IsReadOnly="True"
+                  CanUserSortColumns="True" AutoGenerateColumns="False"
                   AlternatingRowBackground="{DynamicResource BackgroundLightBrush}"
+                  EnableRowVirtualization="True"
+                  EnableColumnVirtualization="True"
+                  ScrollViewer.CanContentScroll="True"
+                  VirtualizingPanel.IsVirtualizing="True"
+                  VirtualizingPanel.VirtualizationMode="Recycling"
+                  VirtualizingPanel.ScrollUnit="Item"
+                  VirtualizingPanel.IsVirtualizingWhenGrouping="True"
+                  Loaded="on_door_grid_loaded"
                   VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
             <DataGrid.Columns>
-                <DataGridTextColumn Header="GlobalId" Binding="{Binding GlobalId}" Width="150" SortMemberPath="GlobalId"/>
-                <DataGridTextColumn Header="Mark" Binding="{Binding Mark}" Width="70" SortMemberPath="Mark"/>
-                <DataGridTextColumn Header="Level" Binding="{Binding Level}" Width="110" SortMemberPath="Level"/>
-                <DataGridTextColumn Header="From room" Binding="{Binding FromRoom}" Width="120" SortMemberPath="FromRoom"/>
-                <DataGridTextColumn Header="To room" Binding="{Binding ToRoom}" Width="120" SortMemberPath="ToRoom"/>
-                <DataGridCheckBoxColumn Header="In Revit" Binding="{Binding MatchedInRevit}" Width="70"/>
+                <DataGridTextColumn Header="GlobalId" Binding="{Binding GlobalId}" Width="150" SortMemberPath="GlobalId" IsReadOnly="True"/>
+                <DataGridTextColumn Header="Mark" Binding="{Binding Mark}" Width="70" SortMemberPath="Mark" IsReadOnly="True"/>
+                <DataGridTextColumn Header="Level" Binding="{Binding Level}" Width="110" SortMemberPath="Level" IsReadOnly="True"/>
+                <DataGridTextColumn Header="From room" Binding="{Binding FromRoom}" Width="120" SortMemberPath="FromRoom" IsReadOnly="True"/>
+                <DataGridTextColumn Header="To room" Binding="{Binding ToRoom}" Width="120" SortMemberPath="ToRoom" IsReadOnly="True"/>
+                <DataGridCheckBoxColumn Header="In Revit" Binding="{Binding MatchedInRevit}" Width="70" IsReadOnly="True"/>
             </DataGrid.Columns>
             <DataGrid.GroupStyle>
                 <GroupStyle>
@@ -87,8 +140,36 @@
             </DataGrid.GroupStyle>
         </DataGrid>
 
+        <!-- Resize splitter between table and detail panel -->
+        <GridSplitter Grid.Row="3" Height="5" HorizontalAlignment="Stretch"
+                      Background="{DynamicResource BorderBrush}" Opacity="0.4"
+                      ResizeDirection="Rows" ResizeBehavior="PreviousAndNext"/>
+
+        <!-- Element properties inspector (CDE effectiveValues for selected row) -->
+        <Grid Grid.Row="4">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <TextBlock x:Name="detailHeader" Grid.Row="0"
+                       Text="Select a row to inspect its CDE properties."
+                       Style="{DynamicResource LabelTextBlockStyle}"
+                       Margin="0,4,0,2" FontStyle="Italic"/>
+            <DataGrid x:Name="propGrid" Grid.Row="1"
+                      Style="{DynamicResource DefaultDataGridStyle}"
+                      ColumnHeaderStyle="{DynamicResource DefaultDataGridColumnHeaderStyle}"
+                      AutoGenerateColumns="False" IsReadOnly="True" CanUserSortColumns="True"
+                      SelectionMode="Single" SelectionUnit="FullRow"
+                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Property" Binding="{Binding Key}" Width="220" SortMemberPath="Key"/>
+                    <DataGridTextColumn Header="Value" Binding="{Binding Value}" Width="*"/>
+                </DataGrid.Columns>
+            </DataGrid>
+        </Grid>
+
         <!-- Legend -->
-        <ItemsControl x:Name="legendList" Grid.Row="3" Margin="0,8,0,0">
+        <ItemsControl x:Name="legendList" Grid.Row="5" Margin="0,8,0,0">
             <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>
                     <WrapPanel Orientation="Horizontal"/>
@@ -106,7 +187,7 @@
         </ItemsControl>
 
         <!-- Status bar -->
-        <Border Grid.Row="4" Style="{DynamicResource StatusBarBorderStyle}" Margin="0,8,0,0">
+        <Border Grid.Row="6" Style="{DynamicResource StatusBarBorderStyle}" Margin="0,8,0,0">
             <TextBlock x:Name="statusText" Text="Ready." Style="{DynamicResource StatusTextBlockStyle}" Margin="6,3,6,3"/>
         </Border>
     </Grid>

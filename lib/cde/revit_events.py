@@ -63,17 +63,31 @@ class ActiveViewWatcher(object):
         self._last_ms = 0
         self._enabled = False
 
-    def start(self):
+    def start(self, uiapp=None):
+        """Subscribe to ViewActivated. Must be called on the Revit API thread."""
         if self._enabled:
             return
-        self._handler = self._on_view_activated
+        if uiapp is not None:
+            self._uiapp = uiapp
+        try:
+            from Autodesk.Revit.UI.Events import ViewActivatedEventArgs
+            from System import EventHandler
+            self._handler = EventHandler[ViewActivatedEventArgs](
+                self._on_view_activated)
+        except Exception:
+            self._handler = self._on_view_activated
         try:
             self._uiapp.ViewActivated += self._handler
             self._enabled = True
         except Exception as ex:
-            logger.error("CDE: could not subscribe to ViewActivated: {}".format(ex))
+            inner = getattr(ex, "InnerException", None)
+            clr_type = ex.GetType().FullName if hasattr(ex, "GetType") else type(ex).__name__
+            logger.error(
+                "CDE: could not subscribe to ViewActivated: {} (type={}, inner={})".format(
+                    ex, clr_type, inner))
 
     def stop(self):
+        """Unsubscribe from ViewActivated. Must be called on the Revit API thread."""
         if not self._enabled:
             return
         try:

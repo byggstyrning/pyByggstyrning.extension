@@ -43,24 +43,6 @@ from cde.service import CDEService, MockCDEService
 
 logger = script.get_logger()
 doc = revit.doc
-_DEBUG_LOG = op.join(_pushbutton_dir, "debug-cde-login.log")
-
-
-def _debug_log(message, data=None, hypothesis_id=None):
-    """NDJSON debug log for Login dropdown verification."""
-    try:
-        entry = {
-            "timestamp": int(time.time() * 1000),
-            "message": message,
-            "data": data or {},
-        }
-        if hypothesis_id:
-            entry["hypothesisId"] = hypothesis_id
-        with open(_DEBUG_LOG, "a") as log_file:
-            log_file.write(json.dumps(entry) + "\n")
-    except Exception as ex:
-        logger.debug("CDE Login debug log failed: {}".format(ex))
-
 
 class _ComboItem(forms.Reactive):
     """ComboBox row; ItemTemplate binds DisplayName (IronPython-safe)."""
@@ -187,17 +169,10 @@ class LoginWindow(forms.WPFWindow):
 
         def done(projects, error):
             if error is not None:
-                _debug_log("list_projects_error", {"error": str(error)}, "H1")
                 self._set_status("Could not load projects: {}".format(error))
                 return
             items = [_ComboItem(p.name, p) for p in (projects or [])]
             self.projectCombo.ItemsSource = items
-            sample_label = items[0].DisplayName if items else ""
-            _debug_log("list_projects_done", {
-                "count": len(items),
-                "sample_label": sample_label,
-                "uses_list_models": hasattr(self.service, "list_models"),
-            }, "H1")
             self._set_status("Loaded {} active project(s).".format(len(items)))
             self._preselect_mapping()
 
@@ -215,10 +190,6 @@ class LoginWindow(forms.WPFWindow):
 
         def done(models, error):
             if error is not None:
-                _debug_log("list_models_error", {
-                    "project_id": project.id,
-                    "error": str(error),
-                }, "H2")
                 self._set_status("Could not load models: {}".format(error))
                 return
             items = [_ComboItem(m.name, m) for m in (models or [])]
@@ -231,13 +202,6 @@ class LoginWindow(forms.WPFWindow):
                         break
             self._preselect_model(mapping_revision_id=(
                 storage.load_mapping(doc) or {}).get("revision_id"))
-            sample_names = [m.name for m in (models or [])[:3]]
-            _debug_log("list_models_done", {
-                "project_id": project.id,
-                "count": len(items),
-                "projected": len(projected),
-                "sample_names": sample_names,
-            }, "H2")
             self._set_status("Loaded {} model(s), {} projected.".format(
                 len(items), len(projected)))
 

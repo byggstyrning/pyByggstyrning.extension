@@ -118,9 +118,20 @@ def projects_url(base_url=None):
     return "{}/api/v1/projects".format(base_url or get_base_url())
 
 
+def ifc_versions_url(project_id, base_url=None):
+    return "{}/api/v1/projects/{}/ifc-versions".format(
+        base_url or get_base_url(), project_id)
+
+
 def live_drops_url(project_id, base_url=None):
     return "{}/api/v1/projects/{}/live-drops".format(
         base_url or get_base_url(), project_id)
+
+
+def ingest_status_url(version_id, base_url=None):
+    """Per-version ingest status; carries the live-graph ``revisionId``."""
+    return "{}/api/v1/versions/{}/ingest-status".format(
+        base_url or get_base_url(), version_id)
 
 
 def project_api_keys_url(project_id, base_url=None):
@@ -142,3 +153,14 @@ def graph_status_url(base_url=None):
 
 def graph_overview_url(base_url=None):
     return "{}/api/v2/graph/overview".format(base_url or get_base_url())
+
+
+def mutations_url(base_url=None):
+    """POST transactional mutations (dry-run and commit)."""
+    return "{}/api/v2/mutations".format(base_url or get_base_url())
+
+
+def mutation_status_url(mutation_id, base_url=None):
+    """Poll authoritative mutation state after commit."""
+    return "{}/api/v2/mutations/{}".format(
+        base_url or get_base_url(), mutation_id)
