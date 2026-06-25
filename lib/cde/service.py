@@ -463,7 +463,7 @@ class CDEService(object):
             project_id, revision_id, ifc_class)
         self.last_fetch_mode = fetch_mode
         self.last_fetch_nodes = len(nodes)
-        if fetch_mode == "full_scan":
+        if fetch_mode in ("full_scan", "client_class_filter"):
             self.last_truncation = self._truncation(project_id, revision_id, len(nodes))
         else:
             self.last_truncation = None
@@ -501,6 +501,7 @@ class CDEService(object):
     def _fetch_element_nodes(self, project_id, revision_id, ifc_class):
         """Fetch element nodes, preferring server-side ``filter.ifcClasses``."""
         want_classes = want_ifc_classes(ifc_class)
+        salvaged = []
         if want_classes:
             filter_classes = list(DOOR_IFC_CLASSES) if (
                 want_classes == want_ifc_classes(DEFAULT_IFC_CLASS)) else list(want_classes)
@@ -513,18 +514,30 @@ class CDEService(object):
             if ok:
                 self.last_fetch_pages = pages
                 return nodes, "ifc_class_filter"
-            logger.debug("CDE: server ignored filter.ifcClasses; using capped revision scan")
-        nodes, _ok, pages = self._fetch_all_element_nodes(
+            salvaged = [
+                n for n in nodes
+                if node_matches_ifc_classes(n, want_classes)]
+            logger.debug("CDE: server ignored filter.ifcClasses; client-filter revision scan")
+        more, _ok, pages = self._fetch_all_element_nodes(
             project_id, revision_id,
             page_size=self.FULL_SCAN_PAGE_SIZE,
             filter_key=None, filter_classes=None, want_classes=None,
-            max_pages=self.FULL_SCAN_MAX_PAGES)
+            client_filter_classes=want_classes if want_classes else None,
+            max_pages=self.MAX_ELEMENT_PAGES)
+        by_gid = {n.get("globalId"): n for n in salvaged if n.get("globalId")}
+        for n in more:
+            gid = n.get("globalId")
+            if gid and gid not in by_gid:
+                by_gid[gid] = n
+        merged = list(by_gid.values())
         self.last_fetch_pages = pages
-        return nodes, "full_scan"
+        mode = "client_class_filter" if want_classes else "full_scan"
+        return merged, mode
 
     def _fetch_all_element_nodes(self, project_id, revision_id,
                                  page_size, filter_key=None,
                                  filter_classes=None, want_classes=None,
+                                 client_filter_classes=None,
                                  max_pages=None):
         """Page ``elements(projectId, revisionId, filter?, first, after)``."""
         page_limit = max_pages if max_pages is not None else self.MAX_ELEMENT_PAGES
@@ -562,15 +575,21 @@ class CDEService(object):
                 if cursor is not None:
                     seen_cursors.add(cursor)
                 node = (edge or {}).get("node") or {}
-                if node:
-                    nodes.append(node)
+                if not node:
+                    continue
+                if client_filter_classes and not node_matches_ifc_classes(
+                        node, client_filter_classes):
+                    continue
+                nodes.append(node)
             if filtered and want_classes and page_num == 0:
                 mismatched = sum(
                     1 for edge in fresh
                     if not node_matches_ifc_classes((edge or {}).get("node") or {}, want_classes))
                 if mismatched > 0:
                     filter_rejected = True
-                    nodes = []
+                    nodes = [
+                        n for n in nodes
+                        if node_matches_ifc_classes(n, want_classes)]
                     break
             next_after = page_info.get("endCursor")
             if len(nodes) == prev_total:
