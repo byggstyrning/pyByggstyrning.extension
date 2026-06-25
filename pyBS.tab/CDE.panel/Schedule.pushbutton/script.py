@@ -30,7 +30,7 @@ from System.Windows.Data import (
 from System.Windows.Controls import (
     DataGridTextColumn, DataGridCheckBoxColumn, CheckBox, TextBox, Button,
     DataGridLength, DataGridLengthUnitType, StackPanel, TextBlock,
-    Orientation, DataGridEditAction)
+    Orientation, DataGridEditAction, DataGridEditingUnit)
 from System.Windows.Media import SolidColorBrush, Color as WpfColor, FontFamily
 
 from pyrevit import forms, revit, script, HOST_APP
@@ -63,7 +63,8 @@ logger = script.get_logger()
 CATEGORIES = [("Doors", "IfcDoor"), ("Windows", "IfcWindow"), ("Walls", "IfcWall")]
 # Group-by options (label -> ElementRow property path, None = ungrouped).
 GROUP_OPTIONS = [("No grouping", None), ("Level", "Level"),
-                 ("From room", "FromRoom"), ("To room", "ToRoom")]
+                 ("From room", "FromRoom"), ("From room no.", "FromRoomNumber"),
+                 ("To room", "ToRoom"), ("To room no.", "ToRoomNumber")]
 # How many CDE properties to auto-show as columns the first time data loads.
 DEFAULT_COLUMN_COUNT = 10
 # DEBUG: temporarily disable the Revit-parameter scan to isolate the native crash.
@@ -73,7 +74,9 @@ FIXED_COLUMN_META = [
     ("GlobalId", "GlobalId", "revit"),
     ("Mark", "Mark", "revit"),
     ("Level", "Level", "revit"),
+    ("FromRoomNumber", "From no.", "revit"),
     ("FromRoom", "From room", "revit"),
+    ("ToRoomNumber", "To no.", "revit"),
     ("ToRoom", "To room", "revit"),
     ("MatchedInRevit", "In Revit", "revit"),
 ]
@@ -162,9 +165,22 @@ class _ColumnPickerItem(object):
 class CellValueConverter(IValueConverter):
     """Resolves a dynamic CDE/Revit cell value from a row + column key."""
 
+    def __init__(self, owner=None):
+        self._owner = owner
+
+    def _row_for(self, value):
+        if value is not None and hasattr(value, "get_cell"):
+            return value
+        if self._owner is not None:
+            return self._owner._row_for_grid_key(value)
+        return None
+
     def Convert(self, value, target_type, parameter, culture):
         try:
-            raw = value.get_cell(parameter)
+            row = self._row_for(value)
+            if row is None:
+                return ""
+            raw = row.get_cell(parameter)
             if isinstance(raw, bool):
                 return raw
             if raw in (0, 1, "0", "1", "True", "False", "true", "false"):
@@ -182,6 +198,27 @@ class CellValueConverter(IValueConverter):
 
 
 _BOOL_STRINGS = frozenset(["true", "false", "1", "0", "yes", "no"])
+
+
+class GroupKeyConverter(IValueConverter):
+    """Converts a string row-key to the ElementRow.GroupValue for CollectionView grouping."""
+
+    def __init__(self, owner=None):
+        self._owner = owner
+
+    def Convert(self, value, target_type, parameter, culture):
+        try:
+            if self._owner is None:
+                return u""
+            row = self._owner._row_for_grid_key(value)
+            if row is None:
+                return u""
+            return row.GroupValue
+        except Exception:
+            return u""
+
+    def ConvertBack(self, value, target_type, parameter, culture):
+        return None
 
 
 def _int_types_for_isinstance():
@@ -237,8 +274,12 @@ class ScheduleWindow(forms.WPFWindow):
         self.service = CDEService(self.auth)
 
         self.vm = ScheduleViewModel()
-        self.doorGrid.ItemsSource = CollectionViewSource.GetDefaultView(self.vm.rows)
-        self._cell_converter = CellValueConverter()
+        self._row_by_grid_key = {}
+        self._grid_items = None
+        self._cell_converter = CellValueConverter(self)
+        self._group_converter = GroupKeyConverter(self)
+        self._refresh_grid_items_from_vm()
+        self.doorGrid.ItemsSource = self._grid_items
         self._param_defs = []
         self._def_by_key = {}
         self._revit_param_defs = []
@@ -258,6 +299,7 @@ class ScheduleWindow(forms.WPFWindow):
         self._refresh_token = 0
         self._fetch_running = False
         self._apply_in_flight = False
+        self._suppress_inline_staging = False
         self._pending_restore = None
         self._detail_fetch_token = 0
         self._node_by_gid = {}
@@ -324,6 +366,7 @@ class ScheduleWindow(forms.WPFWindow):
         self._VerticalAlignment = VerticalAlignment
         self._FontFamily = FontFamily
         self._DataGridEditAction = DataGridEditAction
+        self._DataGridEditingUnit = DataGridEditingUnit
         self._ICON_GROUP = ICON_GROUP
         self._ICON_CDE = ICON_CDE
         self._ICON_REVIT = ICON_REVIT
@@ -420,6 +463,27 @@ class ScheduleWindow(forms.WPFWindow):
         self.groupCombo.ItemsSource = [_ComboItem(l, p) for l, p in GROUP_OPTIONS]
         self.groupCombo.SelectedIndex = 0
 
+    def _make_grid_key(self, index, row):
+        return "{}".format(index)
+
+    def _row_for_grid_key(self, key):
+        if key is None:
+            return None
+        if hasattr(key, "get_cell"):
+            return key
+        return self._row_by_grid_key.get(unicode(key))
+
+    def _refresh_grid_items_from_vm(self):
+        from System.Collections.ObjectModel import ObservableCollection
+        from System import Object
+        items = ObservableCollection[Object]()
+        self._row_by_grid_key = {}
+        for idx, row in enumerate(self.vm.rows):
+            key = self._make_grid_key(idx, row)
+            self._row_by_grid_key[key] = row
+            items.Add(key)
+        self._grid_items = items
+
     def _set_status(self, message):
         self.statusText.Text = message
 
@@ -449,7 +513,7 @@ class ScheduleWindow(forms.WPFWindow):
             if on_done is not None:
                 try:
                     self.Dispatcher.BeginInvoke(
-                        self._DispatcherPriority.ApplicationIdle,
+                        self._DispatcherPriority.Normal,
                         self._Action(lambda: on_done(result, error)))
                 except Exception as inv_ex:
                     self._logger.error("CDE: UI callback failed: {}".format(inv_ex))
@@ -650,22 +714,20 @@ class ScheduleWindow(forms.WPFWindow):
             self.vm.group_key = None
             self._clear_grouping()
             self.vm.set_rows(rows)
+            self._refresh_grid_items_from_vm()
             if self._pending_restore:
                 self.vm.apply_pending_snapshot(self._pending_restore)
                 self._pending_restore = None
                 self._update_pending_ui()
+                self._refresh_grid_items_from_vm()
 
             matched = sum(1 for r in rows if r.MatchedInRevit)
             cde_count = len(element_list)
             prop_count = len(self._param_defs)
             self._set_status(self._format_refresh_status(rows, matched, cde_count, prop_count))
 
-            grid_view = self._CollectionViewSource.GetDefaultView(self.vm.rows)
-            self.doorGrid.ItemsSource = grid_view
+            self.doorGrid.ItemsSource = self._grid_items
             self._apply_grouping()
-            self._logger.info(
-                "CDE: built {} rows ({} CDE, {} matched in Revit), {} prop(s) for {}".format(
-                    len(rows), cde_count, matched, prop_count, self.vm.ifc_class))
         except Exception as ex:
             self._logger.error("CDE: apply grid failed: {}".format(ex))
             self._set_status("Internal error applying grid: {}".format(ex))
@@ -720,7 +782,8 @@ class ScheduleWindow(forms.WPFWindow):
         self.vm.filter_text = self.filterBox.Text or ""
         self._clear_grouping()
         self.vm.apply_filter()
-        self.doorGrid.ItemsSource = self._CollectionViewSource.GetDefaultView(self.vm.rows)
+        self._refresh_grid_items_from_vm()
+        self.doorGrid.ItemsSource = self._grid_items
         self._apply_grouping()
 
     def on_group_changed(self, sender, args):
@@ -732,7 +795,7 @@ class ScheduleWindow(forms.WPFWindow):
 
     def _clear_grouping(self):
         try:
-            view = self._CollectionViewSource.GetDefaultView(self.vm.rows)
+            view = self._CollectionViewSource.GetDefaultView(self._grid_items)
             if view is not None:
                 view.GroupDescriptions.Clear()
         except Exception as ex:
@@ -740,7 +803,7 @@ class ScheduleWindow(forms.WPFWindow):
 
     def _apply_grouping(self):
         try:
-            view = self._CollectionViewSource.GetDefaultView(self.vm.rows)
+            view = self._CollectionViewSource.GetDefaultView(self._grid_items)
             if view is None:
                 return
             view.GroupDescriptions.Clear()
@@ -749,7 +812,8 @@ class ScheduleWindow(forms.WPFWindow):
                 item = self.groupCombo.SelectedItem
                 path = item.value if item else None
             if path:
-                view.GroupDescriptions.Add(self._PropertyGroupDescription("GroupValue"))
+                pgd = self._PropertyGroupDescription(".", self._group_converter)
+                view.GroupDescriptions.Add(pgd)
         except Exception as ex:
             self._logger.debug("CDE: grouping failed: {}".format(ex))
 
@@ -863,6 +927,10 @@ class ScheduleWindow(forms.WPFWindow):
                 if idx >= self.doorGrid.Columns.Count:
                     break
                 col = self.doorGrid.Columns[idx]
+                binding = self._Binding(".")
+                binding.Converter = self._cell_converter
+                binding.ConverterParameter = path
+                col.Binding = binding
                 col.Header = self._build_column_header(label, source, path)
                 self._set_column_key(col, path)
         except Exception as ex:
@@ -896,10 +964,24 @@ class ScheduleWindow(forms.WPFWindow):
         except Exception:
             pass
 
+    def _end_grid_edit(self, commit=False):
+        """Leave cell/row edit mode before programmatic grid refresh (avoids native crash)."""
+        try:
+            unit_cell = self._DataGridEditingUnit.Cell
+            unit_row = self._DataGridEditingUnit.Row
+            if commit:
+                self.doorGrid.CommitEdit(unit_cell, True)
+                self.doorGrid.CommitEdit(unit_row, True)
+            else:
+                self.doorGrid.CancelEdit(unit_cell)
+                self.doorGrid.CancelEdit(unit_row)
+        except Exception as ex:
+            self._logger.debug("CDE: end grid edit failed: {}".format(ex))
+
     def _refresh_grid_cells(self):
         """Rebind dynamic cells after programmatic multi-row updates."""
         try:
-            view = self._CollectionViewSource.GetDefaultView(self.vm.rows)
+            view = self._CollectionViewSource.GetDefaultView(self._grid_items)
             if view is not None:
                 view.Refresh()
         except Exception as ex:
@@ -1154,19 +1236,86 @@ class ScheduleWindow(forms.WPFWindow):
         except Exception as ex:
             self._logger.debug("CDE: sorting hook failed: {}".format(ex))
 
+    def _row_from_grid_row_container(self, row_container):
+        """Resolve ElementRow from a DataGridRow (or grid key string)."""
+        if row_container is None:
+            return None
+        item = getattr(row_container, "Item", None)
+        if item is not None and hasattr(item, "record_pending"):
+            return item
+        return self._row_for_grid_key(item)
+
     def _row_from_cell_edit(self, args):
         """Resolve ElementRow from DataGridCellEditEndingEventArgs."""
-        row_container = args.Row
-        if row_container is not None:
-            item = getattr(row_container, "Item", None)
-            if item is not None and hasattr(item, "record_pending"):
-                return item
+        row = self._row_from_grid_row_container(args.Row)
+        if row is not None:
+            return row
         editing = args.EditingElement
         if editing is not None:
             ctx = getattr(editing, "DataContext", None)
             if ctx is not None and hasattr(ctx, "record_pending"):
                 return ctx
+            row = self._row_for_grid_key(ctx)
+            if row is not None:
+                return row
         return None
+
+    def _stage_cde_cell_edit(self, key, row, new_value, show_status=True):
+        """Stage one inline CDE cell edit and refresh pending UI."""
+        if getattr(self, "_suppress_inline_staging", False):
+            return
+        meta = self._column_meta.get(key, {})
+        if meta.get("source") != "cde":
+            return
+        targets = self._selected_rows()
+        if row not in targets:
+            targets = [row]
+        for target in targets:
+            target.record_pending(key, new_value)
+        self._refresh_grid_cells()
+        self._update_pending_ui()
+        if show_status:
+            if len(targets) > 1:
+                self._set_status(
+                    "Staged '{}' on {} row(s). Click Apply to commit.".format(
+                        key, len(targets)))
+            else:
+                self._set_status(
+                    "Staged '{}'. Click Apply to commit.".format(key))
+
+    def on_preparing_cell_for_edit(self, sender, args):
+        """Wire checkbox toggles so pending updates before the cell loses focus."""
+        try:
+            col = args.Column
+            key = self._column_key(col)
+            if not key or key not in self._value_column_map:
+                return
+            meta = self._column_meta.get(key, {})
+            if meta.get("source") != "cde":
+                return
+            editing = args.EditingElement
+            if not isinstance(editing, self._CheckBox):
+                return
+            row_container = args.Row
+            editing.Tag = key
+            editing._cde_row = row_container
+            if not getattr(editing, "_cde_inline_wired", False):
+                editing.Checked += self._on_inline_checkbox_changed
+                editing.Unchecked += self._on_inline_checkbox_changed
+                editing._cde_inline_wired = True
+        except Exception as ex:
+            self._logger.debug("CDE: preparing cell for edit failed: {}".format(ex))
+
+    def _on_inline_checkbox_changed(self, sender, args):
+        """Apply checkbox toggle immediately (CellEditEnding fires only on row change)."""
+        try:
+            key = sender.Tag
+            row = self._row_from_grid_row_container(sender._cde_row)
+            if not key or row is None:
+                return
+            self._stage_cde_cell_edit(key, row, bool(sender.IsChecked))
+        except Exception as ex:
+            self._logger.debug("CDE: inline checkbox change failed: {}".format(ex))
 
     def on_cell_edit_ending(self, sender, args):
         if args.EditAction == self._DataGridEditAction.Cancel:
@@ -1193,20 +1342,8 @@ class ScheduleWindow(forms.WPFWindow):
                     new_value = text
             if new_value is None:
                 return
-            targets = self._selected_rows()
-            if row not in targets:
-                targets = [row]
-            for target in targets:
-                target.record_pending(key, new_value)
-            self._refresh_grid_cells()
-            self._update_pending_ui()
-            if len(targets) > 1:
-                self._set_status(
-                    "Staged '{}' on {} row(s). Click Apply to commit.".format(
-                        key, len(targets)))
-            else:
-                self._set_status(
-                    "Staged '{}'. Click Apply to commit.".format(key))
+            show_status = not isinstance(args.EditingElement, self._CheckBox)
+            self._stage_cde_cell_edit(key, row, new_value, show_status=show_status)
         except Exception as ex:
             self._logger.debug("CDE: cell edit failed: {}".format(ex))
 
@@ -1261,7 +1398,12 @@ class ScheduleWindow(forms.WPFWindow):
     # --- selection ------------------------------------------------------
 
     def _selected_rows(self):
-        return [r for r in self.doorGrid.SelectedItems]
+        rows = []
+        for item in self.doorGrid.SelectedItems:
+            row = self._row_for_grid_key(item)
+            if row is not None:
+                rows.append(row)
+        return rows
 
     def _sync_revit_selection(self):
         """Mirror grid selection into the active Revit document."""
@@ -1313,17 +1455,18 @@ class ScheduleWindow(forms.WPFWindow):
     def on_discard_pending_click(self, sender, args):
         if self._apply_in_flight:
             return
+        self._end_grid_edit(commit=False)
         count = self.vm.pending_count()
         if count == 0:
             return
-        if not forms.alert(
-                "Discard {} pending edit(s)?".format(count),
-                yes=True, no=True):
-            return
-        self.vm.discard_all_pending()
-        self._refresh_grid_cells()
-        self._update_pending_ui()
-        self._set_status("Discarded {} pending edit(s).".format(count))
+        self._suppress_inline_staging = True
+        try:
+            self.vm.discard_all_pending()
+            self._refresh_grid_cells()
+            self._update_pending_ui()
+            self._set_status("Discarded {} pending edit(s).".format(count))
+        finally:
+            self._suppress_inline_staging = False
 
     def _format_dry_run_message(self, plan):
         matched = plan.get("matchedElements") or []
@@ -1484,21 +1627,40 @@ class ScheduleWindow(forms.WPFWindow):
         selected = self.doorGrid.SelectedItem
         if selected is not None and hasattr(selected, "GlobalId"):
             return selected
+        row = self._row_for_grid_key(selected)
+        if row is not None:
+            return row
         rows = self._selected_rows()
         if rows:
             return rows[0]
         return None
 
     def _property_rows_for_detail(self, row, cde_values):
-        """Build inspector rows: Revit fields plus CDE effective values."""
+        """Build inspector rows: Revit fields plus full CDE graph payload."""
         rows = [
             self._PropertyRow("Revit.Mark", row.Mark),
             self._PropertyRow("Revit.Level", row.Level),
+            self._PropertyRow("Revit.FromRoomNumber", row.FromRoomNumber),
             self._PropertyRow("Revit.FromRoom", row.FromRoom),
+            self._PropertyRow("Revit.ToRoomNumber", row.ToRoomNumber),
             self._PropertyRow("Revit.ToRoom", row.ToRoom),
             self._PropertyRow("Revit.MatchedInRevit", row.MatchedInRevit),
         ]
-        for key, val in sorted((cde_values or {}).items()):
+
+        def _detail_sort_key(key):
+            if key.startswith("RuleTrace."):
+                return (5, key)
+            if key.startswith("Relationship."):
+                return (6, key)
+            if key.startswith("authored."):
+                return (2, key)
+            if key.startswith("derived."):
+                return (3, key)
+            if key.startswith("effective."):
+                return (4, key)
+            return (1, key)
+
+        for key, val in sorted((cde_values or {}).items(), key=lambda kv: _detail_sort_key(kv[0])):
             rows.append(self._PropertyRow(key, val))
         return rows
 
@@ -1565,15 +1727,25 @@ class ScheduleWindow(forms.WPFWindow):
 
     def on_grid_selection_changed(self, sender, args):
         row = self._resolve_selected_row()
-        self._sync_revit_selection()
+        # Revit selection sync intentionally disabled: SetElementIds() triggers
+        # the native Revit SelectionChanged event which crashes Coordination
+        # Model Interface addin in Revit 2026.
         self._detail_fetch_token += 1
-        token = self._detail_fetch_token
         if row is None:
             self._apply_detail_pane(None, None)
             return
         cached = dict(row.cells)
-        self._apply_detail_pane(row, cached, "Loading CDE properties...")
-        self._fetch_detail_for_row(row, token)
+        node = self._node_by_gid.get(row.GlobalId)
+        if node is not None:
+            graph_vals = getattr(self.service, "graph_node_values", None)
+            if graph_vals is not None:
+                try:
+                    cached.update(graph_vals(node))
+                except Exception as ex:
+                    self._logger.debug("CDE: detail from cached graph node failed: {}".format(ex))
+        # No per-row HTTP fetch — full GraphQL payload is cached in last_node_by_gid
+        # at refresh (avoids Revit 2026 crash from background selection fetch).
+        self._apply_detail_pane(row, cached)
 
     # --- lifecycle ------------------------------------------------------
 

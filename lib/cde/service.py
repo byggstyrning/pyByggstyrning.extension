@@ -50,18 +50,29 @@ DEFAULT_IFC_CLASS = "IfcDoor"
 DOOR_IFC_CLASSES = ("IFCDOOR", "IFCDOORSTANDARDCASE")
 # GraphQL value roles merged onto each element (later roles win on conflict).
 _VALUE_MERGE_ORDER = ("authoredValues", "derivedValues", "effectiveValues")
+_VALUE_ROLE_PREFIX = {
+    "authoredValues": "authored",
+    "derivedValues": "derived",
+    "effectiveValues": "effective",
+}
 # Relationship types that link a door to its DFP-carrying IfcGroup.
 _DFP_RELATIONSHIP_TYPES = frozenset(["GROUPS", "ASSIGNED_TO"])
 # GraphQL PropertyValue fields per contract.graphql
 _PROPERTY_VALUE_FIELDS = (
     " psetName propertyName value datatype unit state sourceKind")
-# Node fields on element queries (elements + element).
+_RULE_TRACE_FIELDS = (
+    " ruleId ruleVersion sourceAuthority validationState executedAt")
+_RELATIONSHIP_FIELDS = (
+    " relationshipRef family type state sourceKind confidence "
+    "subjectGlobalId objectGlobalId direction constraints evidence")
+# Node fields on element queries (elements + element) — Hub parity.
 _ELEMENT_NODE_FIELDS = (
     " globalId ifcClass name etag"
-    " effectiveValues{" + _PROPERTY_VALUE_FIELDS + "}"
-    " derivedValues{" + _PROPERTY_VALUE_FIELDS + "}"
     " authoredValues{" + _PROPERTY_VALUE_FIELDS + "}"
-    " relationships{ type subjectGlobalId objectGlobalId }")
+    " derivedValues{" + _PROPERTY_VALUE_FIELDS + "}"
+    " effectiveValues{" + _PROPERTY_VALUE_FIELDS + "}"
+    " ruleTrace{" + _RULE_TRACE_FIELDS + "}"
+    " relationships{" + _RELATIONSHIP_FIELDS + "}")
 
 
 def _elements_graphql_query(include_filter):
@@ -120,6 +131,72 @@ def node_matches_ifc_classes(node, want_classes):
     if not want_classes:
         return True
     return normalize_ifc_class(node.get("ifcClass")) in want_classes
+
+
+def _property_value_key(pset, name):
+    if pset:
+        return "{}.{}".format(pset, name)
+    return name
+
+
+def _merge_property_values_from_node(node):
+    """Merge all GraphQL value roles; flat keys use effective-wins merge order."""
+    values = {}
+    flat = {}
+    for source in _VALUE_MERGE_ORDER:
+        role = _VALUE_ROLE_PREFIX.get(source, source)
+        for ev in (node.get(source) or []):
+            pset = ev.get("psetName") or ""
+            name = ev.get("propertyName")
+            if name is None:
+                continue
+            key_flat = _property_value_key(pset, name)
+            val = ev.get("value")
+            if pset == DFP_PSET_NAME:
+                val = coerce_dfp_cell_value(val)
+            values["{}.{}".format(role, key_flat)] = val
+            flat[key_flat] = val
+    values.update(flat)
+    return values
+
+
+def _merge_rule_trace_into_values(values, node):
+    for i, rt in enumerate(node.get("ruleTrace") or []):
+        rid = rt.get("ruleId") or str(i)
+        prefix = "RuleTrace.{}".format(rid)
+        for field in ("ruleVersion", "sourceAuthority", "validationState", "executedAt"):
+            val = rt.get(field)
+            if val is not None and val != "":
+                values["{}.{}".format(prefix, field)] = val
+
+
+def _merge_relationships_into_values(values, node):
+    for i, rel in enumerate(node.get("relationships") or []):
+        rtype = rel.get("type") or "rel"
+        prefix = "Relationship.{}.{}".format(i, rtype)
+        for field in (
+                "family", "type", "state", "sourceKind", "confidence",
+                "subjectGlobalId", "objectGlobalId", "direction",
+                "relationshipRef"):
+            val = rel.get(field)
+            if val is not None and val != "":
+                values["{}.{}".format(prefix, field)] = val
+        evidence = rel.get("evidence")
+        if evidence is not None and evidence != "":
+            if isinstance(evidence, dict):
+                values["{}.evidence".format(prefix)] = json.dumps(evidence)
+            else:
+                values["{}.evidence".format(prefix)] = evidence
+
+
+def values_from_graph_node(node):
+    """Build the full inspector value map from a GraphQL element node."""
+    if not node:
+        return {}
+    values = _merge_property_values_from_node(node)
+    _merge_rule_trace_into_values(values, node)
+    _merge_relationships_into_values(values, node)
+    return values
 
 
 def coerce_dfp_cell_value(value):
@@ -357,9 +434,9 @@ class CDEService(object):
 
     # --- elements -------------------------------------------------------
 
-    # Filtered door fetch: POST /api/v2/graphql with
-    # filter.ifcClass / filter.ifcClasses (see read-api.graphql). Page size 500
-    # matches Hub nextgenGraph.allElements. Full-scan fallback pages ~1000 edges.
+    # Filtered door fetch: POST /api/v2/graphql with filter.ifcClasses
+    # (contract.graphql). Page size 500 matches Hub nextgenGraph.allElements.
+    # Full-scan fallback pages ~1000 edges when the gateway ignores the filter.
     DOOR_PAGE_SIZE = 500
     FULL_SCAN_PAGE_SIZE = 1000
 
@@ -396,15 +473,13 @@ class CDEService(object):
         elements = []
         group_dfp_merged = 0
         for node in nodes:
-            if fetch_mode == "full_scan" and want_classes:
-                if not node_matches_ifc_classes(node, want_classes):
-                    continue
+            if want_classes and not node_matches_ifc_classes(node, want_classes):
+                continue
             el = self._element_from_node(node)
-            if want_classes and node_matches_ifc_classes(node, want_classes):
-                merged = dict(el.values)
-                if self._inherit_group_values(merged, node, node_by_gid):
-                    group_dfp_merged += 1
-                    el = el._replace(values=merged)
+            merged = dict(el.values)
+            if self._inherit_group_values(merged, node, node_by_gid):
+                group_dfp_merged += 1
+                el = el._replace(values=merged)
             elements.append(el)
         logger.info("CDE: list_elements {} of {} nodes match {}".format(
             len(elements), len(nodes), ifc_class))
@@ -421,25 +496,24 @@ class CDEService(object):
     # Backend returns ~1000 edges per GraphQL page regardless of `first`.
     # Full-scan fallback: capped for UI responsiveness (was 15 pages / ~15k nodes).
     MAX_ELEMENT_PAGES = 15
-    FULL_SCAN_MAX_PAGES = 3
+    FULL_SCAN_MAX_PAGES = 15
 
     def _fetch_element_nodes(self, project_id, revision_id, ifc_class):
-        """Fetch element nodes, preferring server-side ``filter.ifcClass(es)``."""
+        """Fetch element nodes, preferring server-side ``filter.ifcClasses``."""
         want_classes = want_ifc_classes(ifc_class)
         if want_classes:
             filter_classes = list(DOOR_IFC_CLASSES) if (
                 want_classes == want_ifc_classes(DEFAULT_IFC_CLASS)) else list(want_classes)
-            for filter_key in ("ifcClasses", "ifcClass"):
-                nodes, ok, pages = self._fetch_all_element_nodes(
-                    project_id, revision_id,
-                    page_size=self.DOOR_PAGE_SIZE,
-                    filter_key=filter_key,
-                    filter_classes=filter_classes,
-                    want_classes=want_classes)
-                if ok:
-                    self.last_fetch_pages = pages
-                    return nodes, "ifc_class_filter"
-            logger.debug("CDE: server ignored filter.ifcClass(es); using capped revision scan")
+            nodes, ok, pages = self._fetch_all_element_nodes(
+                project_id, revision_id,
+                page_size=self.DOOR_PAGE_SIZE,
+                filter_key="ifcClasses",
+                filter_classes=filter_classes,
+                want_classes=want_classes)
+            if ok:
+                self.last_fetch_pages = pages
+                return nodes, "ifc_class_filter"
+            logger.debug("CDE: server ignored filter.ifcClasses; using capped revision scan")
         nodes, _ok, pages = self._fetch_all_element_nodes(
             project_id, revision_id,
             page_size=self.FULL_SCAN_PAGE_SIZE,
@@ -483,13 +557,6 @@ class CDEService(object):
             fresh = [e for e in edges if (e.get("cursor") not in seen_cursors)]
             if not fresh:
                 break
-            if filtered and want_classes and page_num == 0:
-                mismatched = sum(
-                    1 for edge in fresh
-                    if not node_matches_ifc_classes((edge or {}).get("node") or {}, want_classes))
-                if mismatched or len(fresh) >= 900:
-                    filter_rejected = True
-                    break
             for edge in fresh:
                 cursor = edge.get("cursor")
                 if cursor is not None:
@@ -497,6 +564,14 @@ class CDEService(object):
                 node = (edge or {}).get("node") or {}
                 if node:
                     nodes.append(node)
+            if filtered and want_classes and page_num == 0:
+                mismatched = sum(
+                    1 for edge in fresh
+                    if not node_matches_ifc_classes((edge or {}).get("node") or {}, want_classes))
+                if mismatched > 0:
+                    filter_rejected = True
+                    nodes = []
+                    break
             next_after = page_info.get("endCursor")
             if len(nodes) == prev_total:
                 break
@@ -551,6 +626,10 @@ class CDEService(object):
             el = el._replace(values=merged)
         return el
 
+    def graph_node_values(self, node):
+        """Full value map (all pset roles, ruleTrace, relationships) from a node."""
+        return values_from_graph_node(node)
+
     def _fetch_element_node(self, project_id, revision_id, global_id):
         query = _element_graphql_query()
         variables = {"projectId": project_id, "revisionId": revision_id,
@@ -563,19 +642,8 @@ class CDEService(object):
         return data.get("element")
 
     def _merge_values_from_node(self, node):
-        """Merge authored, derived, and effective values from a graph node."""
-        values = {}
-        for source in _VALUE_MERGE_ORDER:
-            for ev in (node.get(source) or []):
-                pset = ev.get("psetName") or ""
-                name = ev.get("propertyName")
-                if name is not None:
-                    key = "{}.{}".format(pset, name) if pset else name
-                    val = ev.get("value")
-                    if pset == DFP_PSET_NAME:
-                        val = coerce_dfp_cell_value(val)
-                    values[key] = val
-        return values
+        """Merge authored, derived, effective, ruleTrace, and relationships."""
+        return values_from_graph_node(node)
 
     def _element_from_node(self, node):
         if not node:
@@ -584,7 +652,7 @@ class CDEService(object):
             node.get("globalId"),
             node.get("ifcClass"),
             node.get("name"),
-            self._merge_values_from_node(node))
+            values_from_graph_node(node))
 
     def _group_global_ids_for_door(self, door_node):
         """Return GlobalIds of related groups that may carry ``Pset_DFP``."""
@@ -607,11 +675,14 @@ class CDEService(object):
     def _inherit_group_values(self, door_values, door_node, node_by_gid):
         """Copy effective property values from linked IfcGroup nodes onto a door."""
         merged_any = False
+        skip_prefixes = ("authored.", "derived.", "effective.", "RuleTrace.", "Relationship.")
         for group_gid in self._group_global_ids_for_door(door_node):
             group_node = node_by_gid.get(group_gid)
             if not group_node:
                 continue
             for key, val in self._merge_values_from_node(group_node).items():
+                if key.startswith(skip_prefixes):
+                    continue
                 if val is None or val == "":
                     continue
                 if key not in door_values or door_values.get(key) in (None, ""):
