@@ -190,12 +190,21 @@ def load_mapping(doc):
         "revision_id": reader.get("cde_revision_id") or "",
         "revision_etag": revision_etag,
         "base_url": stored_base_url,
+        # The CDE file version id behind revision_id. Mutations need it to build
+        # the backend revision_ref ("fv:<file_version_id>") so the commit scopes
+        # to the SAME revision reads use. Stored in the free-form prefs blob.
+        "file_version_id": (prefs or {}).get("file_version_id") or "",
+        # The CDE file id (== backend NgModelRevision.model_id). Needed to compute
+        # the revision ETag (If-Match) which the backend derives from identity
+        # parts: sha256("<project>|fv:<fileVer>|<fileId>|<fileVer>").
+        "file_id": (prefs or {}).get("file_id") or "",
         "prefs": prefs,
     }
 
 
 def save_mapping(doc, project_id, project_name, revision_id, base_url,
-                 prefs=None, revision_etag=None):
+                 prefs=None, revision_etag=None, file_version_id=None,
+                 file_id=None):
     """Persist (or overwrite) the CDE mapping for this model."""
     storage = get_or_create_mapping_storage(doc)
     if not storage:
@@ -221,6 +230,13 @@ def save_mapping(doc, project_id, project_name, revision_id, base_url,
         else:
             effective_etag = existing_etag
         prefs_dict.pop("revision_etag", None)
+        # Persist the file version id + file id behind this revision so mutations
+        # can build the backend revision_ref and compute the If-Match revision
+        # ETag. Explicit args win; otherwise any prior values are kept.
+        if file_version_id:
+            prefs_dict["file_version_id"] = file_version_id
+        if file_id:
+            prefs_dict["file_id"] = file_id
         if prefs_dict:
             encoded_prefs = base64.b64encode(pickle.dumps(prefs_dict))
         with CDEMappingSchema(storage) as entity:

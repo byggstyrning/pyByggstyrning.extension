@@ -6,6 +6,7 @@ encode/decode and IronPython-safe utf-8 handling. Higher layers
 (:mod:`cde.service`) build domain calls on top of this.
 """
 import json
+import time
 import urllib
 import urllib2
 
@@ -14,6 +15,7 @@ from collections import namedtuple
 from pyrevit import script
 
 from cde import config
+from cde.request_log import log_exchange
 
 logger = script.get_logger()
 
@@ -69,6 +71,8 @@ class CDEClient(object):
         req.get_method = lambda: method
         config.apply_http_headers(req, extra=headers)
 
+        request_body = payload
+        start = time.time()
         try:
             response = urllib2.urlopen(req)
         except urllib2.HTTPError as ex:
@@ -78,9 +82,14 @@ class CDEClient(object):
                 body = ex.read()
             except Exception:
                 pass
+            decoded_body = self._decode_body(body)
+            log_exchange(
+                method, url, headers, request_body,
+                response_status=ex.code, response_headers=resp_headers,
+                response_body=decoded_body, error=ex.reason,
+                duration_ms=int((time.time() - start) * 1000))
             if ex.code in (401, 403):
                 raise CDEAuthError("Not authorized (HTTP {}).".format(ex.code))
-            decoded_body = self._decode_body(body)
             message = "HTTP {} {} for {}: {}".format(
                 ex.code, ex.reason, url, body)
             if ex.code == 412:
@@ -92,11 +101,19 @@ class CDEClient(object):
             raise CDEApiError(
                 message, status=ex.code, headers=resp_headers, body=decoded_body)
         except Exception as ex:
+            log_exchange(
+                method, url, headers, request_body, error=ex,
+                duration_ms=int((time.time() - start) * 1000))
             raise CDEApiError("Request to {} failed: {}".format(url, ex))
 
         raw = response.read()
         resp_headers = self._headers_dict(response.info())
         decoded = self._decode_body(raw)
+        log_exchange(
+            method, url, headers, request_body,
+            response_status=response.getcode(), response_headers=resp_headers,
+            response_body=decoded,
+            duration_ms=int((time.time() - start) * 1000))
         if return_meta:
             return CDEResponse(decoded, response.getcode(), resp_headers)
         return decoded
@@ -138,15 +155,29 @@ class CDEClient(object):
     def _decode_body(self, raw):
         if not raw:
             return {}
-        try:
-            return self._decode_utf8(json.loads(raw))
-        except ValueError:
-            if isinstance(raw, str):
+        # Decode bytes -> unicode with UTF-8 BEFORE json.loads. Passing a raw
+        # byte-string to IronPython's json.loads triggers an implicit .NET
+        # code-page conversion that throws on non-ASCII bytes (e.g. 0xF6 'ö':
+        # "Unable to translate bytes [F6] ... from specified code page").
+        text = raw
+        if not isinstance(text, unicode):
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeError:
                 try:
-                    return raw.decode("utf-8")
-                except (UnicodeError, AttributeError):
-                    return raw
-            return raw
+                    text = raw.decode("latin-1")
+                except Exception:
+                    text = raw.decode("utf-8", "replace")
+            except AttributeError:
+                text = raw
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            return text
+        try:
+            return self._decode_utf8(parsed)
+        except Exception:
+            raise
 
     def _decode_utf8(self, data):
         """Recursively coerce byte strings to unicode (IronPython 2.7)."""
@@ -158,6 +189,11 @@ class CDEClient(object):
         if isinstance(data, str):
             try:
                 return data.decode("utf-8")
-            except (UnicodeError, AttributeError):
+            except UnicodeError:
+                try:
+                    return data.decode("latin-1")
+                except UnicodeError:
+                    return data.decode("utf-8", "replace")
+            except AttributeError:
                 return data
         return data

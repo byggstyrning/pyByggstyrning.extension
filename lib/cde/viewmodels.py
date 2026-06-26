@@ -1,21 +1,18 @@
 # -*- coding: utf-8 -*-
 """WPF-bindable models for the CDE schedule table.
 
-``ElementRow`` is a ``forms.Reactive`` row carrying fixed Revit-derived columns
+``ElementRow`` is a plain IronPython row carrying fixed Revit-derived columns
 plus a dynamic set of CDE/Revit parameter cells (bound in XAML via an indexer,
 e.g. ``Path=[needs_lock]``). ``ScheduleViewModel`` owns the master row list and
 applies the quick-filter into the bound ``ObservableCollection``.
 """
 from System.Collections.ObjectModel import ObservableCollection
 
-from pyrevit import forms
 
-
-class ElementRow(forms.Reactive):
+class ElementRow(object):
     """One door/element row joining a CDE element to a Revit element."""
 
     def __init__(self, global_id, revit_info=None, cde_values=None, vm=None):
-        super(ElementRow, self).__init__()
         self._vm = vm
         self._global_id = global_id or ""
         revit_info = revit_info or {}
@@ -24,7 +21,9 @@ class ElementRow(forms.Reactive):
         self._mark = revit_info.get("mark", "") or ""
         self._level = revit_info.get("level", "") or ""
         self._from_room = revit_info.get("from_room", "") or ""
+        self._from_room_number = revit_info.get("from_room_number", "") or ""
         self._to_room = revit_info.get("to_room", "") or ""
+        self._to_room_number = revit_info.get("to_room_number", "") or ""
         self._matched = self.element_id is not None
         # Dynamic parameter cells (CDE values merged with any pulled Revit params).
         self._cells = dict(cde_values or {})
@@ -32,6 +31,15 @@ class ElementRow(forms.Reactive):
         self._original_cells = dict(cde_values or {})
         # Staged edits keyed by parameter column key.
         self._pending_cells = {}
+
+    def OnPropertyChanged(self, property_name):
+        """No-op compatibility shim.
+
+        Revit 2026 can crash while journaling selection of IronPython objects
+        implementing INotifyPropertyChanged. The grid is explicitly refreshed
+        after edits, so row-level change notification is not required here.
+        """
+        pass
 
     # --- fixed columns --------------------------------------------------
 
@@ -52,8 +60,16 @@ class ElementRow(forms.Reactive):
         return self._from_room
 
     @property
+    def FromRoomNumber(self):
+        return self._from_room_number
+
+    @property
     def ToRoom(self):
         return self._to_room
+
+    @property
+    def ToRoomNumber(self):
+        return self._to_room_number
 
     @property
     def MatchedInRevit(self):
@@ -69,7 +85,9 @@ class ElementRow(forms.Reactive):
         "Mark": "Mark",
         "Level": "Level",
         "FromRoom": "FromRoom",
+        "FromRoomNumber": "FromRoomNumber",
         "ToRoom": "ToRoom",
+        "ToRoomNumber": "ToRoomNumber",
         "MatchedInRevit": "MatchedInRevit",
     }
 
@@ -152,14 +170,16 @@ class ElementRow(forms.Reactive):
     def pending_for(self):
         return dict(self._pending_cells)
 
-    def revert_pending(self):
+    def revert_pending(self, notify=True):
         """Discard staged edits and restore committed cell values."""
+        if not self._pending_cells:
+            return
         for key in list(self._pending_cells.keys()):
             orig = self._original_cells.get(key, "")
             self.set_cell(key, orig)
         self._pending_cells.clear()
         self.OnPropertyChanged("IsDirty")
-        if self._vm is not None:
+        if notify and self._vm is not None:
             self._vm.notify_pending_changed()
 
     def commit_pending(self, keys=None):
@@ -194,7 +214,8 @@ class ElementRow(forms.Reactive):
             return True
         needle = text.lower()
         haystack = [self._global_id, self._mark, self._level,
-                    self._from_room, self._to_room]
+                    self._from_room, self._from_room_number,
+                    self._to_room, self._to_room_number]
         haystack.extend(unicode(v) for v in self._cells.values())
         return any(needle in (h or "").lower() for h in haystack)
 
@@ -262,9 +283,13 @@ class ScheduleViewModel(object):
         return changes
 
     def discard_all_pending(self):
+        any_dirty = False
         for row in self._all_rows:
             if row.IsDirty:
-                row.revert_pending()
+                row.revert_pending(notify=False)
+                any_dirty = True
+        if any_dirty:
+            self.notify_pending_changed()
 
     def clear_pending_for_global_ids(self, global_ids):
         wanted = set(global_ids or [])

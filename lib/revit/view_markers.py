@@ -30,6 +30,8 @@ from revit.compat import make_element_id
 
 _MARKER_SYS_KEY = '_pyBS_view_marker_drivers'
 _HANDLER_SYS_KEY = '_pyBS_view_marker_tgm_handler'
+_CLICK_REGISTRY_KEY = '_pyBS_tgm_click_registry'
+_SESSION_CLICK_HANDLERS_KEY = '_pyBS_tgm_session_click_handlers'
 _HANDLER_SERVER_GUID_STR = 'B3C4D5E6-F7A8-4901-BC02-EF1234567890'
 _THROTTLE_MS = 500
 _VIEW_REFRESH_MS = 1000
@@ -130,7 +132,7 @@ def _create_tgm_handler_instance():
                 return "pyBS"
 
             def OnClick(self, data):
-                pass
+                _dispatch_tgm_click(data)
 
         return ViewMarkerTemporaryGraphicsHandler()
     except Exception:
@@ -142,6 +144,80 @@ def get_temporary_graphics_manager(document):
         return TemporaryGraphicsManager.GetTemporaryGraphicsManager(document)
     except Exception:
         return None
+
+
+def _click_registry():
+    import sys
+    if not hasattr(sys, _CLICK_REGISTRY_KEY):
+        setattr(sys, _CLICK_REGISTRY_KEY, {})
+    return getattr(sys, _CLICK_REGISTRY_KEY)
+
+
+def clear_control_clicks(document):
+    """Drop click payloads for a document (before marker redraw)."""
+    key = _document_key(document)
+    reg = _click_registry()
+    if key in reg:
+        reg[key] = {}
+
+
+def register_control_click(document, control_index, payload):
+    """Map a TGM control index to click metadata for OnClick dispatch."""
+    key = _document_key(document)
+    reg = _click_registry()
+    doc_reg = reg.get(key) or {}
+    doc_reg[int(control_index)] = dict(payload or {})
+    reg[key] = doc_reg
+
+
+def lookup_control_click(document, control_index):
+    reg = _click_registry().get(_document_key(document)) or {}
+    return reg.get(int(control_index))
+
+
+def unregister_control_click(document, control_index):
+    """Remove one TGM control from the click registry."""
+    key = _document_key(document)
+    reg = _click_registry()
+    doc_reg = reg.get(key)
+    if not doc_reg:
+        return
+    doc_reg.pop(int(control_index), None)
+    reg[key] = doc_reg
+
+
+def register_session_click_handler(session_id, handler):
+    """Register ``handler(payload, command_data)`` for a marker session."""
+    import sys
+    if not hasattr(sys, _SESSION_CLICK_HANDLERS_KEY):
+        setattr(sys, _SESSION_CLICK_HANDLERS_KEY, {})
+    handlers = getattr(sys, _SESSION_CLICK_HANDLERS_KEY)
+    handlers[str(session_id)] = handler
+
+
+def unregister_session_click_handler(session_id):
+    import sys
+    if not hasattr(sys, _SESSION_CLICK_HANDLERS_KEY):
+        return
+    handlers = getattr(sys, _SESSION_CLICK_HANDLERS_KEY)
+    handlers.pop(str(session_id), None)
+
+
+def _dispatch_tgm_click(command_data):
+    try:
+        document = command_data.Document
+        idx = command_data.Index
+        payload = lookup_control_click(document, idx)
+        if not payload:
+            return
+        session_id = payload.get('session_id') or DEFAULT_SESSION_ID
+        import sys
+        handlers = getattr(sys, _SESSION_CLICK_HANDLERS_KEY, {})
+        handler = handlers.get(str(session_id))
+        if handler is not None:
+            handler(payload, command_data)
+    except Exception:
+        pass
 
 
 def _ensure_bitmap_cache_dir(marker_style=None):
@@ -661,6 +737,37 @@ def _points_from_dicts(point_dicts):
     return out
 
 
+def _validate_marker_image(path):
+    """Return True when BMP exists and is square (TGM requirement)."""
+    try:
+        if not path or not os.path.isfile(path):
+            return False
+        if os.path.getsize(path) < 32:
+            return False
+        probe = Bitmap(path)
+        try:
+            return probe.Width == probe.Height and probe.Width >= 16
+        finally:
+            probe.Dispose()
+    except Exception:
+        return False
+
+
+def update_control_image(document, control_index, image_path, xyz):
+    """Swap one TGM control bitmap in place (after toggle)."""
+    if not _validate_marker_image(image_path):
+        return False
+    tgm = get_temporary_graphics_manager(document)
+    if tgm is None:
+        return False
+    try:
+        data = InCanvasControlData(image_path, xyz)
+        tgm.UpdateControl(int(control_index), data)
+        return True
+    except Exception:
+        return False
+
+
 def _normalize_view_id(view_id_value):
     """Normalize ElementId values (int/long/Int64) for consistent dict keys."""
     try:
@@ -792,7 +899,8 @@ def start_or_get_driver(uiapp, document, view_points_map, get_element_id_value,
                         sheet_tooltip='',
                         single_tooltip='Marker',
                         cluster_tooltip_template='{count} markers',
-                        logger=None):
+                        logger=None,
+                        refresh_active_view=True):
     """Return running driver for document session, creating one if needed."""
     driver = find_marker_driver(document, session_id)
     if driver is not None:
@@ -810,7 +918,8 @@ def start_or_get_driver(uiapp, document, view_points_map, get_element_id_value,
         sheet_tooltip=sheet_tooltip,
         single_tooltip=single_tooltip,
         cluster_tooltip_template=cluster_tooltip_template,
-        logger=logger)
+        logger=logger,
+        refresh_active_view=refresh_active_view)
     driver.start()
     return driver
 
@@ -842,7 +951,8 @@ class ViewMarkerDriver(object):
                  sheet_tooltip='',
                  single_tooltip='Marker',
                  cluster_tooltip_template='{count} markers',
-                 logger=None):
+                 logger=None,
+                 refresh_active_view=True):
         self._uiapp = uiapp
         self._doc = document
         self._session_id = session_id
@@ -851,6 +961,7 @@ class ViewMarkerDriver(object):
         self._sheet_tooltip = sheet_tooltip or ''
         self._single_tooltip = single_tooltip or 'Marker'
         self._cluster_tooltip_template = cluster_tooltip_template or '{count}'
+        self._refresh_active_view = bool(refresh_active_view)
         self._sessions = _normalize_view_points_map(view_points_map or {})
         self._get_element_id_value = get_element_id_value
         self._logger = logger
@@ -916,6 +1027,8 @@ class ViewMarkerDriver(object):
 
     def _maybe_refresh_active_view_for_session(self):
         """Redraw viewport when active view is a session clash view."""
+        if not self._refresh_active_view:
+            return
         try:
             uidoc = self._uiapp.ActiveUIDocument
             if uidoc is None or uidoc.ActiveView is None:
@@ -1162,6 +1275,11 @@ class ViewMarkerDriver(object):
         if len(point_dicts) > self._style.max_markers_per_view:
             point_dicts = point_dicts[:self._style.max_markers_per_view]
 
+        custom_dicts = [
+            p for p in point_dicts if p.get('image_path')]
+        plain_dicts = [
+            p for p in point_dicts if not p.get('image_path')]
+
         uiview = _get_uiview_for_view(
             self._uiapp, view_id_value, self._get_element_id_value)
         if corners is None and uiview is not None:
@@ -1170,54 +1288,79 @@ class ViewMarkerDriver(object):
             except Exception:
                 corners = None
 
-        xyz_list = _points_from_dicts(point_dicts)
-        if not xyz_list:
-            self._clear_view_markers(view_id_value)
-            return
-
         ensure_temporary_graphics_handler(self._doc, logger=None)
-
-        if corners is not None:
-            span = _view_span_from_corners(corners)
-        else:
-            span = _view_span_from_view3d(self._doc, view_id_value)
-        radius = self._style.span_factor * span
-        clusters = cluster_points_model_space(xyz_list, radius)
-
         tgm = get_temporary_graphics_manager(self._doc)
         if tgm is None:
             return
 
+        clear_control_clicks(self._doc)
         self._refresh_in_progress = True
         try:
             owner_view_id = _owner_view_id_for_control(view_id_value)
             self._clear_view_markers(view_id_value)
             new_indices = []
-            for cluster in clusters:
-                count = cluster['count']
-                xyz = cluster['xyz']
+
+            for p in custom_dicts:
                 try:
-                    sk = 'cluster' if count > 1 else 'dot'
-                    img_path = get_marker_image_path(count, sk, self._style)
+                    xyz = XYZ(float(p['x']), float(p['y']), float(p['z']))
+                    img_path = p.get('image_path')
+                    if not img_path or not _validate_marker_image(img_path):
+                        continue
                     data = InCanvasControlData(img_path, xyz)
                     ctrl_idx = tgm.AddControl(data, owner_view_id)
                     new_indices.append(ctrl_idx)
+                    if p.get('clickable'):
+                        payload = dict(p)
+                        payload['session_id'] = (
+                            p.get('session_id') or self._session_id)
+                        payload['control_index'] = ctrl_idx
+                        register_control_click(self._doc, ctrl_idx, payload)
                     try:
                         tgm.SetVisibility(ctrl_idx, True)
                     except Exception:
                         pass
+                    tip = p.get('tooltip') or self._single_tooltip
                     try:
-                        if count > 1:
-                            tgm.SetTooltip(
-                                ctrl_idx,
-                                self._cluster_tooltip_template.format(
-                                    count=count))
-                        else:
-                            tgm.SetTooltip(ctrl_idx, self._single_tooltip)
+                        tgm.SetTooltip(ctrl_idx, tip)
                     except Exception:
                         pass
                 except Exception:
                     pass
+
+            xyz_list = _points_from_dicts(plain_dicts)
+            if xyz_list:
+                if corners is not None:
+                    span = _view_span_from_corners(corners)
+                else:
+                    span = _view_span_from_view3d(self._doc, view_id_value)
+                radius = self._style.span_factor * span
+                clusters = cluster_points_model_space(xyz_list, radius)
+                for cluster in clusters:
+                    count = cluster['count']
+                    xyz = cluster['xyz']
+                    try:
+                        sk = 'cluster' if count > 1 else 'dot'
+                        img_path = get_marker_image_path(count, sk, self._style)
+                        data = InCanvasControlData(img_path, xyz)
+                        ctrl_idx = tgm.AddControl(data, owner_view_id)
+                        new_indices.append(ctrl_idx)
+                        try:
+                            tgm.SetVisibility(ctrl_idx, True)
+                        except Exception:
+                            pass
+                        try:
+                            if count > 1:
+                                tgm.SetTooltip(
+                                    ctrl_idx,
+                                    self._cluster_tooltip_template.format(
+                                        count=count))
+                            else:
+                                tgm.SetTooltip(ctrl_idx, self._single_tooltip)
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+
             self._control_indices[view_id_value] = new_indices
             self._last_view_refresh_ms[view_id_value] = now_ms
             if force and corners is not None:

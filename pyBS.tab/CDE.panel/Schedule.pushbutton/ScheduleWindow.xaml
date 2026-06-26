@@ -79,6 +79,8 @@
                     Style="{DynamicResource DefaultButtonStyle}" Click="on_color_click"/>
             <Button x:Name="resetColorButton" Content="Reset colors" Width="100" Margin="8,0,0,0"
                     Style="{DynamicResource SecondaryButtonStyle}" Click="on_reset_color_click"/>
+            <Button x:Name="dfpMarkersButton" Content="DFP markers" Width="100" Margin="8,0,0,0"
+                    Style="{DynamicResource SecondaryButtonStyle}" Click="on_dfp_markers_click"/>
             <TextBlock Text="Set value" Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center" Margin="18,0,6,0"/>
             <TextBox x:Name="valueBox" Width="120" Style="{DynamicResource PlaceholderTextBoxStyle}" Tag="value"/>
             <Button x:Name="setValueButton" Content="Stage on selected" Width="130" Margin="8,0,0,0"
@@ -92,12 +94,19 @@
             <Button x:Name="discardPendingButton" Content="Discard" Width="80"
                     Style="{DynamicResource SecondaryButtonStyle}" Click="on_discard_pending_click"
                     IsEnabled="False"/>
+            <Button x:Name="confirmCommitButton" Content="Confirm commit" Width="120" Margin="8,0,6,0"
+                    Style="{DynamicResource DefaultButtonStyle}" Click="on_confirm_commit_click"
+                    Visibility="Collapsed"/>
+            <Button x:Name="cancelCommitButton" Content="Cancel" Width="80"
+                    Style="{DynamicResource SecondaryButtonStyle}" Click="on_cancel_commit_click"
+                    Visibility="Collapsed"/>
         </WrapPanel>
 
         <!-- Door table -->
         <DataGrid x:Name="doorGrid" Grid.Row="2"
                   SelectionChanged="on_grid_selection_changed"
                   Sorting="on_grid_sorting"
+                  PreparingCellForEdit="on_preparing_cell_for_edit"
                   CellEditEnding="on_cell_edit_ending"
                   Style="{DynamicResource DefaultDataGridStyle}"
                   ColumnHeaderStyle="{DynamicResource DefaultDataGridColumnHeaderStyle}"
@@ -119,7 +128,9 @@
                 <DataGridTextColumn Header="GlobalId" Binding="{Binding GlobalId}" Width="150" SortMemberPath="GlobalId" IsReadOnly="True"/>
                 <DataGridTextColumn Header="Mark" Binding="{Binding Mark}" Width="70" SortMemberPath="Mark" IsReadOnly="True"/>
                 <DataGridTextColumn Header="Level" Binding="{Binding Level}" Width="110" SortMemberPath="Level" IsReadOnly="True"/>
+                <DataGridTextColumn Header="From no." Binding="{Binding FromRoomNumber}" Width="70" SortMemberPath="FromRoomNumber" IsReadOnly="True"/>
                 <DataGridTextColumn Header="From room" Binding="{Binding FromRoom}" Width="120" SortMemberPath="FromRoom" IsReadOnly="True"/>
+                <DataGridTextColumn Header="To no." Binding="{Binding ToRoomNumber}" Width="70" SortMemberPath="ToRoomNumber" IsReadOnly="True"/>
                 <DataGridTextColumn Header="To room" Binding="{Binding ToRoom}" Width="120" SortMemberPath="ToRoom" IsReadOnly="True"/>
                 <DataGridCheckBoxColumn Header="In Revit" Binding="{Binding MatchedInRevit}" Width="70" IsReadOnly="True"/>
             </DataGrid.Columns>

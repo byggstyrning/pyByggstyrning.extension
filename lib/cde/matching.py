@@ -132,27 +132,56 @@ def get_level_name(doc, element):
     return _param_string(element, BuiltInParameter.FAMILY_LEVEL_PARAM)
 
 
-def _room_name(room):
+def _room_info(room):
+    """Return (number, name) for a room using BuiltInParameter (IronPython-safe).
+
+    room.Name raises AttributeError in IronPython; use parameter accessors.
+    """
     if room is None:
-        return ""
+        return "", ""
     try:
-        return room.Name or ""
+        from Autodesk.Revit.DB import BuiltInParameter as BIP
+        number = ""
+        name = ""
+        try:
+            p = room.get_Parameter(BIP.ROOM_NUMBER)
+            if p:
+                number = p.AsString() or ""
+        except Exception:
+            pass
+        try:
+            p = room.get_Parameter(BIP.ROOM_NAME)
+            if p:
+                name = p.AsString() or ""
+        except Exception:
+            pass
+        return number, name
     except Exception:
-        return ""
+        return "", ""
 
 
-def get_door_rooms(element):
-    """Return (from_room_name, to_room_name) for a door instance, best-effort."""
-    from_name = to_name = ""
+def get_door_rooms(doc, element):
+    """Return (from_name, from_number, to_name, to_number) for a door instance.
+
+    FromRoom/ToRoom are phase-indexed properties in IronPython — accessing
+    them without a Phase returns an indexer object, not a Room.  Use the last
+    project phase (matches Revit's own door schedule behaviour).
+    """
+    from_name = from_number = to_name = to_number = ""
     try:
-        from_name = _room_name(getattr(element, "FromRoom", None))
+        phases = doc.Phases
+        phase = phases[phases.Size - 1]
+        try:
+            from_number, from_name = _room_info(element.FromRoom[phase])
+        except Exception:
+            pass
+        try:
+            to_number, to_name = _room_info(element.ToRoom[phase])
+        except Exception:
+            pass
     except Exception:
         pass
-    try:
-        to_name = _room_name(getattr(element, "ToRoom", None))
-    except Exception:
-        pass
-    return from_name, to_name
+    return from_name, from_number, to_name, to_number
 
 
 def get_revit_info(doc, element, ifc_class="IfcDoor"):
@@ -163,10 +192,13 @@ def get_revit_info(doc, element, ifc_class="IfcDoor"):
         "mark": _param_string(element, BuiltInParameter.ALL_MODEL_MARK),
         "level": get_level_name(doc, element),
         "from_room": "",
+        "from_room_number": "",
         "to_room": "",
+        "to_room_number": "",
     }
     if ifc_class == "IfcDoor":
-        info["from_room"], info["to_room"] = get_door_rooms(element)
+        (info["from_room"], info["from_room_number"],
+         info["to_room"], info["to_room_number"]) = get_door_rooms(doc, element)
     return info
 
 

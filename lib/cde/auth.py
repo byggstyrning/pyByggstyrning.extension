@@ -28,15 +28,51 @@ def _post_json(url, payload, headers=None):
 
     Raises urllib2.HTTPError / URLError on transport failures.
     """
+    from cde.request_log import log_exchange
+
     data = json.dumps(payload).encode("utf-8")
     req = urllib2.Request(url, data=data)
-    config.apply_http_headers(req, extra=headers)
+    hdrs = dict(headers or {})
+    config.apply_http_headers(req, extra=hdrs)
     req.add_header("Content-Type", "application/json; charset=utf-8")
-    response = urllib2.urlopen(req)
-    body = response.read()
-    if not body:
-        return {}
-    return json.loads(body)
+    start = time.time()
+    try:
+        response = urllib2.urlopen(req)
+        body = response.read()
+        decoded = json.loads(body) if body else {}
+        resp_headers = {}
+        try:
+            resp_headers = dict(response.info())
+        except Exception:
+            pass
+        log_exchange(
+            "POST", url, hdrs, payload,
+            response_status=response.getcode(), response_headers=resp_headers,
+            response_body=decoded,
+            duration_ms=int((time.time() - start) * 1000))
+        return decoded
+    except urllib2.HTTPError as ex:
+        resp_headers = {}
+        try:
+            resp_headers = dict(ex.info())
+        except Exception:
+            pass
+        raw = _read_http_error_body(ex)
+        try:
+            decoded = json.loads(raw) if raw else {}
+        except Exception:
+            decoded = {"raw": raw}
+        log_exchange(
+            "POST", url, hdrs, payload,
+            response_status=ex.code, response_headers=resp_headers,
+            response_body=decoded, error=ex.reason,
+            duration_ms=int((time.time() - start) * 1000))
+        raise
+    except Exception as ex:
+        log_exchange(
+            "POST", url, hdrs, payload, error=ex,
+            duration_ms=int((time.time() - start) * 1000))
+        raise
 
 
 def _read_http_error_body(ex):
@@ -209,6 +245,10 @@ class CDEAuthClient(object):
                 json.dump(payload, fh)
         except Exception as ex:
             logger.warn("CDE: could not save token: {}".format(ex))
+
+    def reload_from_disk(self):
+        """Re-read ``cde_token.json`` (e.g. after CDE Login in another window)."""
+        self._load()
 
     def _load(self):
         path = config.get_token_file()

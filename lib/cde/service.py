@@ -42,8 +42,9 @@ MutationOutcome = namedtuple(
     ["dry_run", "success", "mutation_id", "plan", "status_data", "etag"])
 
 MUTATION_TERMINAL_STATES = frozenset([
-    "completed", "succeeded", "failed", "rejected", "cancelled", "error"])
-MUTATION_SUCCESS_STATES = frozenset(["completed", "succeeded"])
+    "completed", "succeeded", "committed", "failed", "rejected",
+    "cancelled", "error"])
+MUTATION_SUCCESS_STATES = frozenset(["completed", "succeeded", "committed"])
 
 DEFAULT_IFC_CLASS = "IfcDoor"
 # Door schedule: match both plain doors and standard-case doors in the graph.
@@ -73,23 +74,30 @@ _ELEMENT_NODE_FIELDS = (
     " effectiveValues{" + _PROPERTY_VALUE_FIELDS + "}"
     " ruleTrace{" + _RULE_TRACE_FIELDS + "}"
     " relationships{" + _RELATIONSHIP_FIELDS + "}")
+# Lighter list pass: property values only (detail fetch uses full node).
+_ELEMENT_LIST_NODE_FIELDS = (
+    " globalId ifcClass name etag"
+    " authoredValues{" + _PROPERTY_VALUE_FIELDS + "}"
+    " derivedValues{" + _PROPERTY_VALUE_FIELDS + "}"
+    " effectiveValues{" + _PROPERTY_VALUE_FIELDS + "}")
 
 
-def _elements_graphql_query(include_filter):
+def _elements_graphql_query(include_filter, list_pass=False):
     """Build elements() query matching contract.graphql."""
+    node_fields = _ELEMENT_LIST_NODE_FIELDS if list_pass else _ELEMENT_NODE_FIELDS
     if include_filter:
         return (
             "query($projectId: ID!, $revisionId: ID!, $first: Int, "
             "$after: String, $filter: ElementFilterInput) {"
             " elements(projectId: $projectId, revisionId: $revisionId, "
             "filter: $filter, first: $first, after: $after) {"
-            " edges { cursor node {" + _ELEMENT_NODE_FIELDS + " } }"
+            " edges { cursor node {" + node_fields + " } }"
             " pageInfo { hasNextPage endCursor } } }")
     return (
         "query($projectId: ID!, $revisionId: ID!, $first: Int, $after: String) {"
         " elements(projectId: $projectId, revisionId: $revisionId, "
         "first: $first, after: $after) {"
-        " edges { cursor node {" + _ELEMENT_NODE_FIELDS + " } }"
+        " edges { cursor node {" + node_fields + " } }"
         " pageInfo { hasNextPage endCursor } } }")
 
 
@@ -184,7 +192,13 @@ def _merge_relationships_into_values(values, node):
         evidence = rel.get("evidence")
         if evidence is not None and evidence != "":
             if isinstance(evidence, dict):
-                values["{}.evidence".format(prefix)] = json.dumps(evidence)
+                # ensure_ascii=False avoids json's py_encode_basestring_ascii,
+                # which decodes byte-strings via the system code page and throws
+                # on non-ASCII bytes (0xF6 'ö') under IronPython — the root cause
+                # of "skip element ... 0xf6", read-back failures, and the
+                # uncaught CLR crash (0xe0434352) during refresh.
+                values["{}.evidence".format(prefix)] = json.dumps(
+                    evidence, ensure_ascii=False)
             else:
                 values["{}.evidence".format(prefix)] = evidence
 
@@ -235,6 +249,24 @@ def _mutation_value(value):
     return value
 
 
+def _property_to_mutation_path(prop_key):
+    """Map flat inspector key to mutation ``path`` = ``psetName.propertyName``.
+
+    The backend parses ``path`` as ``<psetName>.<propertyName>`` (it splits on
+    ``.`` and writes to authored values by default). A leading role qualifier
+    (``authored.`` / ``derived.`` / ``effective.``) must be STRIPPED — if left
+    in, the backend treats the role token (e.g. ``authored``) as the pset name,
+    fails to resolve a real IFC pset, and performs no write
+    (``governanceDecisions: dry_run_no_ifc_write``). Evidence: capture
+    ``exchange_0004`` showed ``path='authored.Pset_DFP.Func_3_1'`` parsed to
+    ``psetName='authored', propertyName='Func_3_1'`` with no IFC write.
+    """
+    for role in ("authored.", "derived.", "effective."):
+        if prop_key.startswith(role):
+            return prop_key[len(role):]
+    return prop_key
+
+
 def _build_mutation_operations(changes):
     """Build REST operations from {global_id: {property: value}}."""
     operations = []
@@ -242,20 +274,60 @@ def _build_mutation_operations(changes):
         props = changes.get(gid) or {}
         for prop in sorted(props.keys()):
             val = props[prop]
+            path = _property_to_mutation_path(prop)
             if val is None or val == "":
                 operations.append({
                     "op": "unset",
-                    "property": prop,
-                    "objectId": gid,
+                    "path": path,
                 })
             else:
                 operations.append({
                     "op": "set",
-                    "property": prop,
+                    "path": path,
                     "value": _mutation_value(val),
-                    "objectId": gid,
                 })
     return operations
+
+
+def _build_mutation_target(project_id, revision_id, etag=None,
+                           file_version_id=None):
+    """Build MutationTarget for POST /api/v2/mutations.
+
+    The backend resolves the commit revision via ``_current_revision`` which
+    matches ``model_id`` and/or ``revision_ref`` — NOT the GraphQL revision id.
+    Its ``revision_ref`` is ``"fv:<file_version_id>"``. Sending the revision id
+    as ``modelId`` (and an element etag as ``expectedRevision``) matched nothing,
+    so the commit fell back to the newest revision project-wide and wrote to the
+    WRONG revision while reads used the selected one. We therefore send
+    ``expectedRevision = "fv:<file_version_id>"`` so project + revision_ref
+    uniquely resolves to the same revision the client reads from. The per-element
+    etag remains the ``If-Match`` header (optimistic lock), not the target.
+    """
+    target = {"projectId": project_id}
+    if file_version_id:
+        target["expectedRevision"] = "fv:{}".format(file_version_id)
+    elif revision_id:
+        # Legacy fallback for mappings saved before file_version_id was stored.
+        # Re-run CDE Login to populate it so commits scope correctly.
+        target["modelId"] = revision_id
+    return target
+
+
+def compute_revision_etag(project_id, file_version_id, file_id):
+    """Reproduce the backend NgModelRevision ETag for If-Match.
+
+    The backend derives it deterministically from identity parts (projection.py
+    ``etag_for_parts``): ``sha256("<project>|<revision_ref>|<model_id>|<fileVer>")``
+    where ``revision_ref == "fv:<file_version_id>"`` and ``model_id == file_id``.
+    No read endpoint exposes this etag, so the client computes it. It is stable
+    for a revision (pure identity, not content), so this is safe and exact.
+    """
+    if not (project_id and file_version_id and file_id):
+        return ""
+    revision_ref = "fv:{}".format(file_version_id)
+    raw = "|".join([str(project_id), revision_ref, str(file_id),
+                    str(file_version_id)])
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _idempotency_key(revision_id, object_ids, operations, dry_run):
@@ -290,6 +362,11 @@ class CDEService(object):
         self.last_fetch_mode = None
         self.last_fetch_pages = 0
         self.last_fetch_nodes = 0
+        self.last_fetch_error = None
+        self.last_fetch_pagination_complete = True
+        self.last_revision_etag = ""
+        # (project_id, revision_id) -> (file_version_id, file_id)
+        self._mutation_identity_cache = {}
 
     # --- projects / revisions ------------------------------------------
 
@@ -367,6 +444,44 @@ class CDEService(object):
         completed = data.get("status") in (None, "completed")
         return (rev if (rev and synced and completed) else ""), synced
 
+    def resolve_mutation_identity(self, project_id, revision_id):
+        """Map live-graph revisionId -> (file_version_id, file_id).
+
+        Mutations need ``revision_ref = fv:<file_version_id>`` and the
+        backend model_id (ifc-versions ``file_id``) to scope commits and compute
+        the revision If-Match etag. Login may not have stored these on older
+        mappings, so resolve via ifc-versions + ingest-status at apply time.
+        Returns ("", "") when not found.
+        """
+        if not (project_id and revision_id):
+            return "", ""
+        cache_key = (str(project_id), str(revision_id))
+        cached = self._mutation_identity_cache.get(cache_key)
+        if cached:
+            return cached
+
+        versions = self._fetch_ifc_versions(project_id)
+        if not versions:
+            return "", ""
+
+        for item in versions:
+            version_id = item.get("version_id")
+            if not version_id:
+                continue
+            finalized = bool(
+                item.get("finalized_at") or item.get("fragments_generated_at"))
+            if not finalized:
+                continue
+            rev, synced = self._revision_for_version(version_id)
+            if not synced or str(rev) != str(revision_id):
+                continue
+            file_id = item.get("file_id") or ""
+            result = (str(version_id), str(file_id or ""))
+            self._mutation_identity_cache[cache_key] = result
+            return result
+
+        return "", ""
+
     def _fetch_ifc_versions(self, project_id):
         """GET /api/v1/projects/{id}/ifc-versions → list | None on error."""
         try:
@@ -436,18 +551,15 @@ class CDEService(object):
 
     # Filtered door fetch: POST /api/v2/graphql with filter.ifcClasses
     # (contract.graphql). Page size 500 matches Hub nextgenGraph.allElements.
-    # Full-scan fallback pages ~1000 edges when the gateway ignores the filter.
     DOOR_PAGE_SIZE = 500
-    FULL_SCAN_PAGE_SIZE = 1000
 
     def list_elements(self, project_id, revision_id, ifc_class=DEFAULT_IFC_CLASS):
         """Return [CDEElement] of the given IfcClass for a project+revision.
 
         Live-graph reality (probed against the running backend):
         * ``elements`` is a Relay connection: ``{ edges{ node{...} } pageInfo }``.
-        * Prefer ``ifcClass`` on the GraphQL query (server filter). If page 0
-          contains other classes, fall back to a full revision scan and filter
-          client-side (observed when the gateway ignores ``ifcClass``).
+        * Always paginates with ``filter.ifcClasses`` when a class is requested;
+          client-side class guard + ``globalId`` dedupe as belt-and-suspenders.
         * IfcClass is stored upper-case w/o separators (``IFCDOOR``).
         * ``revisionId`` MUST be the live-graph ingest revision id (from
           live-drops ``ingest.revisionId``), NOT the ifc-version ``version_id``.
@@ -458,97 +570,130 @@ class CDEService(object):
         # NOTE: the gateway reads 'first' from the variables map (the query-string
         # literal is ignored), so 'first' MUST be passed as a variable or it
         # silently defaults to 50.
+        from cde.request_log import (
+            mark_session, finish_session, get_log_path,
+            get_get_index_path, get_trace_path, get_capture_dir)
+        self.last_fetch_error = None
+        self.last_fetch_nodes = 0
+        self.last_fetch_mode = None
+        if hasattr(self.auth, "reload_from_disk"):
+            self.auth.reload_from_disk()
+        if not self.auth.is_authenticated():
+            self.last_fetch_error = (
+                "Not signed in (or session expired). Run CDE Login, then Refresh.")
+            logger.warn("CDE: list_elements skipped — {}".format(self.last_fetch_error))
+            return []
+        mark_session(
+            "list_elements",
+            project_id=project_id, revision_id=revision_id,
+            ifc_class=ifc_class)
+        logger.info(
+            "CDE: HTTP capture index={} GETs={} trace={} dir={}".format(
+                get_log_path(), get_get_index_path(),
+                get_trace_path(), get_capture_dir()))
         want_classes = want_ifc_classes(ifc_class)
-        nodes, fetch_mode = self._fetch_element_nodes(
-            project_id, revision_id, ifc_class)
-        self.last_fetch_mode = fetch_mode
-        self.last_fetch_nodes = len(nodes)
-        if fetch_mode in ("full_scan", "client_class_filter"):
-            self.last_truncation = self._truncation(project_id, revision_id, len(nodes))
-        else:
-            self.last_truncation = None
-        node_by_gid = {
-            n.get("globalId"): n for n in nodes if n.get("globalId")}
-        self.last_node_by_gid = node_by_gid
+        ifc_classes = self._ifc_classes_for_filter(ifc_class)
         elements = []
-        group_dfp_merged = 0
-        for node in nodes:
-            if want_classes and not node_matches_ifc_classes(node, want_classes):
-                continue
-            el = self._element_from_node(node)
-            merged = dict(el.values)
-            if self._inherit_group_values(merged, node, node_by_gid):
-                group_dfp_merged += 1
-                el = el._replace(values=merged)
-            elements.append(el)
-        logger.info("CDE: list_elements {} of {} nodes match {}".format(
-            len(elements), len(nodes), ifc_class))
-        if elements:
-            el0 = elements[0]
-            all_keys = sorted(el0.values.keys())
-            pset_prefixes = sorted(set(
-                k.split(".", 1)[0] for k in all_keys if "." in k))
-            logger.info(
-                "CDE: sample door keys={} psets={}".format(
-                    len(all_keys), pset_prefixes[:10]))
+        try:
+            nodes, pages = self._paginate_element_nodes(
+                project_id, revision_id,
+                ifc_classes=ifc_classes,
+                want_classes=want_classes,
+                page_size=self.DOOR_PAGE_SIZE)
+            self.last_fetch_pagination_complete = getattr(
+                self, "_last_pagination_complete", True)
+            self.last_fetch_mode = (
+                "ifc_class_filter" if ifc_classes else "unfiltered")
+            self.last_fetch_pages = pages
+            self.last_fetch_nodes = len(nodes)
+            self.last_truncation = self._truncation(
+                project_id, revision_id, len(nodes),
+                filtered=bool(ifc_classes),
+                pagination_complete=self.last_fetch_pagination_complete,
+                ifc_class=ifc_class)
+            node_by_gid = {
+                n.get("globalId"): n for n in nodes if n.get("globalId")}
+            self.last_node_by_gid = node_by_gid
+            group_dfp_merged = 0
+            skipped_nodes = 0
+            for node in nodes:
+                if not getattr(self, "last_revision_etag", None):
+                    node_etag = node.get("etag")
+                    if node_etag:
+                        self.last_revision_etag = str(node_etag)
+                if want_classes and not node_matches_ifc_classes(node, want_classes):
+                    continue
+                try:
+                    el = self._element_from_node(node)
+                    merged = dict(el.values)
+                    if self._inherit_group_values(merged, node, node_by_gid):
+                        group_dfp_merged += 1
+                        el = el._replace(values=merged)
+                    elements.append(el)
+                except Exception as ex:
+                    skipped_nodes += 1
+                    logger.warn("CDE: skip element {}: {}".format(
+                        node.get("globalId"), ex))
+            if skipped_nodes:
+                logger.warn("CDE: skipped {} element(s) during value merge".format(
+                    skipped_nodes))
+            logger.info("CDE: list_elements {} of {} nodes match {}".format(
+                len(elements), len(nodes), ifc_class))
+            if elements:
+                # Key sampling must never crash the refresh: a byte-string key
+                # (e.g. a pset name carrying a raw 0xF6 'ö') compared against a
+                # unicode key triggers an implicit .NET code-page decode that, if
+                # it escaped this try/finally (no except), surfaces as an
+                # unhandled CLR exception (0xe0434352) and terminates Revit.
+                try:
+                    el0 = elements[0]
+                    all_keys = sorted(el0.values.keys())
+                    pset_prefixes = sorted(set(
+                        k.split(".", 1)[0] for k in all_keys if "." in k))
+                    logger.info(
+                        "CDE: sample door keys={} psets={}".format(
+                            len(all_keys), pset_prefixes[:10]))
+                except Exception as _ex:
+                    logger.warn("CDE: key sampling skipped: {}".format(_ex))
+        finally:
+            finish_session(
+                "list_elements",
+                element_count=len(elements),
+                raw_nodes=self.last_fetch_nodes,
+                fetch_mode=self.last_fetch_mode,
+                fetch_error=self.last_fetch_error)
         return elements
 
-    # Backend returns ~1000 edges per GraphQL page regardless of `first`.
-    # Full-scan fallback: capped for UI responsiveness (was 15 pages / ~15k nodes).
     MAX_ELEMENT_PAGES = 15
-    FULL_SCAN_MAX_PAGES = 15
 
-    def _fetch_element_nodes(self, project_id, revision_id, ifc_class):
-        """Fetch element nodes, preferring server-side ``filter.ifcClasses``."""
+    def _ifc_classes_for_filter(self, ifc_class):
+        """GraphQL ``filter.ifcClasses`` values for a schedule category."""
         want_classes = want_ifc_classes(ifc_class)
-        salvaged = []
-        if want_classes:
-            filter_classes = list(DOOR_IFC_CLASSES) if (
-                want_classes == want_ifc_classes(DEFAULT_IFC_CLASS)) else list(want_classes)
-            nodes, ok, pages = self._fetch_all_element_nodes(
-                project_id, revision_id,
-                page_size=self.DOOR_PAGE_SIZE,
-                filter_key="ifcClasses",
-                filter_classes=filter_classes,
-                want_classes=want_classes)
-            if ok:
-                self.last_fetch_pages = pages
-                return nodes, "ifc_class_filter"
-            salvaged = [
-                n for n in nodes
-                if node_matches_ifc_classes(n, want_classes)]
-            logger.debug("CDE: server ignored filter.ifcClasses; client-filter revision scan")
-        more, _ok, pages = self._fetch_all_element_nodes(
-            project_id, revision_id,
-            page_size=self.FULL_SCAN_PAGE_SIZE,
-            filter_key=None, filter_classes=None, want_classes=None,
-            client_filter_classes=want_classes if want_classes else None,
-            max_pages=self.MAX_ELEMENT_PAGES)
-        by_gid = {n.get("globalId"): n for n in salvaged if n.get("globalId")}
-        for n in more:
-            gid = n.get("globalId")
-            if gid and gid not in by_gid:
-                by_gid[gid] = n
-        merged = list(by_gid.values())
-        self.last_fetch_pages = pages
-        mode = "client_class_filter" if want_classes else "full_scan"
-        return merged, mode
+        if not want_classes:
+            return None
+        if want_classes == want_ifc_classes(DEFAULT_IFC_CLASS):
+            return list(DOOR_IFC_CLASSES)
+        return list(want_classes)
 
-    def _fetch_all_element_nodes(self, project_id, revision_id,
-                                 page_size, filter_key=None,
-                                 filter_classes=None, want_classes=None,
-                                 client_filter_classes=None,
-                                 max_pages=None):
-        """Page ``elements(projectId, revisionId, filter?, first, after)``."""
+    def _paginate_element_nodes(self, project_id, revision_id,
+                                ifc_classes=None, want_classes=None,
+                                page_size=500, max_pages=None):
+        """Single paginated ``elements`` loop.
+
+        When ``ifc_classes`` is set, every request uses the filtered GraphQL
+        query and passes ``filter: { ifcClasses: [...] }``. ``after`` always
+        advances from ``pageInfo.endCursor`` — never reset mid-loop.
+        """
         page_limit = max_pages if max_pages is not None else self.MAX_ELEMENT_PAGES
-        filtered = bool(filter_key and filter_classes)
-        query = _elements_graphql_query(filtered)
+        filter_sent = bool(ifc_classes)
+        query = _elements_graphql_query(filter_sent, list_pass=True)
+        seen_gids = set()
         nodes = []
-        seen_cursors = set()
         after = None
         pages_fetched = 0
-        filter_rejected = False
-        for page_num in range(page_limit):
+        last_has_next = False
+
+        while pages_fetched < page_limit:
             pages_fetched += 1
             variables = {
                 "projectId": project_id,
@@ -556,59 +701,72 @@ class CDEService(object):
                 "first": page_size,
                 "after": after,
             }
-            if filtered:
-                variables["filter"] = {filter_key: list(filter_classes)}
-            prev_total = len(nodes)
+            if filter_sent:
+                variables["filter"] = {"ifcClasses": list(ifc_classes)}
+
             try:
                 data = self.client.graphql(query, variables)
             except CDEApiError as ex:
+                self.last_fetch_error = str(ex)
                 logger.warn("CDE: list_elements failed: {}".format(ex))
                 break
+
             conn = data.get("elements") or {}
             edges = conn.get("edges") or []
             page_info = conn.get("pageInfo") or {}
-            fresh = [e for e in edges if (e.get("cursor") not in seen_cursors)]
-            if not fresh:
+
+            if not edges:
                 break
-            for edge in fresh:
-                cursor = edge.get("cursor")
-                if cursor is not None:
-                    seen_cursors.add(cursor)
+
+            for edge in edges:
                 node = (edge or {}).get("node") or {}
-                if not node:
+                gid = node.get("globalId")
+                if not gid or gid in seen_gids:
                     continue
-                if client_filter_classes and not node_matches_ifc_classes(
-                        node, client_filter_classes):
+                seen_gids.add(gid)
+                if want_classes and not node_matches_ifc_classes(node, want_classes):
+                    if filter_sent:
+                        logger.warn(
+                            "CDE: non-door row despite ifcClasses filter: {}".format(
+                                node.get("ifcClass")))
                     continue
                 nodes.append(node)
-            if filtered and want_classes and page_num == 0:
-                mismatched = sum(
-                    1 for edge in fresh
-                    if not node_matches_ifc_classes((edge or {}).get("node") or {}, want_classes))
-                if mismatched > 0:
-                    filter_rejected = True
-                    nodes = [
-                        n for n in nodes
-                        if node_matches_ifc_classes(n, want_classes)]
-                    break
+
+            if not page_info.get("hasNextPage"):
+                last_has_next = False
+                break
             next_after = page_info.get("endCursor")
-            if len(nodes) == prev_total:
+            if not next_after or next_after == after:
+                last_has_next = False
                 break
-            if not page_info.get("hasNextPage") or not next_after or next_after == after:
-                break
+            last_has_next = True
             after = next_after
-        logger.info("CDE: list_elements rev={} raw nodes={}".format(
-            revision_id, len(nodes)))
-        if filtered:
-            return nodes, not filter_rejected and bool(nodes), pages_fetched
-        return nodes, True, pages_fetched
 
-    def _truncation(self, project_id, revision_id, retrieved):
-        """Compare retrieved node count to the authoritative graph total.
+        self._last_pagination_complete = not last_has_next
+        logger.info("CDE: list_elements rev={} pages={} nodes={} complete={}".format(
+            revision_id, pages_fetched, len(nodes), self._last_pagination_complete))
+        return nodes, pages_fetched
 
-        Returns {"retrieved", "total"} when fewer were fetched than exist
-        (the current ~200-node gateway cap), else None.
+    def _truncation(self, project_id, revision_id, retrieved,
+                    filtered=False, pagination_complete=True, ifc_class=None):
+        """Detect incomplete fetches (pagination cap), not filtered-vs-total mismatch.
+
+        ``postgres.elements`` is the whole-revision element count (~7808). Comparing
+        a door-filtered fetch (171) against that total is wrong — skip when filtered
+        and pagination reached the natural end.
         """
+        if filtered and pagination_complete:
+            return None
+        if filtered and not pagination_complete:
+            logger.warn(
+                "CDE: filtered {} fetch stopped early — retrieved {} (pagination cap)".format(
+                    ifc_class or "elements", retrieved))
+            return {
+                "retrieved": retrieved,
+                "total": None,
+                "ifc_class": ifc_class,
+                "reason": "pagination_cap",
+            }
         try:
             data = self.client.get(
                 config.graph_status_url(self.client.base_url),
@@ -622,7 +780,7 @@ class CDEService(object):
                         "(backend elements-query cap; schedule is incomplete "
                         "until paging/cap is fixed server-side)".format(
                             retrieved, total))
-            return {"retrieved": retrieved, "total": total}
+            return {"retrieved": retrieved, "total": total, "reason": "graph_total"}
         return None
 
     def get_element(self, project_id, revision_id, global_id):
@@ -764,12 +922,15 @@ class CDEService(object):
             dry_run=dry_run, etag=etag, idempotency_key=idempotency_key)
 
     def apply_element_mutations(self, project_id, revision_id, changes,
-                                dry_run=True, etag=None, idempotency_key=None):
+                                dry_run=True, etag=None, idempotency_key=None,
+                                file_version_id=None, file_id=None):
         """POST /api/v2/mutations (transactional lane).
 
         ``changes`` is ``{global_id: {property_key: value}}``. When
         ``dry_run`` is True (default) the backend returns a DryRunPlan; commit
-        with ``dry_run=False`` and a fresh ``If-Match`` etag.
+        with ``dry_run=False`` and a fresh ``If-Match`` etag. ``file_version_id``
+        scopes the commit to the SAME revision reads use (revision_ref);
+        ``file_id`` lets us compute the exact revision ETag for If-Match.
         """
         changes = changes or {}
         object_ids = sorted(changes.keys())
@@ -784,10 +945,19 @@ class CDEService(object):
                 dry_run=dry_run, success=True, mutation_id=None,
                 plan={}, status_data=None, etag=etag or "")
 
+        if not file_version_id or not file_id:
+            resolved_vid, resolved_fid = self.resolve_mutation_identity(
+                project_id, revision_id)
+            if not file_version_id:
+                file_version_id = resolved_vid or None
+            if not file_id:
+                file_id = resolved_fid or None
+
+        target = _build_mutation_target(
+            project_id, revision_id, etag=etag, file_version_id=file_version_id)
         payload = {
             "lane": "transactional",
-            "projectId": project_id,
-            "revisionId": revision_id,
+            "target": target,
             "objectIds": object_ids,
             "operations": operations,
             "dryRun": bool(dry_run),
@@ -796,13 +966,19 @@ class CDEService(object):
             "Idempotency-Key": idempotency_key or _idempotency_key(
                 revision_id, object_ids, operations, dry_run),
         }
-        if not dry_run:
-            if not etag:
-                etag = self.fetch_revision_etag(project_id, revision_id)
-            if not etag:
-                raise CDEApiError(
-                    "Cannot commit without revision etag (If-Match required).")
-            headers["If-Match"] = etag
+        # The backend's If-Match must equal NgModelRevision.etag, which it derives
+        # from identity parts. Stale cached/element etags cause 412 etag_mismatch,
+        # so when we have the identity parts compute the authoritative etag and
+        # prefer it over any passed/cached value.
+        computed_etag = compute_revision_etag(
+            project_id, file_version_id, file_id)
+        effective_etag = computed_etag or etag
+        if not effective_etag:
+            effective_etag = self.fetch_revision_etag(project_id, revision_id)
+        if not effective_etag:
+            raise CDEApiError(
+                "Cannot mutate without revision etag (If-Match required).")
+        headers["If-Match"] = effective_etag
 
         resp = self.client.post(
             config.mutations_url(self.client.base_url),
@@ -852,17 +1028,44 @@ class CDEService(object):
                 time.sleep(interval_seconds)
         return last
 
-    def fetch_revision_etag(self, project_id, revision_id):
-        """Return NgModelRevision.etag for If-Match optimistic locking.
+    def _fetch_revision_etag_graphql(self, project_id, revision_id):
+        """Fallback: read ``etag`` from the first element node in the revision."""
+        query = (
+            "query($projectId: ID!, $revisionId: ID!, $first: Int) {"
+            " elements(projectId: $projectId, revisionId: $revisionId, "
+            "first: $first) {"
+            " edges { node { etag } } } }")
+        try:
+            data = self.client.graphql(
+                query,
+                {
+                    "projectId": project_id,
+                    "revisionId": revision_id,
+                    "first": 1,
+                })
+        except CDEApiError as ex:
+            logger.debug("CDE: graphql etag lookup failed: {}".format(ex))
+            return ""
+        for edge in ((data.get("elements") or {}).get("edges") or []):
+            node = (edge or {}).get("node") or {}
+            etag = node.get("etag")
+            if etag:
+                return str(etag)
+        return ""
 
-        TODO(api): confirm exact field name / endpoint when OpenAPI stabilizes.
-        """
+    def fetch_revision_etag(self, project_id, revision_id):
+        """Return NgModelRevision.etag for If-Match optimistic locking."""
+        cached = getattr(self, "last_revision_etag", None)
+        if cached:
+            return cached
+
         try:
             data = self.client.get(
                 config.graph_status_url(self.client.base_url),
                 params={"projectId": project_id, "revisionId": revision_id})
             etag = _extract_etag(data)
             if etag:
+                self.last_revision_etag = etag
                 return etag
         except CDEApiError as ex:
             logger.debug("CDE: graph status etag lookup failed: {}".format(ex))
@@ -873,17 +1076,22 @@ class CDEService(object):
                 params={"projectId": project_id, "revisionId": revision_id})
             etag = _extract_etag(data)
             if etag:
+                self.last_revision_etag = etag
                 return etag
             for item in (data.get("revisions") or []):
                 rid = item.get("id") or item.get("revisionId")
                 if str(rid) == str(revision_id):
                     etag = _extract_etag(item)
                     if etag:
+                        self.last_revision_etag = etag
                         return etag
         except CDEApiError as ex:
             logger.debug("CDE: graph overview etag lookup failed: {}".format(ex))
 
-        return ""
+        etag = self._fetch_revision_etag_graphql(project_id, revision_id)
+        if etag:
+            self.last_revision_etag = etag
+        return etag
 
     def get_symbols(self, project_id):
         """Return symbol metadata for legends/glyphs. TODO(api)."""
@@ -948,7 +1156,8 @@ class MockCDEService(object):
             dry_run=dry_run, etag=etag, idempotency_key=idempotency_key)
 
     def apply_element_mutations(self, project_id, revision_id, changes,
-                                dry_run=True, etag=None, idempotency_key=None):
+                                dry_run=True, etag=None, idempotency_key=None,
+                                file_version_id=None, file_id=None):
         logger.info("CDE(mock): apply mutations dry_run={} on {} element(s)".format(
             dry_run, len(changes or {})))
         object_ids = sorted((changes or {}).keys())

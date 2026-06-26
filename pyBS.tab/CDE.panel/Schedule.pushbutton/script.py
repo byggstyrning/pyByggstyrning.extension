@@ -55,7 +55,53 @@ from cde.auth import CDEAuthClient
 from cde.service import CDEService, MockCDEService, param_def, MUTATION_SUCCESS_STATES
 from cde.api import CDEPreconditionError, CDEConflictError
 from cde.viewmodels import ElementRow, ScheduleViewModel
+from cde.dfp_catalog import DFP_PSET_NAME
 from cde.revit_events import ExternalEventRunner, ActiveViewWatcher
+
+_DFP_MARKERS_OK = False
+_DFP_MARKERS_IMPORT_ERROR = None
+try:
+    from revit.dfp_markers import (
+        is_temporary_graphics_available as _dfp_tgm_available,
+        register_dfp_session,
+        is_dfp_toggle_active,
+        set_dfp_toggle_active,
+        start_or_get_dfp_driver,
+        clean_dfp_session,
+        soft_clean_dfp_session,
+        refresh_dfp_session,
+        ensure_temporary_graphics_handler as _ensure_dfp_tgm_handler,
+        register_dfp_marker_click_callback,
+        register_dfp_schedule_window,
+        update_dfp_door_after_toggle,
+        find_dfp_driver as _find_dfp_driver,
+        hide_dfp_graphics_for_apply,
+        set_dfp_apply_block,
+    )
+    from cde.dfp_markers import build_dfp_view_points, default_dfp_param_keys
+    from cde.dfp_icons import has_authored_dfp_value as _has_authored_dfp_value
+    from revit.compat import get_element_id_value as _get_element_id_value
+    _DFP_MARKERS_OK = _dfp_tgm_available()
+except Exception as _dfp_ex:
+    _DFP_MARKERS_IMPORT_ERROR = str(_dfp_ex)
+    register_dfp_session = None
+    is_dfp_toggle_active = None
+    set_dfp_toggle_active = None
+    start_or_get_dfp_driver = None
+    clean_dfp_session = None
+    soft_clean_dfp_session = None
+    refresh_dfp_session = None
+    _ensure_dfp_tgm_handler = None
+    register_dfp_marker_click_callback = None
+    register_dfp_schedule_window = None
+    update_dfp_door_after_toggle = None
+    _find_dfp_driver = None
+    hide_dfp_graphics_for_apply = None
+    set_dfp_apply_block = None
+    build_dfp_view_points = None
+    default_dfp_param_keys = None
+    _has_authored_dfp_value = None
+    _get_element_id_value = None
 
 logger = script.get_logger()
 
@@ -65,8 +111,6 @@ CATEGORIES = [("Doors", "IfcDoor"), ("Windows", "IfcWindow"), ("Walls", "IfcWall
 GROUP_OPTIONS = [("No grouping", None), ("Level", "Level"),
                  ("From room", "FromRoom"), ("From room no.", "FromRoomNumber"),
                  ("To room", "ToRoom"), ("To room no.", "ToRoomNumber")]
-# How many CDE properties to auto-show as columns the first time data loads.
-DEFAULT_COLUMN_COUNT = 10
 # DEBUG: temporarily disable the Revit-parameter scan to isolate the native crash.
 _ENABLE_REVIT_PARAM_SCAN = False
 # Fixed grid columns that support header grouping (path -> source tint).
@@ -299,10 +343,17 @@ class ScheduleWindow(forms.WPFWindow):
         self._refresh_token = 0
         self._fetch_running = False
         self._apply_in_flight = False
+        self._pending_etag_persist = None
+        self._pending_commit_ctx = None
+        self._dfp_graphics_refresh_gid = None
+        self._dfp_markers_were_active = False
+        self._dfp_markers_need_manual_reset = False
+        self._apply_revit_quarantine = False
         self._suppress_inline_staging = False
         self._pending_restore = None
         self._detail_fetch_token = 0
         self._node_by_gid = {}
+        self._dfp_markers_active = False
         self._runner = ExternalEventRunner()
         self._watcher = ActiveViewWatcher(self.uiapp, self._on_active_view_changed)
         # Capture ALL module-level names used in any method; pyRevit may dispose the
@@ -328,7 +379,25 @@ class ScheduleWindow(forms.WPFWindow):
         self._ColumnPickerItem = _ColumnPickerItem
         self._param_def = param_def
         self._ElementRow = ElementRow
-        self._default_columns = DEFAULT_COLUMN_COUNT
+        self._dfp_pset_name = DFP_PSET_NAME
+        self._dfp_markers_ok = _DFP_MARKERS_OK
+        self._dfp_markers_import_error = _DFP_MARKERS_IMPORT_ERROR
+        self._build_dfp_view_points = build_dfp_view_points
+        self._default_dfp_param_keys = default_dfp_param_keys
+        self._register_dfp_session = register_dfp_session
+        self._set_dfp_toggle_active = set_dfp_toggle_active
+        self._start_or_get_dfp_driver = start_or_get_dfp_driver
+        self._clean_dfp_session = clean_dfp_session
+        self._soft_clean_dfp_session = soft_clean_dfp_session
+        self._ensure_dfp_tgm_handler = _ensure_dfp_tgm_handler
+        self._register_dfp_marker_click_callback = register_dfp_marker_click_callback
+        self._register_dfp_schedule_window = register_dfp_schedule_window
+        self._update_dfp_door_after_toggle = update_dfp_door_after_toggle
+        self._find_dfp_driver = _find_dfp_driver
+        self._hide_dfp_graphics_for_apply = hide_dfp_graphics_for_apply
+        self._set_dfp_apply_block = set_dfp_apply_block
+        self._has_authored_dfp_value = _has_authored_dfp_value
+        self._get_element_id_value = _get_element_id_value
         self._value_column_width = _VALUE_COLUMN_WIDTH
         # Closures — module globals are unavailable after pyRevit disposes script scope.
         self._enable_revit_param_scan = _ENABLE_REVIT_PARAM_SCAN
@@ -370,7 +439,8 @@ class ScheduleWindow(forms.WPFWindow):
         self._ICON_GROUP = ICON_GROUP
         self._ICON_CDE = ICON_CDE
         self._ICON_REVIT = ICON_REVIT
-        self._mutation_success_states = MUTATION_SUCCESS_STATES
+        self._mutation_success_states = (
+            set(MUTATION_SUCCESS_STATES) | {"committed"})
         self._cde_brush = self._SolidColorBrush(self._WpfColor.FromRgb(0, 120, 212))
         self._revit_brush = self._SolidColorBrush(self._WpfColor.FromRgb(232, 108, 0))
         self._icon_font = self._FontFamily("Segoe MDL2 Assets")
@@ -378,6 +448,7 @@ class ScheduleWindow(forms.WPFWindow):
         self._init_combos()
         self._style_fixed_column_headers()
         self.vm.on_pending_changed(self._update_pending_ui)
+        self._install_dfp_marker_click_handler()
         self.mapping = storage.load_mapping(self.doc)
         if self.mapping:
             stored = (self.mapping.get("base_url") or "").rstrip("/")
@@ -397,7 +468,10 @@ class ScheduleWindow(forms.WPFWindow):
         count = self.vm.pending_count()
         try:
             self.pendingCountText.Text = "Pending: {}".format(count)
-            enabled = count > 0 and not self._apply_in_flight
+            enabled = (
+                count > 0
+                and not self._apply_in_flight
+                and not self._dfp_markers_active)
             self.applyPendingButton.IsEnabled = enabled
             self.discardPendingButton.IsEnabled = enabled
         except Exception as ex:
@@ -406,7 +480,11 @@ class ScheduleWindow(forms.WPFWindow):
     def _set_apply_in_flight(self, in_flight):
         self._apply_in_flight = bool(in_flight)
         try:
-            self.applyPendingButton.IsEnabled = not in_flight and self.vm.pending_count() > 0
+            can_apply = (
+                not in_flight
+                and self.vm.pending_count() > 0
+                and not self._dfp_markers_active)
+            self.applyPendingButton.IsEnabled = can_apply
             self.discardPendingButton.IsEnabled = not in_flight and self.vm.pending_count() > 0
             self.setValueButton.IsEnabled = not in_flight
         except Exception:
@@ -419,6 +497,18 @@ class ScheduleWindow(forms.WPFWindow):
         revision_id = self.mapping["revision_id"] if self.mapping else "rev-2"
         return project_id, revision_id
 
+    def _file_version_id(self):
+        """CDE file version id behind the mapped revision (for mutation scoping)."""
+        if not self.mapping:
+            return None
+        return self.mapping.get("file_version_id") or None
+
+    def _file_id(self):
+        """CDE file id (== backend model_id) for computing the revision ETag."""
+        if not self.mapping:
+            return None
+        return self.mapping.get("file_id") or None
+
     def _cache_revision_etag(self, etag):
         """Memory-only etag update (safe from background threads)."""
         if etag and self.mapping is not None:
@@ -429,6 +519,25 @@ class ScheduleWindow(forms.WPFWindow):
         if not etag:
             return
         self._cache_revision_etag(etag)
+        if self._apply_in_flight or self._apply_revit_quarantine:
+            self._pending_etag_persist = etag
+            return
+
+        def task(uiapp):
+            try:
+                doc = uiapp.ActiveUIDocument.Document
+                storage.update_revision_etag(doc, etag)
+            except Exception as ex:
+                self._logger.debug("CDE: etag persist failed: {}".format(ex))
+
+        self._runner.run(task)
+
+    def _flush_deferred_etag_persist(self):
+        """Persist etag deferred while Apply was in flight."""
+        etag = self._pending_etag_persist
+        if not etag or self._apply_in_flight:
+            return
+        self._pending_etag_persist = None
 
         def task(uiapp):
             try:
@@ -528,14 +637,15 @@ class ScheduleWindow(forms.WPFWindow):
 
     def refresh(self, preserve_pending=False):
         if not preserve_pending and self.vm.pending_count() > 0:
+            # Non-modal gate: a modal dialog here pumps Revit's message loop
+            # while ArrowEditor is active and crashes (0xe0434352). Require an
+            # explicit non-modal Discard/Apply instead.
             count = self.vm.pending_count()
-            if not forms.alert(
-                    "You have {} pending edit(s). Refresh will discard them.\n\n"
-                    "Continue?".format(count),
-                    yes=True, no=True):
-                return
-            self.vm.discard_all_pending()
-        elif preserve_pending:
+            self._set_status(
+                "{} pending edit(s) — click Discard or Apply before "
+                "refreshing.".format(count))
+            return
+        if preserve_pending:
             self._pending_restore = self.vm.collect_pending_changes()
         else:
             self._pending_restore = None
@@ -594,6 +704,16 @@ class ScheduleWindow(forms.WPFWindow):
         if not self.mapping and not self.offline:
             self._build_rows(([], []), None, token)
             return
+        if not self.offline:
+            if hasattr(self.auth, "reload_from_disk"):
+                self.auth.reload_from_disk()
+            if not self.auth.is_authenticated():
+                self._build_rows(
+                    ([], []),
+                    "CDE session expired or not signed in. "
+                    "Run CDE Login, then click Refresh (or close and reopen Schedule).",
+                    token)
+                return
         project_id = self.mapping["project_id"] if self.mapping else "demo-1"
         revision_id = self.mapping["revision_id"] if self.mapping else "rev-2"
         ifc_class = self.vm.ifc_class
@@ -604,6 +724,9 @@ class ScheduleWindow(forms.WPFWindow):
         def work():
             elements = self.service.list_elements(project_id, revision_id, ifc_class)
             defs = self.service.get_parameter_defs(project_id, ifc_class)
+            fetch_error = getattr(self.service, "last_fetch_error", None)
+            if fetch_error and not elements:
+                raise Exception(fetch_error)
             return elements, defs
 
         def on_fetch_done(payload, error):
@@ -636,8 +759,11 @@ class ScheduleWindow(forms.WPFWindow):
         if elements:
             seen = set()
             samples_by_key = {}
+            dfp_prefix = self._dfp_pset_name + "."
             for e in elements:
                 for key, val in e.values.items():
+                    if not key.startswith(dfp_prefix):
+                        continue
                     samples_by_key.setdefault(key, []).append(val)
                     if key not in seen:
                         seen.add(key)
@@ -728,6 +854,10 @@ class ScheduleWindow(forms.WPFWindow):
 
             self.doorGrid.ItemsSource = self._grid_items
             self._apply_grouping()
+            if self._dfp_markers_active:
+                self.Dispatcher.BeginInvoke(
+                    self._DispatcherPriority.Background,
+                    self._Action(self._refresh_dfp_markers))
         except Exception as ex:
             self._logger.error("CDE: apply grid failed: {}".format(ex))
             self._set_status("Internal error applying grid: {}".format(ex))
@@ -756,9 +886,26 @@ class ScheduleWindow(forms.WPFWindow):
             message += "  Door functions on {} door(s).".format(doors_with_dfp)
         trunc = getattr(self.service, "last_truncation", None)
         if trunc:
-            message += ("  WARNING: CDE returned only {} of {} elements "
-                        "(backend cap) - list is INCOMPLETE.".format(
-                            trunc["retrieved"], trunc["total"]))
+            reason = trunc.get("reason")
+            if reason == "pagination_cap":
+                label = trunc.get("ifc_class") or self.vm.ifc_class or "elements"
+                message += (
+                    "  WARNING: CDE fetch for {} may be incomplete "
+                    "({} retrieved; pagination stopped early).".format(
+                        label, trunc.get("retrieved")))
+            elif trunc.get("total") is not None:
+                message += (
+                    "  WARNING: CDE returned only {} of {} elements "
+                    "(backend cap) — list may be incomplete.".format(
+                        trunc["retrieved"], trunc["total"]))
+        try:
+            from cde.request_log import (
+                get_log_path, get_get_index_path, get_capture_dir)
+            self._logger.debug(
+                "CDE: HTTP capture index={} GETs={} bodies={}".format(
+                    get_log_path(), get_get_index_path(), get_capture_dir()))
+        except Exception:
+            pass
         return message
 
     def _refresh_param_combo(self):
@@ -785,6 +932,7 @@ class ScheduleWindow(forms.WPFWindow):
         self._refresh_grid_items_from_vm()
         self.doorGrid.ItemsSource = self._grid_items
         self._apply_grouping()
+        self._maybe_refresh_dfp_markers()
 
     def on_group_changed(self, sender, args):
         if getattr(self, "_suppress_group_changed", False):
@@ -836,6 +984,8 @@ class ScheduleWindow(forms.WPFWindow):
     def _on_active_view_changed(self, view):
         if bool(self.activeViewCheck.IsChecked):
             self.refresh()
+        elif self._dfp_markers_active:
+            self._refresh_dfp_markers()
 
     # --- dynamic columns (searchable combo + header grouping) ------------
 
@@ -987,9 +1137,79 @@ class ScheduleWindow(forms.WPFWindow):
         except Exception as ex:
             self._logger.debug("CDE: grid view refresh failed: {}".format(ex))
         try:
+            self.doorGrid.Items.Refresh()
+        except Exception:
+            pass
+        try:
             self.doorGrid.InvalidateVisual()
         except Exception:
             pass
+
+    def _normalize_global_id(self, gid):
+        try:
+            return unicode(gid or "").strip().upper()
+        except NameError:
+            return str(gid or "").strip().upper()
+
+    def _ensure_dfp_column_for_key(self, key):
+        """Show a Pset_DFP column in the grid when staging from view markers."""
+        if not key or key in self._value_column_map:
+            return
+        pdef = self._def_by_key.get(key)
+        if pdef is None and self._is_dfp_param_key(key):
+            parts = key.split(".", 1)
+            label = parts[1] if len(parts) == 2 else key
+            pdef = self._param_def(
+                key, label, value_type="bool", source="cde", group="Function")
+            self._def_by_key[key] = pdef
+        if pdef is not None:
+            self._add_value_column(key, pdef.label, pdef)
+
+    def _select_grid_row(self, row):
+        """Focus schedule row after marker edit (grid binds string keys)."""
+        try:
+            for idx, candidate in enumerate(self.vm.rows):
+                if candidate is row:
+                    key = self._make_grid_key(idx, row)
+                    self.doorGrid.SelectedItem = key
+                    self.doorGrid.ScrollIntoView(key)
+                    break
+        except Exception as ex:
+            self._logger.debug("CDE: select grid row failed: {}".format(ex))
+
+    def _merge_row_detail_values(self, row):
+        """Row cells (incl. pending) plus non-pending graph payload for inspector."""
+        cached = dict(row.cells)
+        pending = row.pending_for()
+        node = self._node_by_gid.get(row.GlobalId)
+        if node is not None:
+            graph_vals = getattr(self.service, "graph_node_values", None)
+            if graph_vals is not None:
+                try:
+                    for key, val in (graph_vals(node) or {}).items():
+                        if key not in pending:
+                            cached[key] = val
+                except Exception as ex:
+                    self._logger.debug(
+                        "CDE: detail graph merge failed: {}".format(ex))
+        return cached
+
+    def _refresh_row_detail_pane(self, row):
+        """Update property inspector when the selected row was edited."""
+        if row is None:
+            return
+        selected = self._resolve_selected_row()
+        if selected is None or self._normalize_global_id(selected.GlobalId) != self._normalize_global_id(row.GlobalId):
+            return
+        self._apply_detail_pane(row, self._merge_row_detail_values(row))
+
+    def _refresh_staged_row_ui(self, row, key=None):
+        """Refresh grid + detail after staging from markers or bulk edit."""
+        if key and self._is_dfp_param_key(key):
+            self._ensure_dfp_column_for_key(key)
+        self._refresh_grid_cells()
+        self._update_pending_ui()
+        self._refresh_row_detail_pane(row)
 
     def _add_value_column(self, key, label=None, param_def_row=None):
         """Add a dynamic property column (idempotent on key)."""
@@ -1037,40 +1257,40 @@ class ScheduleWindow(forms.WPFWindow):
         if key in self.vm.value_columns:
             self.vm.value_columns.remove(key)
 
-    def _pick_default_column_defs(self, elements, param_defs, limit):
-        """Pick CDE columns that actually have values in the loaded graph."""
+    def _is_dfp_param_def(self, pdef):
+        key = getattr(pdef, "key", "") or ""
+        if key.startswith(self._dfp_pset_name + "."):
+            return True
+        return getattr(pdef, "group", "") == "Function"
+
+    def _pick_default_column_defs(self, elements, param_defs):
+        """Default columns: Pset_DFP only (doors), preferring functions with values."""
+        dfp_defs = [d for d in (param_defs or []) if self._is_dfp_param_def(d)]
+        if not dfp_defs:
+            return []
+
+        dfp_prefix = self._dfp_pset_name + "."
         counts = {}
         for element in (elements or []):
             for key, val in element.values.items():
-                if val is None or val == "":
+                if not key.startswith(dfp_prefix):
+                    continue
+                if val is None or val is False or val == "" or val == 0:
                     continue
                 counts[key] = counts.get(key, 0) + 1
+
         if counts:
-            by_key = dict((d.key, d) for d in (param_defs or []))
+            by_key = dict((d.key, d) for d in dfp_defs)
             ranked = sorted(counts.keys(), key=lambda k: (-counts[k], k))
             chosen = []
             for key in ranked:
                 pdef = by_key.get(key)
-                if pdef is None:
-                    continue
-                if getattr(pdef, "source", "cde") != "cde":
-                    continue
-                chosen.append(pdef)
-                if len(chosen) >= limit:
-                    break
+                if pdef is not None:
+                    chosen.append(pdef)
             if chosen:
                 return chosen
-        function_defs = [
-            d for d in (param_defs or [])
-            if getattr(d, "group", "") == "Function"]
-        if function_defs:
-            return function_defs[:limit]
-        cde_defs = [
-            d for d in (param_defs or [])
-            if getattr(d, "source", "cde") == "cde"]
-        if cde_defs:
-            return cde_defs[:limit]
-        return list(param_defs or [])[:limit]
+
+        return dfp_defs
 
     def _sync_columns(self, elements):
         """Reconcile dynamic columns with the freshly loaded parameter set."""
@@ -1081,7 +1301,7 @@ class ScheduleWindow(forms.WPFWindow):
                 self._remove_value_column(key)
             if self._param_defs:
                 chosen = self._pick_default_column_defs(
-                    elements, self._param_defs, self._default_columns)
+                    elements, self._param_defs)
                 for d in chosen:
                     self._add_value_column(d.key, d.label, d)
                 self._columns_ifc_class = current_class
@@ -1283,6 +1503,140 @@ class ScheduleWindow(forms.WPFWindow):
                 self._set_status(
                     "Staged '{}'. Click Apply to commit.".format(key))
 
+    def _is_dfp_param_key(self, key):
+        return bool(key) and key.startswith(self._dfp_pset_name + ".")
+
+    def _row_for_global_id(self, gid):
+        want = self._normalize_global_id(gid)
+        if not want:
+            return None
+        for row in self.vm.all_rows():
+            if self._normalize_global_id(row.GlobalId) == want:
+                return row
+        return None
+
+    def _dfp_cell_active(self, row, key):
+        if self._has_authored_dfp_value is None:
+            return False
+        return self._has_authored_dfp_value(row.get_cell(key))
+
+    def _install_dfp_marker_click_handler(self):
+        if self._register_dfp_marker_click_callback is None:
+            return
+        try:
+            if self._register_dfp_schedule_window is not None:
+                self._register_dfp_schedule_window(self)
+
+            def on_cell_click(payload, command_data):
+                import sys
+                win = getattr(sys, "_pyBS_dfp_schedule_window", None)
+                if win is None:
+                    return
+                p = dict(payload or {})
+                c = command_data
+
+                def ui():
+                    try:
+                        win._apply_dfp_marker_click(p, c)
+                    except Exception as ex:
+                        win._logger.warning(
+                            "CDE: DFP marker click failed: {}".format(ex))
+
+                try:
+                    win.Dispatcher.Invoke(
+                        win._DispatcherPriority.Normal,
+                        win._Action(ui))
+                except Exception:
+                    win.Dispatcher.BeginInvoke(
+                        win._DispatcherPriority.Normal,
+                        win._Action(ui))
+
+            self._register_dfp_marker_click_callback(on_cell_click)
+        except Exception as ex:
+            self._logger.warning(
+                "CDE: DFP click handler install failed: {}".format(ex))
+
+    def _stage_dfp_marker_edit(self, key, row, new_value):
+        """Stage DFP toggle from view markers (bypasses column_meta gate)."""
+        if getattr(self, "_suppress_inline_staging", False):
+            return
+        if not self._is_dfp_param_key(key):
+            return
+        row.record_pending(key, new_value)
+        self._refresh_staged_row_ui(row, key=key)
+        code = key.split(".", 1)[-1] if "." in key else key
+        self._set_status(
+            "Staged {} = {}. Click Apply to commit.".format(code, new_value))
+
+    def _on_dfp_marker_clicked(self, payload, command_data):
+        """Legacy entry — handler uses closure from _install_dfp_marker_click_handler."""
+        self._apply_dfp_marker_click(payload, command_data)
+
+    def _apply_dfp_marker_click(self, payload, command_data):
+        gid = payload.get("global_id")
+        key = payload.get("param_key")
+        if not gid or not key:
+            self._logger.debug(
+                "CDE: DFP click ignored — gid={!r} key={!r}".format(gid, key))
+            return
+        row = self._row_for_global_id(gid)
+        if row is None:
+            self._logger.warning(
+                "CDE: DFP click — no row for GlobalId {!r}".format(gid))
+            return
+        new_val = not self._dfp_cell_active(row, key)
+        self._stage_dfp_marker_edit(key, row, new_val)
+        self._select_grid_row(row)
+        if self._apply_in_flight:
+            return
+        # Refresh graphics on next idling poll (same thread as hover) — avoids
+        # queuing SetElementIds/TGM ExternalEvents that crash ArrowEditor on Apply.
+        self._dfp_graphics_refresh_gid = gid
+
+    def _arm_dfp_apply_quarantine(self):
+        """Block DFP idling during apply (no TGM API — crashes ArrowEditor)."""
+        if self._set_dfp_apply_block is not None:
+            self._set_dfp_apply_block(True)
+        self._apply_revit_quarantine = True
+
+    def _finish_apply_revit_side(self):
+        """Release apply locks. Never touch TGM here — user resets DFP via button."""
+        self._apply_revit_quarantine = False
+        were_active = self._dfp_markers_were_active
+        self._dfp_markers_were_active = False
+        if were_active:
+            self._dfp_markers_need_manual_reset = True
+            self._dfp_markers_active = False
+            self._update_dfp_markers_button()
+            if self._set_dfp_apply_block is not None:
+                self._set_dfp_apply_block(True)
+        else:
+            self._dfp_markers_need_manual_reset = False
+            if self._set_dfp_apply_block is not None:
+                self._set_dfp_apply_block(False)
+
+    def _release_dfp_frozen_state(self):
+        if self._dfp_markers_need_manual_reset:
+            self._dfp_markers_need_manual_reset = False
+            if self._set_dfp_apply_block is not None:
+                self._set_dfp_apply_block(False)
+
+    def _dfp_off_apply_hint(self):
+        if not self._dfp_markers_ok:
+            return ""
+        if self._dfp_markers_need_manual_reset:
+            return (
+                " DFP graphics frozen — click DFP markers to clear and re-enable.")
+        return " DFP markers are off — use the button to turn them back on."
+
+    def _maybe_refresh_dfp_markers(self):
+        if self._apply_in_flight or self._apply_revit_quarantine:
+            return
+        if self._dfp_markers_need_manual_reset:
+            return
+        if self._dfp_markers_active:
+            self._refresh_dfp_markers()
+
     def on_preparing_cell_for_edit(self, sender, args):
         """Wire checkbox toggles so pending updates before the cell loses focus."""
         try:
@@ -1314,6 +1668,8 @@ class ScheduleWindow(forms.WPFWindow):
             if not key or row is None:
                 return
             self._stage_cde_cell_edit(key, row, bool(sender.IsChecked))
+            if self._is_dfp_param_key(key):
+                self._maybe_refresh_dfp_markers()
         except Exception as ex:
             self._logger.debug("CDE: inline checkbox change failed: {}".format(ex))
 
@@ -1348,6 +1704,13 @@ class ScheduleWindow(forms.WPFWindow):
             self._logger.debug("CDE: cell edit failed: {}".format(ex))
 
     # --- coloring -------------------------------------------------------
+
+    def _dfp_marker_rows(self):
+        """Doors shown in the schedule grid (filter/group), not whole model."""
+        try:
+            return list(self.vm.rows)
+        except Exception:
+            return self._current_rows()
 
     def _current_rows(self):
         return self.vm.all_rows()
@@ -1394,6 +1757,134 @@ class ScheduleWindow(forms.WPFWindow):
     def _clear_legend(self):
         self.legendList.ItemsSource = None
         self._set_status("Colors reset.")
+
+    # --- DFP temporary graphics (Hub icon markers) ----------------------
+
+    def _visible_dfp_param_keys(self):
+        visible = list(self._value_column_map.keys())
+        if self._default_dfp_param_keys is None:
+            return []
+        keys = self._default_dfp_param_keys(self._param_defs, visible_keys=visible)
+        if keys:
+            return keys
+        return self._default_dfp_param_keys(self._param_defs)
+
+    def _all_dfp_param_keys(self):
+        """Full DFP catalog for hover overlay (all functions, not just visible cols)."""
+        if self._default_dfp_param_keys is None:
+            return []
+        return self._default_dfp_param_keys(self._param_defs)
+
+    def _set_dfp_status(self, message):
+        self.Dispatcher.BeginInvoke(
+            self._DispatcherPriority.Normal,
+            self._Action(lambda: self._set_status(message)))
+
+    def _update_dfp_markers_button(self):
+        if not hasattr(self, "dfpMarkersButton"):
+            return
+        if self._dfp_markers_active:
+            self.dfpMarkersButton.Content = "DFP markers ON"
+            try:
+                self.dfpMarkersButton.Style = self.FindResource("DefaultButtonStyle")
+            except Exception:
+                pass
+        else:
+            self.dfpMarkersButton.Content = "DFP markers"
+            try:
+                self.dfpMarkersButton.Style = self.FindResource("SecondaryButtonStyle")
+            except Exception:
+                pass
+
+    def on_dfp_markers_click(self, sender, args):
+        self._release_dfp_frozen_state()
+        if not self._dfp_markers_ok or self._build_dfp_view_points is None:
+            msg = (
+                "DFP markers require Revit 2022 or newer "
+                "(TemporaryGraphicsManager API).")
+            if self._dfp_markers_import_error:
+                msg += "\n\n{}".format(self._dfp_markers_import_error)
+            forms.alert(msg, title="DFP Markers")
+            return
+        if self._dfp_markers_active:
+            self._dfp_markers_active = False
+            self._update_dfp_markers_button()
+            self._update_pending_ui()
+
+            def off_task(uiapp):
+                try:
+                    doc = uiapp.ActiveUIDocument.Document
+                    cleaner = (
+                        self._soft_clean_dfp_session
+                        or self._clean_dfp_session)
+                    if cleaner is not None:
+                        cleaner(doc)
+                except Exception as ex:
+                    self._logger.warning("CDE: DFP markers off failed: {}".format(ex))
+            self._runner.run(off_task)
+            self._set_status("DFP markers off.")
+            return
+
+        self._dfp_markers_active = True
+        self._update_dfp_markers_button()
+        self._update_pending_ui()
+        self._set_status("Placing DFP markers...")
+        self._refresh_dfp_markers()
+
+    def _refresh_dfp_markers(self):
+        if not self._dfp_markers_active or not self._dfp_markers_ok:
+            return
+        if self._apply_in_flight:
+            return
+        rows = self._dfp_marker_rows()
+        param_keys = self._all_dfp_param_keys()
+        if not param_keys:
+            param_keys = self._visible_dfp_param_keys()
+        if not param_keys:
+            self._set_status(
+                "No DFP columns visible. Show Pset_DFP columns or refresh data.")
+            return
+
+        def task(uiapp):
+            try:
+                doc = uiapp.ActiveUIDocument.Document
+                if self._ensure_dfp_tgm_handler is not None:
+                    self._ensure_dfp_tgm_handler(doc, logger=self._logger)
+                view = doc.ActiveView
+                view_map = self._build_dfp_view_points(
+                    doc, rows, param_keys, view=view)
+                if not view_map:
+                    self._set_dfp_status(
+                        "No authored DFP values on matched doors in this view.")
+                    return
+                self._register_dfp_session(doc, view_map, toggle_active=True)
+                self._set_dfp_toggle_active(doc, True)
+                driver = self._start_or_get_dfp_driver(
+                    uiapp, doc, view_map, self._get_element_id_value,
+                    logger=self._logger)
+                if driver is not None:
+                    driver.set_enabled(True)
+                    driver.refresh_all()
+                control_count = sum(len(v) for v in view_map.values())
+                door_gids = set()
+                for pts in view_map.values():
+                    for pt in pts:
+                        gid = pt.get("global_id")
+                        if gid:
+                            door_gids.add(gid)
+                self._set_dfp_status(
+                    "DFP — {} door(s), {} function(s). "
+                    "Hover summary to edit; click cell to stage.".format(
+                        len(door_gids), len(param_keys)))
+            except Exception as ex:
+                self._logger.error("CDE: DFP markers failed: {}".format(ex))
+                self._dfp_markers_active = False
+                self.Dispatcher.BeginInvoke(
+                    self._DispatcherPriority.Normal,
+                    self._Action(self._update_dfp_markers_button))
+                self._set_dfp_status("DFP markers failed: {}".format(ex))
+
+        self._runner.run(task)
 
     # --- selection ------------------------------------------------------
 
@@ -1448,6 +1939,8 @@ class ScheduleWindow(forms.WPFWindow):
             row.record_pending(key, value)
         self._refresh_grid_cells()
         self._update_pending_ui()
+        if self._is_dfp_param_key(key):
+            self._maybe_refresh_dfp_markers()
         self._set_status(
             "Staged '{}' on {} row(s). Click Apply to commit.".format(
                 pdef.label, len(rows)))
@@ -1464,6 +1957,7 @@ class ScheduleWindow(forms.WPFWindow):
             self.vm.discard_all_pending()
             self._refresh_grid_cells()
             self._update_pending_ui()
+            self._maybe_refresh_dfp_markers()
             self._set_status("Discarded {} pending edit(s).".format(count))
         finally:
             self._suppress_inline_staging = False
@@ -1480,6 +1974,9 @@ class ScheduleWindow(forms.WPFWindow):
     def on_apply_pending_click(self, sender, args):
         if self._apply_in_flight:
             return
+        self._end_grid_edit(commit=False)
+        cleared = self._runner.clear_pending()
+        self._dfp_graphics_refresh_gid = None
         changes = self.vm.collect_pending_changes()
         if not changes:
             self._set_status("No pending edits to apply.")
@@ -1488,17 +1985,32 @@ class ScheduleWindow(forms.WPFWindow):
         if not project_id or not revision_id:
             self._set_status("Map the model before writing values.")
             return
+
+        if self._dfp_markers_active:
+            self._set_status(
+                "Turn off DFP markers before Apply "
+                "(keeps Revit stable after view edits).")
+            return
+
+        self._dfp_markers_were_active = False
+
         self._set_apply_in_flight(True)
+        self._begin_apply_dry_run(changes, project_id, revision_id)
+
+    def _begin_apply_dry_run(self, changes, project_id, revision_id):
         self._set_status("Running dry run...")
 
         def work():
             etag = self._get_revision_etag(project_id, revision_id)
             return self.service.apply_element_mutations(
-                project_id, revision_id, changes, dry_run=True, etag=etag)
+                project_id, revision_id, changes, dry_run=True, etag=etag,
+                file_version_id=self._file_version_id(),
+                file_id=self._file_id())
 
         def done(outcome, error):
             if error is not None:
                 self._set_apply_in_flight(False)
+                self._finish_apply_revit_side()
                 self._handle_apply_error(error)
                 return
             if outcome and outcome.etag:
@@ -1514,34 +2026,64 @@ class ScheduleWindow(forms.WPFWindow):
                 self._set_status(
                     "Dry run OK ({} element(s)). Confirm to commit.".format(
                         len(plan.get("matchedElements") or changes)))
-            if not forms.alert(msg, yes=True, no=True):
-                self._set_apply_in_flight(False)
-                self._set_status("Apply cancelled.")
-                return
-            fresh_changes = self.vm.collect_pending_changes()
-            if not fresh_changes:
-                self._set_apply_in_flight(False)
-                self._set_status("No pending edits to commit.")
-                return
-            self._commit_pending_changes(fresh_changes, project_id, revision_id)
+            self._pending_commit_ctx = (project_id, revision_id)
+            self._show_commit_confirm(True)
+            self._set_status(
+                "{}  Click 'Confirm commit' to write, or Cancel.".format(
+                    self._format_dry_run_message(plan).split("\n\n")[0]
+                    .replace("\n", "  ")))
 
         self._run_async(work, done)
 
+    def _show_commit_confirm(self, show):
+        """Toggle the non-modal commit confirm bar (avoids modal reentrancy crash)."""
+        try:
+            vis = (self._Visibility.Visible if show
+                   else self._Visibility.Collapsed)
+            self.confirmCommitButton.Visibility = vis
+            self.cancelCommitButton.Visibility = vis
+        except Exception as ex:
+            self._logger.debug("CDE: confirm bar toggle failed: {}".format(ex))
+
+    def on_cancel_commit_click(self, sender, args):
+        self._show_commit_confirm(False)
+        self._pending_commit_ctx = None
+        self._set_apply_in_flight(False)
+        self._finish_apply_revit_side()
+        self._set_status("Apply cancelled." + self._dfp_off_apply_hint())
+
+    def on_confirm_commit_click(self, sender, args):
+        self._show_commit_confirm(False)
+        ctx = self._pending_commit_ctx
+        self._pending_commit_ctx = None
+        if not ctx:
+            return
+        project_id, revision_id = ctx
+        fresh_changes = self.vm.collect_pending_changes()
+        if not fresh_changes:
+            self._set_apply_in_flight(False)
+            self._finish_apply_revit_side()
+            self._set_status(
+                "No pending edits to commit." + self._dfp_off_apply_hint())
+            return
+        self._commit_pending_changes(fresh_changes, project_id, revision_id)
+
     def _handle_apply_error(self, error):
+        hint = self._dfp_off_apply_hint()
         if isinstance(error, CDEPreconditionError):
             project_id, revision_id = self._project_revision_ids()
             if project_id and revision_id:
                 etag = self.service.fetch_revision_etag(project_id, revision_id)
                 if etag:
-                    self._save_revision_etag(etag)
+                    self._cache_revision_etag(etag)
             self._set_status(
-                "Model changed (stale etag). Refreshing — review and retry Apply.")
-            self.refresh(preserve_pending=True)
+                "Model changed (stale etag). Click Refresh, then retry Apply."
+                + hint)
             return
         if isinstance(error, CDEConflictError):
-            self._set_status("Write conflict (409): {}".format(error))
+            self._set_status("Write conflict (409): {}{}".format(error, hint))
             return
-        self._set_status("Apply failed: {}".format(error))
+        self._set_status("Apply failed: {}{}".format(error, hint))
 
     def _commit_pending_changes(self, changes, project_id, revision_id):
         self._set_apply_in_flight(True)
@@ -1551,7 +2093,9 @@ class ScheduleWindow(forms.WPFWindow):
             etag = self._get_revision_etag(project_id, revision_id)
             try:
                 outcome = self.service.apply_element_mutations(
-                    project_id, revision_id, changes, dry_run=False, etag=etag)
+                    project_id, revision_id, changes, dry_run=False, etag=etag,
+                    file_version_id=self._file_version_id(),
+                    file_id=self._file_id())
             except CDEPreconditionError:
                 fresh_etag = self.service.fetch_revision_etag(
                     project_id, revision_id)
@@ -1563,6 +2107,7 @@ class ScheduleWindow(forms.WPFWindow):
         def done(result, error):
             self._set_apply_in_flight(False)
             if error is not None:
+                self._finish_apply_revit_side()
                 self._handle_apply_error(error)
                 return
             outcome, committed_changes = result
@@ -1574,16 +2119,23 @@ class ScheduleWindow(forms.WPFWindow):
             state = (status_data.get("status") or status_data.get("state") or "")
             state_lower = state.lower() if state else ""
             if state_lower in ("failed", "rejected", "error", "cancelled"):
-                self._set_status("Mutation {} — pending edits kept.".format(state))
+                self._finish_apply_revit_side()
+                self._set_status(
+                    "Mutation {} — pending edits kept.{}".format(
+                        state, self._dfp_off_apply_hint()))
                 return
             if outcome.mutation_id:
                 if not state_lower:
+                    self._finish_apply_revit_side()
                     self._set_status(
-                        "Mutation status unknown — pending edits kept.")
+                        "Mutation status unknown — pending edits kept."
+                        + self._dfp_off_apply_hint())
                     return
                 if state_lower not in self._mutation_success_states:
+                    self._finish_apply_revit_side()
                     self._set_status(
-                        "Mutation state '{}' — pending edits kept.".format(state))
+                        "Mutation state '{}' — pending edits kept.{}".format(
+                            state, self._dfp_off_apply_hint()))
                     return
             gids = list(committed_changes.keys())
             fresh_values = {}
@@ -1608,6 +2160,10 @@ class ScheduleWindow(forms.WPFWindow):
                     confirmed_count += len(confirmed_keys)
             self._refresh_grid_cells()
             self._update_pending_ui()
+            self._finish_apply_revit_side()
+            if outcome.etag:
+                self._cache_revision_etag(outcome.etag)
+                self._pending_etag_persist = outcome.etag
             if confirmed_count:
                 self._set_status(
                     "Committed {} cell edit(s) on {} element(s).".format(
@@ -1734,17 +2290,7 @@ class ScheduleWindow(forms.WPFWindow):
         if row is None:
             self._apply_detail_pane(None, None)
             return
-        cached = dict(row.cells)
-        node = self._node_by_gid.get(row.GlobalId)
-        if node is not None:
-            graph_vals = getattr(self.service, "graph_node_values", None)
-            if graph_vals is not None:
-                try:
-                    cached.update(graph_vals(node))
-                except Exception as ex:
-                    self._logger.debug("CDE: detail from cached graph node failed: {}".format(ex))
-        # No per-row HTTP fetch — full GraphQL payload is cached in last_node_by_gid
-        # at refresh (avoids Revit 2026 crash from background selection fetch).
+        cached = self._merge_row_detail_values(row)
         self._apply_detail_pane(row, cached)
 
     # --- lifecycle ------------------------------------------------------
@@ -1764,9 +2310,19 @@ class ScheduleWindow(forms.WPFWindow):
 
         def stop_watcher(uiapp):
             try:
+                self._flush_deferred_etag_persist()
+            except Exception:
+                pass
+            try:
                 self._watcher.stop()
             except Exception:
                 pass
+            if self._dfp_markers_active and self._clean_dfp_session is not None:
+                try:
+                    doc = uiapp.ActiveUIDocument.Document
+                    self._clean_dfp_session(doc)
+                except Exception:
+                    pass
 
         self._runner.run(stop_watcher)
 

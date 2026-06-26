@@ -256,7 +256,9 @@ class LoginWindow(forms.WPFWindow):
         revision_id = model.id
 
         ok = storage.save_mapping(
-            doc, project.id, project.name, revision_id, cde_config.get_base_url())
+            doc, project.id, project.name, revision_id, cde_config.get_base_url(),
+            file_version_id=getattr(model, "version_id", None),
+            file_id=getattr(model, "file_id", None))
         if ok:
             self._refresh_current_mapping()
             self._set_status("Model mapped to '{}' / {}.".format(

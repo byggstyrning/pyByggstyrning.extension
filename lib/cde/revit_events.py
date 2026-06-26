@@ -28,6 +28,12 @@ class _RevitTaskHandler(UI.IExternalEventHandler):
     def enqueue(self, func):
         self._queue.append(func)
 
+    def clear_queue(self):
+        """Drop queued (not yet executed) tasks. Returns count cleared."""
+        n = len(self._queue)
+        self._queue = []
+        return n
+
     def Execute(self, uiapp):
         pending, self._queue = self._queue, []
         for func in pending:
@@ -51,6 +57,11 @@ class ExternalEventRunner(object):
         """Queue ``func(uiapp)`` and request execution. Returns immediately."""
         self._handler.enqueue(func)
         self._event.Raise()
+
+    def clear_pending(self):
+        """Discard queued Revit tasks (e.g. before Apply). Returns count cleared."""
+        n = self._handler.clear_queue()
+        return n
 
 
 class ActiveViewWatcher(object):
