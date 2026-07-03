@@ -28,18 +28,44 @@ top-left corner of the viewport in 3D views.
 - The badge appears only in the active 3D view while the toggle is on.
 - Revit 2022+ only (`TemporaryGraphicsManager`).
 
-## Alternative considered: graphics locked inside the view
+## Alternatives surveyed (2026-07)
 
-A persistent variant would lock the 3D view (`View3D.SaveOrientationAndLock`)
-and place a `TextNote` in the view — Revit allows annotations in locked 3D
-views. That label would survive sessions, print, and export, but it:
+All known Revit API variants for an in-viewport label, with why they were
+or weren't chosen:
 
-- modifies the model (annotation element + view lock),
-- forces the view orientation to stay locked (users can't orbit without
-  unlocking and losing the annotation),
-- does not follow pan/zoom to stay in the corner.
+1. **TemporaryGraphicsManager / InCanvasControl** *(implemented here)* —
+   Revit 2022+, bitmap badge, no model impact, no print. Model-anchored, so
+   the badge snaps back to the corner only after pan/zoom ends.
+2. **WPF overlay window** — a borderless, topmost, click-through WPF window
+   owned by the Revit main window, positioned over the viewport using
+   `UIView.GetWindowRectangle()`. Pixel-anchored: stays in the corner *during*
+   pan/zoom/orbit, full text rendering, no model impact, works pre-2022.
+   Costs: must track window move/resize/DPI/multi-monitor and view switches;
+   floats above dialogs if ownership is wrong; never prints. Strongest
+   candidate if the TGM snap-back feels bad in evaluation.
+3. **DirectContext3D server** — Revit 2017+ per-frame drawing, so tracking
+   is smooth, but text must be tessellated into triangles (FormattedText /
+   GraphicsPath), and corner-anchoring in ortho 3D still needs zoom state
+   cached from UI events. Highest complexity by far; no print.
+4. **Locked 3D view + TextNote/annotation** (`View3D.SaveOrientationAndLock`)
+   — persistent and printable, but modifies the model, forces the orientation
+   lock, and stays at a model point rather than the viewport corner.
+5. **ModelText element** — a real 3D element; prints; but lives in model
+   space (not screen-anchored) and pollutes the model.
+6. **3D view background image** (`ViewDisplayBackground.CreateImage`,
+   Revit 2014+) — render the phase text into an image and set it as the
+   view background (flags/offset/scale relative to the view boundary).
+   Per-view, persistent, prints; but requires a transaction, replaces any
+   existing background, and draws behind model geometry.
+7. **AVF legend hack** — Analysis Visualization Framework shows a legend with
+   the display-style title in the view; some add-ins abuse it for status
+   text. Requires dummy analysis data + transaction; legend placement is not
+   controllable. Not recommended.
+8. **Non-graphics fallbacks** — keep the phase in the view *name* (visible in
+   the view tab/title bar, updated by a DocumentChanged updater), or show it
+   in a dockable pane. Zero canvas footprint, zero risk.
 
-The temporary-graphics approach was chosen for evaluation because it is
-zero-impact on the model and reuses the proven marker driver pattern. If a
-printable label is needed later, the locked-view TextNote can be added as a
-separate command.
+The temporary-graphics approach was chosen first because it is zero-impact
+on the model and reuses the proven marker driver pattern. If the snap-back
+during navigation bothers users, try variant 2 (WPF overlay). If the label
+must print, use variant 4 or 6.
