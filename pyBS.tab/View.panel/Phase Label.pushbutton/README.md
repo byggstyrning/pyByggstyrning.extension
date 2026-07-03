@@ -36,7 +36,8 @@ or weren't chosen:
 1. **TemporaryGraphicsManager / InCanvasControl** *(implemented here)* —
    Revit 2022+, bitmap badge, no model impact, no print. Model-anchored, so
    the badge snaps back to the corner only after pan/zoom ends.
-2. **WPF overlay window** — a borderless, topmost, click-through WPF window
+2. **WPF overlay window** *(implemented as the Phase HUD button,
+   `lib/revit/phase_label_wpf.py`)* — a borderless, click-through WPF window
    owned by the Revit main window, positioned over the viewport using
    `UIView.GetWindowRectangle()`. Pixel-anchored: stays in the corner *during*
    pan/zoom/orbit, full text rendering, no model impact, works pre-2022.
