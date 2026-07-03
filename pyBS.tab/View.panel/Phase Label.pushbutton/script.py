@@ -1,0 +1,106 @@
+# -*- coding: utf-8 -*-
+"""Toggle a phase-name badge in the top-left corner of 3D views.
+
+Normal click:
+- ON: pin the active view's Phase name to the viewport top-left corner
+  (temporary graphics; follows pan/zoom; never prints or saves).
+- OFF: remove the badge and stop tracking.
+
+Shift+Click:
+- Force a redraw without toggling state.
+"""
+
+__title__ = "Phase\nLabel"
+__author__ = "Byggstyrning AB"
+__doc__ = ("Toggle a phase name badge in the top-left corner of 3D views. "
+           "Shift+Click: refresh.")
+__highlight__ = 'new'
+__persistentengine__ = True
+
+import sys
+import os.path as op
+
+import clr
+clr.AddReference('RevitAPI')
+
+from pyrevit import script
+from pyrevit import forms
+from pyrevit import revit
+
+script_path = __file__
+pushbutton_dir = op.dirname(script_path)
+panel_dir = op.dirname(pushbutton_dir)
+tab_dir = op.dirname(panel_dir)
+extension_dir = op.dirname(tab_dir)
+lib_path = op.join(extension_dir, 'lib')
+if lib_path not in sys.path:
+    sys.path.insert(0, lib_path)
+
+_IMPORT_ERROR = None
+try:
+    from revit.phase_label import (
+        is_temporary_graphics_available,
+        find_phase_label_driver,
+        start_phase_label_driver,
+        stop_phase_label_driver,
+    )
+    _PHASE_LABEL_OK = is_temporary_graphics_available()
+except Exception as ex:
+    _PHASE_LABEL_OK = False
+    _IMPORT_ERROR = str(ex)
+
+logger = script.get_logger()
+doc = revit.doc
+uiapp = __revit__
+
+
+def _sync_toggle_icon(active):
+    try:
+        script.toggle_icon(bool(active))
+    except Exception:
+        pass
+
+
+def _label_on():
+    driver = start_phase_label_driver(uiapp, doc, logger=logger)
+    if driver is None:
+        forms.show_balloon(
+            header="Phase Label",
+            text="Could not start phase label driver.",
+            is_new=True)
+        return False
+    _sync_toggle_icon(True)
+    return True
+
+
+def _label_off():
+    stop_phase_label_driver(doc)
+    _sync_toggle_icon(False)
+    return True
+
+
+if __name__ == '__main__':
+    if not _PHASE_LABEL_OK:
+        if _IMPORT_ERROR:
+            logger.error(
+                "phase_label import failed: {}".format(_IMPORT_ERROR))
+            forms.alert(
+                "Phase label failed to load:\n\n{}".format(_IMPORT_ERROR),
+                title="Phase Label")
+        else:
+            forms.alert(
+                "Phase label requires Revit 2022 or newer "
+                "(TemporaryGraphicsManager API).",
+                title="Phase Label")
+    else:
+        is_shift = script.get_config().get_option('shiftclick', False)
+        driver = find_phase_label_driver(doc)
+        if is_shift:
+            if driver is not None:
+                driver.refresh()
+            else:
+                _label_on()
+        elif driver is not None:
+            _label_off()
+        else:
+            _label_on()
