@@ -3,15 +3,15 @@
 
 Normal click:
 - ON: show the active view's Phase name as a click-through WPF overlay
-  anchored to the viewport's top-left corner in screen pixels. Unlike the
-  Phase Label (temporary graphics) button, it stays put during pan/zoom.
+  anchored to the viewport's top-left corner in screen pixels, so it stays
+  put during pan/zoom.
 - OFF: close the overlay and stop tracking.
 
 Shift+Click:
 - Force a redraw and show a diagnostics report.
 """
 
-__title__ = "Phase\nHUD"
+__title__ = "Phase HUD"
 __author__ = "Byggstyrning AB"
 __doc__ = ("Toggle a WPF overlay phase badge in the top-left corner of any "
            "view with a Phase. Shift+Click: refresh + diagnostics.")
@@ -30,7 +30,8 @@ from pyrevit import revit
 
 script_path = __file__
 pushbutton_dir = op.dirname(script_path)
-panel_dir = op.dirname(pushbutton_dir)
+stack_dir = op.dirname(pushbutton_dir)
+panel_dir = op.dirname(stack_dir)
 tab_dir = op.dirname(panel_dir)
 extension_dir = op.dirname(tab_dir)
 lib_path = op.join(extension_dir, 'lib')
