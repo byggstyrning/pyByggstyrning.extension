@@ -16,14 +16,23 @@ side-by-side evaluation against the TemporaryGraphicsManager variant.
   `TransformFromDevice` matrix (per-monitor DPI).
 - An `Idling` handler (throttled) plus `ViewActivated` keep text and
   position in sync: view switches, phase changes, Revit window move/resize.
+- While the Revit window is being dragged or resized, `Idling` is silent
+  (Windows runs a modal move/size loop), so a `DispatcherTimer` — whose
+  `WM_TIMER` messages still get dispatched inside that loop — watches the
+  main window rect via Win32 `GetWindowRect` and hides the badge as soon as
+  the rect starts changing. The first `Idling` tick after release re-syncs
+  and shows it at the new position.
 - Because the anchor is in **screen pixels**, the badge does not move at all
   during pan/zoom/orbit — the key difference from the Phase Label button,
   whose model-anchored badge snaps back only after navigation ends.
 
 ## Known limitations (evaluation notes)
 
-- Repositioning after moving/resizing the Revit window or re-tiling views
-  waits for the next idle tick (~0.3 s).
+- During a Revit window move/resize the badge disappears (by design) and
+  reappears ~0.3 s after release. Re-tiling views inside the window does
+  not hide it — the badge just jumps to the new corner on the next idle
+  tick, since the main window rect is unchanged and `UIView` coordinates
+  cannot be read outside a Revit API context.
 - The overlay can sit on top of Revit dialogs that open over the viewport
   corner (it is click-through, so it never blocks input).
 - Does not print or export, and screen captures of the Revit window may or

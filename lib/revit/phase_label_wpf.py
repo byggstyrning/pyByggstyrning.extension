@@ -21,6 +21,7 @@ clr.AddReference('PresentationCore')
 clr.AddReference('WindowsBase')
 clr.AddReference('System.Xaml')
 
+from System import TimeSpan
 from System.Windows import (
     Window, WindowStyle, ResizeMode, SizeToContent, Thickness,
     CornerRadius, PresentationSource, FontWeights,
@@ -28,6 +29,7 @@ from System.Windows import (
 from System.Windows.Controls import Border, TextBlock
 from System.Windows.Interop import WindowInteropHelper
 from System.Windows.Media import SolidColorBrush, Color, Brushes, FontFamily
+from System.Windows.Threading import DispatcherTimer
 
 from Autodesk.Revit.DB import View3D
 
@@ -38,6 +40,7 @@ from revit.view_markers import _normalize_view_id
 _DRIVERS_SYS_KEY = '_pyBS_phase_hud_drivers'
 _THROTTLE_MS = 300
 _MARGIN_PX = 12
+_MOVE_WATCH_MS = 100
 
 _GWL_EXSTYLE = -20
 _WS_EX_TRANSPARENT = 0x00000020
@@ -68,6 +71,31 @@ def _apply_click_through(hwnd_int):
         return True
     except Exception:
         return False
+
+
+class _RECT(ctypes.Structure):
+    _fields_ = [
+        ('left', ctypes.c_long),
+        ('top', ctypes.c_long),
+        ('right', ctypes.c_long),
+        ('bottom', ctypes.c_long),
+    ]
+
+
+def _window_rect(hwnd_int):
+    """Screen rect of a window via Win32 (safe outside Revit API context)."""
+    if not hwnd_int:
+        return None
+    try:
+        rect = _RECT()
+        fn = ctypes.windll.user32.GetWindowRect
+        fn.argtypes = [ctypes.c_void_p, ctypes.POINTER(_RECT)]
+        fn.restype = ctypes.c_int
+        if fn(hwnd_int, ctypes.byref(rect)):
+            return (rect.left, rect.top, rect.right, rect.bottom)
+    except Exception:
+        pass
+    return None
 
 
 def _revit_main_window_handle(uiapp):
@@ -143,6 +171,9 @@ class PhaseHudDriver(object):
         self._last_tick_ms = 0
         self._idling_handler = None
         self._view_activated_handler = None
+        self._owner_hwnd_int = None
+        self._last_owner_rect = None
+        self._move_timer = None
 
     def _build_window(self):
         window = Window()
@@ -177,6 +208,7 @@ class PhaseHudDriver(object):
         if owner is not None:
             try:
                 helper.Owner = owner
+                self._owner_hwnd_int = owner.ToInt64()
             except Exception:
                 pass
         hwnd = helper.EnsureHandle()
@@ -200,12 +232,31 @@ class PhaseHudDriver(object):
             self._uiapp.ViewActivated += self._view_activated_handler
         except Exception:
             pass
+        # Idling is silent while Windows runs the modal move/size loop on the
+        # Revit window, but WM_TIMER still gets dispatched there — so a
+        # DispatcherTimer can hide the badge the moment the window starts
+        # moving; the first Idling tick after release shows it again.
+        try:
+            self._move_timer = DispatcherTimer()
+            self._move_timer.Interval = TimeSpan.FromMilliseconds(
+                _MOVE_WATCH_MS)
+            self._move_timer.Tick += self._on_move_watch_tick
+            self._move_timer.Start()
+        except Exception:
+            self._move_timer = None
         if not hasattr(sys, _DRIVERS_SYS_KEY):
             setattr(sys, _DRIVERS_SYS_KEY, [])
         getattr(sys, _DRIVERS_SYS_KEY).append(self)
         self.refresh()
 
     def stop(self):
+        if self._move_timer is not None:
+            try:
+                self._move_timer.Stop()
+                self._move_timer.Tick -= self._on_move_watch_tick
+            except Exception:
+                pass
+            self._move_timer = None
         if self._idling_handler is not None:
             try:
                 self._uiapp.Idling -= self._idling_handler
@@ -247,6 +298,19 @@ class PhaseHudDriver(object):
     def _on_view_activated(self, sender, args):
         try:
             self._sync(force=True)
+        except Exception:
+            pass
+
+    def _on_move_watch_tick(self, sender, args):
+        """Hide while the Revit window is being moved or resized."""
+        try:
+            rect = _window_rect(self._owner_hwnd_int)
+            if rect is None:
+                return
+            last = self._last_owner_rect
+            self._last_owner_rect = rect
+            if last is not None and rect != last:
+                self._hide()
         except Exception:
             pass
 
