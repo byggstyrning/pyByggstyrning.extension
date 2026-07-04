@@ -1,7 +1,7 @@
 # Phase HUD (prototype)
 
 Toggle button that shows the active view's **Phase** name as a WPF overlay
-badge pinned to the top-left corner of the viewport in 3D views. This is
+badge pinned to the top-left corner of the viewport in any view with a Phase parameter (3D, plan, section, elevation, ...). This is
 variant 2 from the survey in `Phase Label.pushbutton/README.md`, built for
 side-by-side evaluation against the TemporaryGraphicsManager variant.
 

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Toggle a WPF phase badge pinned over the top-left corner of 3D views.
+"""Toggle a WPF phase badge pinned over the top-left corner of the view.
 
 Normal click:
 - ON: show the active view's Phase name as a click-through WPF overlay
@@ -13,8 +13,8 @@ Shift+Click:
 
 __title__ = "Phase\nHUD"
 __author__ = "Byggstyrning AB"
-__doc__ = ("Toggle a WPF overlay phase badge in the top-left corner of "
-           "3D views. Shift+Click: refresh.")
+__doc__ = ("Toggle a WPF overlay phase badge in the top-left corner of any "
+           "view with a Phase. Shift+Click: refresh + diagnostics.")
 __highlight__ = 'new'
 __persistentengine__ = True
 

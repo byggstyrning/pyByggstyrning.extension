@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Phase label as a WPF overlay window pinned over the active 3D view.
+"""Phase label as a WPF overlay window pinned over the active view.
+
+Works in any graphical view that has a Phase parameter (3D, plan, section,
+elevation, ...).
 
 Alternative to revit.phase_label (TemporaryGraphicsManager): a borderless,
 topmost-within-Revit, click-through WPF window positioned at the top-left
@@ -30,8 +33,6 @@ from System.Windows.Controls import Border, TextBlock
 from System.Windows.Interop import WindowInteropHelper
 from System.Windows.Media import SolidColorBrush, Color, Brushes, FontFamily
 from System.Windows.Threading import DispatcherTimer
-
-from Autodesk.Revit.DB import View3D
 
 from revit.compat import get_element_id_value
 from revit.phase_label import _label_text_for_view
@@ -150,7 +151,6 @@ def collect_diagnostics(uiapp, document):
         lines.append('active_view: None')
         return '\n'.join(lines)
     add('active_view', lambda: u'{} ({})'.format(view.Name, type(view).__name__))
-    add('is_view3d', lambda: isinstance(view, View3D))
     add('is_template', lambda: view.IsTemplate)
     add('phase_param', lambda: view.get_Parameter(
         BuiltInParameter.VIEW_PHASE) is not None)
@@ -211,7 +211,7 @@ def start_phase_hud_driver(uiapp, document, logger=None):
 
 
 class PhaseHudDriver(object):
-    """Idling-driven WPF badge pinned to the active 3D view's corner."""
+    """Idling-driven WPF badge pinned to the active view's corner."""
 
     def __init__(self, uiapp, document, logger=None):
         self._uiapp = uiapp
@@ -402,7 +402,7 @@ class PhaseHudDriver(object):
             self._hide()
             return
         view = uidoc.ActiveView
-        if view is None or not isinstance(view, View3D) or view.IsTemplate:
+        if view is None or view.IsTemplate:
             self._hide()
             return
 

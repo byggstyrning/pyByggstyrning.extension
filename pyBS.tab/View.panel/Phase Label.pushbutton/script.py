@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Toggle a phase-name badge in the top-left corner of 3D views.
+"""Toggle a phase-name badge in the top-left corner of the active view.
 
 Normal click:
 - ON: pin the active view's Phase name to the viewport top-left corner
@@ -12,8 +12,8 @@ Shift+Click:
 
 __title__ = "Phase\nLabel"
 __author__ = "Byggstyrning AB"
-__doc__ = ("Toggle a phase name badge in the top-left corner of 3D views. "
-           "Shift+Click: refresh.")
+__doc__ = ("Toggle a phase name badge in the top-left corner of any view "
+           "with a Phase. Shift+Click: refresh + diagnostics.")
 __highlight__ = 'new'
 __persistentengine__ = True
 

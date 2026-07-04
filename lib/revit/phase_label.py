@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Zoom-anchored phase label for 3D views via TemporaryGraphicsManager.
+"""Zoom-anchored phase label via TemporaryGraphicsManager.
 
 Shows the active view's Phase name as a text badge pinned to the top-left
-corner of the viewport. The InCanvasControl is anchored at a model-space
+corner of the viewport, in any graphical view that has a Phase parameter
+(3D, plan, section, elevation, ...). The InCanvasControl is anchored at a model-space
 point, so the driver recomputes that point from UIView.GetZoomCorners()
 whenever the user pans/zooms (Idling-driven, same pattern as
 revit.view_markers). Temporary graphics only: nothing is written to the
@@ -28,7 +29,6 @@ from Autodesk.Revit.DB import (
     BuiltInParameter,
     ElementId,
     InCanvasControlData,
-    View3D,
 )
 
 from revit.compat import get_element_id_value
@@ -235,7 +235,6 @@ def collect_diagnostics(uiapp, document):
         lines.append('active_view: None')
         return '\n'.join(lines)
     add('active_view', lambda: u'{} ({})'.format(view.Name, type(view).__name__))
-    add('is_view3d', lambda: isinstance(view, View3D))
     add('is_template', lambda: view.IsTemplate)
     add('phase_param', lambda: view.get_Parameter(
         BuiltInParameter.VIEW_PHASE) is not None)
@@ -300,7 +299,7 @@ def start_phase_label_driver(uiapp, document, logger=None):
 
 
 class PhaseLabelDriver(object):
-    """Idling-driven phase badge pinned to the active 3D view's corner."""
+    """Idling-driven phase badge pinned to the active view's corner."""
 
     def __init__(self, uiapp, document, logger=None):
         self._uiapp = uiapp
@@ -388,7 +387,7 @@ class PhaseLabelDriver(object):
         if uidoc is None or not uidoc.Document.Equals(self._doc):
             return
         view = uidoc.ActiveView
-        if view is None or not isinstance(view, View3D) or view.IsTemplate:
+        if view is None or view.IsTemplate:
             self._clear_control()
             return
 

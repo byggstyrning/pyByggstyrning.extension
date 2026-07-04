@@ -1,7 +1,7 @@
 # Phase Label (prototype)
 
 Toggle button that pins the active view's **Phase** name as a badge in the
-top-left corner of the viewport in 3D views.
+top-left corner of the viewport in any view with a Phase parameter (3D, plan, section, elevation, ...).
 
 ## How it works
 
@@ -25,7 +25,7 @@ top-left corner of the viewport in 3D views.
 - During a pan/zoom drag the badge moves with the model; it snaps back to
   the corner when Revit idles (~0.3 s after the gesture ends). This is
   inherent to model-anchored temporary graphics.
-- The badge appears only in the active 3D view while the toggle is on.
+- The badge appears only in the active view while the toggle is on; views without a Phase parameter (sheets, legends, drafting) show nothing.
 - Revit 2022+ only (`TemporaryGraphicsManager`).
 
 ## Alternatives surveyed (2026-07)
