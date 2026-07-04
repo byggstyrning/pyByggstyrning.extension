@@ -1,7 +1,7 @@
 # Phase HUD (prototype)
 
 Toggle button that shows the active view's **Phase** name as a WPF overlay
-badge pinned to the top-left corner of the viewport in any view with a Phase parameter (3D, plan, section, elevation, ...). Chosen after side-by-side evaluation
+badge centered over the top edge of the viewport in any view with a Phase parameter (3D, plan, section, elevation, ...). Chosen after side-by-side evaluation
 against the TemporaryGraphicsManager variant, whose implementation is kept
 in `lib/revit/phase_label.py` (see Alternatives surveyed below).
 
@@ -15,9 +15,13 @@ in `lib/revit/phase_label.py` (see Alternatives surveyed below).
   project phase, right-click to the previous one (wrapping). The click
   raises an `ExternalEvent` whose handler sets the view's Phase
   parameter inside a transaction; the badge text updates right after.
-- The window is positioned at `UIView.GetWindowRectangle()` top-left plus a
-  margin, converting device pixels to WPF units through the window's
-  `TransformFromDevice` matrix (per-monitor DPI).
+- The window is horizontally centered over `UIView.GetWindowRectangle()`
+  just below the top edge, converting device pixels to WPF units through
+  the window's `TransformFromDevice` matrix (per-monitor DPI).
+- Styling is deliberately muted: the palette follows Revit's light/dark
+  theme (`UIThemeManager`, Revit 2024+; light fallback on older versions,
+  re-checked on refresh/phase/view changes), and the badge idles at 50%
+  opacity, turning solid while hovered.
 - An `Idling` handler (throttled) plus `ViewActivated` keep text and
   position in sync: view switches, phase changes, Revit window move/resize.
 - While the Revit window is being dragged or resized, `Idling` is silent

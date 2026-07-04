@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Toggle a WPF phase badge pinned over the top-left corner of the view.
+"""Toggle a WPF phase badge pinned over the top middle of the view.
 
 Normal click:
-- ON: show the active view's Phase name as a WPF overlay badge anchored to
-  the viewport's top-left corner in screen pixels, so it stays put during
+- ON: show the active view's Phase name as a WPF overlay badge centered
+  over the viewport's top edge in screen pixels, so it stays put during
   pan/zoom. Clicking the badge switches the view to the next project
-  phase; right-clicking switches to the previous one.
+  phase; right-clicking switches to the previous one. The badge follows
+  Revit's light/dark theme and idles at 50% opacity until hovered.
 - OFF: close the overlay and stop tracking.
 
 Shift+Click:
@@ -14,7 +15,7 @@ Shift+Click:
 
 __title__ = "Phase HUD"
 __author__ = "Byggstyrning AB"
-__doc__ = ("Toggle a phase badge in the top-left corner of any view with a "
+__doc__ = ("Toggle a phase badge at the top middle of any view with a "
            "Phase. Click the badge to switch to the next phase, right-click "
            "for the previous. Shift+Click: refresh + diagnostics.")
 __highlight__ = 'new'

@@ -5,10 +5,11 @@ Works in any graphical view that has a Phase parameter (3D, plan, section,
 elevation, ...).
 
 Alternative to revit.phase_label (TemporaryGraphicsManager): a borderless,
-topmost-within-Revit, non-activating WPF window positioned at the top-left
-corner of the active UIView's window rectangle. Because the anchor is in
-screen pixels (UIView.GetWindowRectangle), the label stays glued to the
-corner *during* pan/zoom/orbit — no snap-back. The badge is clickable:
+topmost-within-Revit, non-activating WPF window centered over the top edge
+of the active UIView's window rectangle. Because the anchor is in screen
+pixels (UIView.GetWindowRectangle), the label stays glued in place *during*
+pan/zoom/orbit — no snap-back. The muted palette follows Revit's light/dark
+theme and the badge idles at 50% opacity, turning solid on hover. The badge is clickable:
 left-click switches the view to the next project phase, right-click to the
 previous one (via ExternalEvent + transaction). Beyond that parameter
 change, nothing is written to the model and nothing prints. Works on any
@@ -31,7 +32,7 @@ clr.AddReference('System.Xaml')
 from System import TimeSpan
 from System.Windows import (
     Window, WindowStyle, ResizeMode, SizeToContent, Thickness,
-    CornerRadius, PresentationSource, FontWeights,
+    CornerRadius, PresentationSource,
 )
 from System.Windows.Controls import Border, TextBlock
 from System.Windows.Input import Cursors
@@ -50,6 +51,8 @@ _DRIVERS_SYS_KEY = '_pyBS_phase_hud_drivers'
 _THROTTLE_MS = 300
 _MARGIN_PX = 12
 _MOVE_WATCH_MS = 100
+_IDLE_OPACITY = 0.5
+_HOVER_OPACITY = 1.0
 
 _GWL_EXSTYLE = -20
 _WS_EX_TRANSPARENT = 0x00000020
@@ -137,6 +140,19 @@ def _get_uiview(uiapp, view_id):
         except Exception:
             continue
     return None
+
+
+def _revit_theme_is_dark():
+    """True when Revit runs its dark canvas/UI theme (2024+ API)."""
+    try:
+        from Autodesk.Revit.UI import UIThemeManager
+        try:
+            theme = UIThemeManager.CurrentCanvasTheme
+        except Exception:
+            theme = UIThemeManager.CurrentTheme
+        return 'dark' in str(theme).lower()
+    except Exception:
+        return False
 
 
 def _ordered_phase_ids(document):
@@ -259,6 +275,7 @@ def collect_diagnostics(uiapp, document):
             add('window_text', lambda: driver._text_block.Text)
         lines.append('owner_hwnd: {}'.format(driver._owner_hwnd_int))
         add('owner_rect', lambda: str(_window_rect(driver._owner_hwnd_int)))
+        add('theme_dark', _revit_theme_is_dark)
         lines.append('last_error: {}'.format(driver._last_error))
     return '\n'.join(lines)
 
@@ -304,6 +321,7 @@ class PhaseHudDriver(object):
         self._window = None
         self._text_block = None
         self._badge = None
+        self._theme_dark = None
         self._cycle_handler = None
         self._cycle_event = None
         self._visible = False
@@ -327,23 +345,22 @@ class PhaseHudDriver(object):
         window.ShowActivated = False
         window.Focusable = False
         window.Topmost = False
+        window.Opacity = _IDLE_OPACITY
 
         text = TextBlock()
-        text.Foreground = SolidColorBrush(Color.FromArgb(255, 245, 245, 245))
         text.FontFamily = FontFamily('Segoe UI')
-        text.FontSize = 13.0
-        text.FontWeight = FontWeights.Bold
+        text.FontSize = 12.0
 
         badge = Border()
-        badge.Background = SolidColorBrush(Color.FromArgb(230, 48, 50, 56))
-        badge.BorderBrush = SolidColorBrush(Color.FromArgb(255, 110, 110, 118))
         badge.BorderThickness = Thickness(1)
         badge.CornerRadius = CornerRadius(4)
-        badge.Padding = Thickness(10, 5, 10, 5)
+        badge.Padding = Thickness(8, 3, 8, 3)
         badge.Cursor = Cursors.Hand
         badge.Child = text
         badge.MouseLeftButtonDown += self._on_badge_left_click
         badge.MouseRightButtonDown += self._on_badge_right_click
+        badge.MouseEnter += self._on_badge_mouse_enter
+        badge.MouseLeave += self._on_badge_mouse_leave
         window.Content = badge
 
         helper = WindowInteropHelper(window)
@@ -363,6 +380,25 @@ class PhaseHudDriver(object):
         self._window = window
         self._text_block = text
         self._badge = badge
+        self._apply_theme()
+
+    def _apply_theme(self):
+        """Muted badge palette following Revit's light/dark theme."""
+        dark = _revit_theme_is_dark()
+        if dark == self._theme_dark or self._badge is None:
+            return
+        self._theme_dark = dark
+        if dark:
+            bg = Color.FromArgb(215, 43, 43, 43)
+            border = Color.FromArgb(60, 255, 255, 255)
+            fg = Color.FromArgb(255, 214, 214, 214)
+        else:
+            bg = Color.FromArgb(215, 246, 246, 246)
+            border = Color.FromArgb(60, 0, 0, 0)
+            fg = Color.FromArgb(255, 64, 64, 64)
+        self._badge.Background = SolidColorBrush(bg)
+        self._badge.BorderBrush = SolidColorBrush(border)
+        self._text_block.Foreground = SolidColorBrush(fg)
 
     def start(self):
         # ExternalEvent.Create requires an API context; start() runs inside
@@ -470,6 +506,18 @@ class PhaseHudDriver(object):
     def _on_badge_right_click(self, sender, args):
         self._raise_phase_cycle(-1)
 
+    def _on_badge_mouse_enter(self, sender, args):
+        try:
+            self._window.Opacity = _HOVER_OPACITY
+        except Exception:
+            pass
+
+    def _on_badge_mouse_leave(self, sender, args):
+        try:
+            self._window.Opacity = _IDLE_OPACITY
+        except Exception:
+            pass
+
     def _raise_phase_cycle(self, step):
         if self._cycle_event is None or self._cycle_handler is None:
             return
@@ -503,9 +551,7 @@ class PhaseHudDriver(object):
             pass
 
     def _move_to(self, rect):
-        """Place the window at the view rect's top-left (device px -> DIP)."""
-        left_px = rect.Left + _MARGIN_PX
-        top_px = rect.Top + _MARGIN_PX
+        """Center the window over the view rect's top edge (device px -> DIP)."""
         scale_x = scale_y = 1.0
         try:
             source = PresentationSource.FromVisual(self._window)
@@ -515,8 +561,10 @@ class PhaseHudDriver(object):
                 scale_y = matrix.M22
         except Exception:
             pass
-        self._window.Left = left_px * scale_x
-        self._window.Top = top_px * scale_y
+        center_px = rect.Left + (rect.Right - rect.Left) / 2.0
+        width_dip = self._window.ActualWidth or 0.0
+        self._window.Left = center_px * scale_x - width_dip / 2.0
+        self._window.Top = (rect.Top + _MARGIN_PX) * scale_y
 
     def _sync(self, force=False):
         if self._window is None:
@@ -555,10 +603,18 @@ class PhaseHudDriver(object):
                 self._badge.ToolTip = (
                     u"Phase: {}\nClick: next phase. "
                     u"Right-click: previous phase.".format(text))
+            self._apply_theme()
+            # settle layout so ActualWidth reflects the new text before
+            # horizontal centering
+            try:
+                self._window.UpdateLayout()
+            except Exception:
+                pass
             self._move_to(rect)
             if not self._visible:
                 self._window.Show()
                 self._visible = True
+                self._move_to(rect)
             self._state_key = key
         except Exception as ex:
             self._last_error = 'show: {}'.format(ex)
