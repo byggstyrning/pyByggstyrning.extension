@@ -126,6 +126,59 @@ def _get_uiview(uiapp, view_id):
     return None
 
 
+def collect_diagnostics(uiapp, document):
+    """Step-by-step status report for troubleshooting a blank HUD."""
+    from Autodesk.Revit.DB import BuiltInParameter
+
+    lines = []
+
+    def add(key, fn):
+        try:
+            lines.append('{}: {}'.format(key, fn()))
+        except Exception as ex:
+            lines.append('{}: ERROR {}'.format(key, ex))
+
+    add('engine', lambda: sys.version.replace('\n', ' '))
+
+    uidoc = uiapp.ActiveUIDocument
+    if uidoc is None:
+        lines.append('active_uidoc: None')
+        return '\n'.join(lines)
+    add('doc_match', lambda: uidoc.Document.Equals(document))
+    view = uidoc.ActiveView
+    if view is None:
+        lines.append('active_view: None')
+        return '\n'.join(lines)
+    add('active_view', lambda: u'{} ({})'.format(view.Name, type(view).__name__))
+    add('is_view3d', lambda: isinstance(view, View3D))
+    add('is_template', lambda: view.IsTemplate)
+    add('phase_param', lambda: view.get_Parameter(
+        BuiltInParameter.VIEW_PHASE) is not None)
+    text = _label_text_for_view(document, view)
+    lines.append(u'phase_text: {}'.format(text))
+
+    uiview = _get_uiview(uiapp, view.Id)
+    lines.append('uiview_found: {}'.format(uiview is not None))
+    if uiview is not None:
+        add('window_rect', lambda: str(uiview.GetWindowRectangle()))
+
+    driver = find_phase_hud_driver(document)
+    lines.append('driver_running: {}'.format(driver is not None))
+    if driver is not None:
+        lines.append('window_built: {}'.format(driver._window is not None))
+        lines.append('window_visible_flag: {}'.format(driver._visible))
+        if driver._window is not None:
+            add('window_pos', lambda: '{}, {} ({}x{})'.format(
+                driver._window.Left, driver._window.Top,
+                driver._window.ActualWidth, driver._window.ActualHeight))
+            add('window_is_visible', lambda: driver._window.IsVisible)
+            add('window_text', lambda: driver._text_block.Text)
+        lines.append('owner_hwnd: {}'.format(driver._owner_hwnd_int))
+        add('owner_rect', lambda: str(_window_rect(driver._owner_hwnd_int)))
+        lines.append('last_error: {}'.format(driver._last_error))
+    return '\n'.join(lines)
+
+
 def find_phase_hud_driver(document):
     drivers = getattr(sys, _DRIVERS_SYS_KEY, None)
     if not drivers:
@@ -174,6 +227,7 @@ class PhaseHudDriver(object):
         self._owner_hwnd_int = None
         self._last_owner_rect = None
         self._move_timer = None
+        self._last_error = None
 
     def _build_window(self):
         window = Window()
@@ -379,6 +433,7 @@ class PhaseHudDriver(object):
                 self._visible = True
             self._state_key = key
         except Exception as ex:
+            self._last_error = 'show: {}'.format(ex)
             if self._logger is not None:
                 try:
                     self._logger.warning(

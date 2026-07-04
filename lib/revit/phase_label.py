@@ -211,6 +211,63 @@ def _get_uiview(uiapp, view_id):
     return None
 
 
+def collect_diagnostics(uiapp, document):
+    """Step-by-step status report for troubleshooting a blank badge."""
+    lines = []
+
+    def add(key, fn):
+        try:
+            lines.append('{}: {}'.format(key, fn()))
+        except Exception as ex:
+            lines.append('{}: ERROR {}'.format(key, ex))
+
+    add('engine', lambda: sys.version.replace('\n', ' '))
+    add('tgm_available', is_temporary_graphics_available)
+    add('tgm_manager', lambda: get_temporary_graphics_manager(document) is not None)
+
+    uidoc = uiapp.ActiveUIDocument
+    if uidoc is None:
+        lines.append('active_uidoc: None')
+        return '\n'.join(lines)
+    add('doc_match', lambda: uidoc.Document.Equals(document))
+    view = uidoc.ActiveView
+    if view is None:
+        lines.append('active_view: None')
+        return '\n'.join(lines)
+    add('active_view', lambda: u'{} ({})'.format(view.Name, type(view).__name__))
+    add('is_view3d', lambda: isinstance(view, View3D))
+    add('is_template', lambda: view.IsTemplate)
+    add('phase_param', lambda: view.get_Parameter(
+        BuiltInParameter.VIEW_PHASE) is not None)
+    text = _label_text_for_view(document, view)
+    lines.append(u'phase_text: {}'.format(text))
+
+    uiview = _get_uiview(uiapp, view.Id)
+    lines.append('uiview_found: {}'.format(uiview is not None))
+    if uiview is not None:
+        add('window_rect', lambda: str(uiview.GetWindowRectangle()))
+        add('zoom_corners', lambda: '; '.join(
+            str(c) for c in uiview.GetZoomCorners()))
+
+    if text:
+        def _bitmap_info():
+            path, px = get_label_image_path(text)
+            return u'{} ({}x{}px, {} bytes)'.format(
+                path, px[0], px[1], os.path.getsize(path))
+        add('bitmap', _bitmap_info)
+        if uiview is not None:
+            add('anchor', lambda: str(_top_left_anchor(
+                view, uiview, get_label_image_path(text)[1])))
+
+    driver = find_phase_label_driver(document)
+    lines.append('driver_running: {}'.format(driver is not None))
+    if driver is not None:
+        lines.append('control_index: {}'.format(driver._control_index))
+        lines.append('control_view_id: {}'.format(driver._control_view_id))
+        lines.append('last_error: {}'.format(driver._last_error))
+    return '\n'.join(lines)
+
+
 def find_phase_label_driver(document):
     drivers = getattr(sys, _DRIVERS_SYS_KEY, None)
     if not drivers:
@@ -255,6 +312,7 @@ class PhaseLabelDriver(object):
         self._last_tick_ms = 0
         self._idling_handler = None
         self._view_activated_handler = None
+        self._last_error = None
 
     def start(self):
         ensure_temporary_graphics_handler(self._doc, logger=self._logger)
@@ -358,6 +416,7 @@ class PhaseLabelDriver(object):
         try:
             img_path, label_px = get_label_image_path(text)
         except Exception as ex:
+            self._last_error = 'bitmap: {}'.format(ex)
             if self._logger is not None:
                 self._logger.warning("Phase label bitmap failed: {}".format(ex))
             return
@@ -384,7 +443,8 @@ class PhaseLabelDriver(object):
             try:
                 self._control_index = tgm.AddControl(data, view.Id)
                 self._control_view_id = view_vid
-            except Exception:
+            except Exception as ex:
+                self._last_error = 'AddControl: {}'.format(ex)
                 self._control_index = None
                 self._control_view_id = None
                 return

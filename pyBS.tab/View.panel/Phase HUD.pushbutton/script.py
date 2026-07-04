@@ -8,7 +8,7 @@ Normal click:
 - OFF: close the overlay and stop tracking.
 
 Shift+Click:
-- Force a redraw without toggling state.
+- Force a redraw and show a diagnostics report.
 """
 
 __title__ = "Phase\nHUD"
@@ -43,6 +43,7 @@ try:
         find_phase_hud_driver,
         start_phase_hud_driver,
         stop_phase_hud_driver,
+        collect_diagnostics,
     )
     _PHASE_HUD_OK = True
 except Exception as ex:
@@ -89,10 +90,14 @@ if __name__ == '__main__':
         is_shift = script.get_config().get_option('shiftclick', False)
         driver = find_phase_hud_driver(doc)
         if is_shift:
+            if driver is None:
+                _hud_on()
+                driver = find_phase_hud_driver(doc)
             if driver is not None:
                 driver.refresh()
-            else:
-                _hud_on()
+            forms.alert(
+                collect_diagnostics(uiapp, doc),
+                title="Phase HUD diagnostics")
         elif driver is not None:
             _hud_off()
         else:

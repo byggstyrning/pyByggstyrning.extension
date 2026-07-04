@@ -7,7 +7,7 @@ Normal click:
 - OFF: remove the badge and stop tracking.
 
 Shift+Click:
-- Force a redraw without toggling state.
+- Force a redraw and show a diagnostics report.
 """
 
 __title__ = "Phase\nLabel"
@@ -43,6 +43,7 @@ try:
         find_phase_label_driver,
         start_phase_label_driver,
         stop_phase_label_driver,
+        collect_diagnostics,
     )
     _PHASE_LABEL_OK = is_temporary_graphics_available()
 except Exception as ex:
@@ -96,10 +97,14 @@ if __name__ == '__main__':
         is_shift = script.get_config().get_option('shiftclick', False)
         driver = find_phase_label_driver(doc)
         if is_shift:
+            if driver is None:
+                _label_on()
+                driver = find_phase_label_driver(doc)
             if driver is not None:
                 driver.refresh()
-            else:
-                _label_on()
+            forms.alert(
+                collect_diagnostics(uiapp, doc),
+                title="Phase Label diagnostics")
         elif driver is not None:
             _label_off()
         else:
