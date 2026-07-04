@@ -5,12 +5,14 @@ Works in any graphical view that has a Phase parameter (3D, plan, section,
 elevation, ...).
 
 Alternative to revit.phase_label (TemporaryGraphicsManager): a borderless,
-topmost-within-Revit, click-through WPF window positioned at the top-left
+topmost-within-Revit, non-activating WPF window positioned at the top-left
 corner of the active UIView's window rectangle. Because the anchor is in
 screen pixels (UIView.GetWindowRectangle), the label stays glued to the
-corner *during* pan/zoom/orbit — no snap-back. Pure UI: nothing is written
-to the model and nothing prints. Works on any Revit version with UIView
-(no TemporaryGraphicsManager requirement).
+corner *during* pan/zoom/orbit — no snap-back. The badge is clickable:
+left-click switches the view to the next project phase, right-click to the
+previous one (via ExternalEvent + transaction). Beyond that parameter
+change, nothing is written to the model and nothing prints. Works on any
+Revit version with UIView (no TemporaryGraphicsManager requirement).
 """
 
 import ctypes
@@ -19,6 +21,8 @@ import time
 
 import clr
 
+clr.AddReference('RevitAPI')
+clr.AddReference('RevitAPIUI')
 clr.AddReference('PresentationFramework')
 clr.AddReference('PresentationCore')
 clr.AddReference('WindowsBase')
@@ -30,9 +34,13 @@ from System.Windows import (
     CornerRadius, PresentationSource, FontWeights,
 )
 from System.Windows.Controls import Border, TextBlock
+from System.Windows.Input import Cursors
 from System.Windows.Interop import WindowInteropHelper
 from System.Windows.Media import SolidColorBrush, Color, Brushes, FontFamily
 from System.Windows.Threading import DispatcherTimer
+
+from Autodesk.Revit.DB import BuiltInParameter, Transaction
+from Autodesk.Revit.UI import IExternalEventHandler, ExternalEvent
 
 from revit.compat import get_element_id_value
 from revit.phase_label import _label_text_for_view
@@ -49,8 +57,12 @@ _WS_EX_TOOLWINDOW = 0x00000080
 _WS_EX_NOACTIVATE = 0x08000000
 
 
-def _apply_click_through(hwnd_int):
-    """Make the overlay ignore mouse input and never steal focus."""
+def _apply_overlay_styles(hwnd_int):
+    """Keep the overlay out of the taskbar/alt-tab and never steal focus.
+
+    The badge stays clickable (no WS_EX_TRANSPARENT): clicks cycle the view
+    phase, and WS_EX_NOACTIVATE keeps keyboard focus in Revit throughout.
+    """
     try:
         user32 = ctypes.windll.user32
         try:
@@ -68,7 +80,7 @@ def _apply_click_through(hwnd_int):
         style = get_fn(hwnd_int, _GWL_EXSTYLE)
         set_fn(
             hwnd_int, _GWL_EXSTYLE,
-            style | _WS_EX_TRANSPARENT | _WS_EX_TOOLWINDOW | _WS_EX_NOACTIVATE)
+            style | _WS_EX_TOOLWINDOW | _WS_EX_NOACTIVATE)
         return True
     except Exception:
         return False
@@ -127,10 +139,82 @@ def _get_uiview(uiapp, view_id):
     return None
 
 
+def _ordered_phase_ids(document):
+    """Project phases in chronological order (past -> future)."""
+    ids = []
+    try:
+        for phase in document.Phases:
+            ids.append(phase.Id)
+    except Exception:
+        pass
+    return ids
+
+
+def _shift_view_phase(uiapp, step):
+    """Set the active view's Phase to the next/previous project phase.
+
+    Must run inside a Revit API context (transaction). Returns the new
+    phase name, or None when the phase cannot be changed.
+    """
+    uidoc = uiapp.ActiveUIDocument
+    if uidoc is None:
+        return None
+    doc = uidoc.Document
+    view = uidoc.ActiveView
+    if view is None:
+        return None
+    param = view.get_Parameter(BuiltInParameter.VIEW_PHASE)
+    if param is None or param.IsReadOnly:
+        return None
+    phase_ids = _ordered_phase_ids(doc)
+    if len(phase_ids) < 2:
+        return None
+    id_values = [_normalize_view_id(get_element_id_value(p))
+                 for p in phase_ids]
+    try:
+        idx = id_values.index(
+            _normalize_view_id(get_element_id_value(param.AsElementId())))
+    except ValueError:
+        idx = 0
+    new_id = phase_ids[(idx + step) % len(phase_ids)]
+    t = Transaction(doc, 'Switch view phase')
+    t.Start()
+    try:
+        param.Set(new_id)
+        t.Commit()
+    except Exception:
+        try:
+            t.RollBack()
+        except Exception:
+            pass
+        return None
+    try:
+        return doc.GetElement(new_id).Name
+    except Exception:
+        return None
+
+
+class _PhaseCycleEventHandler(IExternalEventHandler):
+    """Runs the phase switch inside a Revit API context."""
+
+    def __init__(self):
+        self.step = 1
+        self.driver = None
+
+    def Execute(self, uiapp):
+        try:
+            _shift_view_phase(uiapp, self.step)
+            if self.driver is not None:
+                self.driver.refresh()
+        except Exception:
+            pass
+
+    def GetName(self):
+        return "pyBS Phase HUD phase switch"
+
+
 def collect_diagnostics(uiapp, document):
     """Step-by-step status report for troubleshooting a blank HUD."""
-    from Autodesk.Revit.DB import BuiltInParameter
-
     lines = []
 
     def add(key, fn):
@@ -219,6 +303,9 @@ class PhaseHudDriver(object):
         self._logger = logger
         self._window = None
         self._text_block = None
+        self._badge = None
+        self._cycle_handler = None
+        self._cycle_event = None
         self._visible = False
         self._state_key = None
         self._last_tick_ms = 0
@@ -239,7 +326,6 @@ class PhaseHudDriver(object):
         window.ShowInTaskbar = False
         window.ShowActivated = False
         window.Focusable = False
-        window.IsHitTestVisible = False
         window.Topmost = False
 
         text = TextBlock()
@@ -254,7 +340,10 @@ class PhaseHudDriver(object):
         badge.BorderThickness = Thickness(1)
         badge.CornerRadius = CornerRadius(4)
         badge.Padding = Thickness(10, 5, 10, 5)
+        badge.Cursor = Cursors.Hand
         badge.Child = text
+        badge.MouseLeftButtonDown += self._on_badge_left_click
+        badge.MouseRightButtonDown += self._on_badge_right_click
         window.Content = badge
 
         helper = WindowInteropHelper(window)
@@ -267,14 +356,24 @@ class PhaseHudDriver(object):
                 pass
         hwnd = helper.EnsureHandle()
         try:
-            _apply_click_through(hwnd.ToInt64())
+            _apply_overlay_styles(hwnd.ToInt64())
         except Exception:
             pass
 
         self._window = window
         self._text_block = text
+        self._badge = badge
 
     def start(self):
+        # ExternalEvent.Create requires an API context; start() runs inside
+        # the command that toggled the button, so this is the safe spot.
+        try:
+            self._cycle_handler = _PhaseCycleEventHandler()
+            self._cycle_handler.driver = self
+            self._cycle_event = ExternalEvent.Create(self._cycle_handler)
+        except Exception:
+            self._cycle_handler = None
+            self._cycle_event = None
         self._build_window()
         self._idling_handler = self._on_idling
         self._view_activated_handler = self._on_view_activated
@@ -330,6 +429,16 @@ class PhaseHudDriver(object):
                 pass
             self._window = None
             self._text_block = None
+            self._badge = None
+        if self._cycle_handler is not None:
+            self._cycle_handler.driver = None
+            self._cycle_handler = None
+        if self._cycle_event is not None:
+            try:
+                self._cycle_event.Dispose()
+            except Exception:
+                pass
+            self._cycle_event = None
         self._visible = False
         try:
             getattr(sys, _DRIVERS_SYS_KEY).remove(self)
@@ -352,6 +461,21 @@ class PhaseHudDriver(object):
     def _on_view_activated(self, sender, args):
         try:
             self._sync(force=True)
+        except Exception:
+            pass
+
+    def _on_badge_left_click(self, sender, args):
+        self._raise_phase_cycle(1)
+
+    def _on_badge_right_click(self, sender, args):
+        self._raise_phase_cycle(-1)
+
+    def _raise_phase_cycle(self, step):
+        if self._cycle_event is None or self._cycle_handler is None:
+            return
+        self._cycle_handler.step = step
+        try:
+            self._cycle_event.Raise()
         except Exception:
             pass
 
@@ -427,6 +551,10 @@ class PhaseHudDriver(object):
 
         try:
             self._text_block.Text = text
+            if self._badge is not None:
+                self._badge.ToolTip = (
+                    u"Phase: {}\nClick: next phase. "
+                    u"Right-click: previous phase.".format(text))
             self._move_to(rect)
             if not self._visible:
                 self._window.Show()

@@ -10,7 +10,11 @@ in `lib/revit/phase_label.py` (see Alternatives surveyed below).
 - `lib/revit/phase_label_wpf.py` creates one borderless WPF window per
   document: no chrome, transparent background, owned by the Revit main
   window (so it never floats above other applications), and made
-  click-through / non-activating via `WS_EX_TRANSPARENT | WS_EX_NOACTIVATE`.
+  non-activating via `WS_EX_NOACTIVATE`, so Revit keeps keyboard focus.
+- The badge is clickable: left-click switches the view to the next
+  project phase, right-click to the previous one (wrapping). The click
+  raises an `ExternalEvent` whose handler sets the view's Phase
+  parameter inside a transaction; the badge text updates right after.
 - The window is positioned at `UIView.GetWindowRectangle()` top-left plus a
   margin, converting device pixels to WPF units through the window's
   `TransformFromDevice` matrix (per-monitor DPI).
@@ -34,7 +38,8 @@ in `lib/revit/phase_label.py` (see Alternatives surveyed below).
   tick, since the main window rect is unchanged and `UIView` coordinates
   cannot be read outside a Revit API context.
 - The overlay can sit on top of Revit dialogs that open over the viewport
-  corner (it is click-through, so it never blocks input).
+  corner. Clicks on the badge itself go to the phase switcher, so that
+  small area of the canvas is not click-able for model work.
 - Does not print or export, and screen captures of the Revit window may or
   may not include it depending on the capture method.
 - Crossing monitors with different DPI can be one tick late to rescale.

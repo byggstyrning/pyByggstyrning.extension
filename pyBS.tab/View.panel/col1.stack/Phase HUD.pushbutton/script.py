@@ -2,9 +2,10 @@
 """Toggle a WPF phase badge pinned over the top-left corner of the view.
 
 Normal click:
-- ON: show the active view's Phase name as a click-through WPF overlay
-  anchored to the viewport's top-left corner in screen pixels, so it stays
-  put during pan/zoom.
+- ON: show the active view's Phase name as a WPF overlay badge anchored to
+  the viewport's top-left corner in screen pixels, so it stays put during
+  pan/zoom. Clicking the badge switches the view to the next project
+  phase; right-clicking switches to the previous one.
 - OFF: close the overlay and stop tracking.
 
 Shift+Click:
@@ -13,8 +14,9 @@ Shift+Click:
 
 __title__ = "Phase HUD"
 __author__ = "Byggstyrning AB"
-__doc__ = ("Toggle a WPF overlay phase badge in the top-left corner of any "
-           "view with a Phase. Shift+Click: refresh + diagnostics.")
+__doc__ = ("Toggle a phase badge in the top-left corner of any view with a "
+           "Phase. Click the badge to switch to the next phase, right-click "
+           "for the previous. Shift+Click: refresh + diagnostics.")
 __highlight__ = 'new'
 __persistentengine__ = True
 
