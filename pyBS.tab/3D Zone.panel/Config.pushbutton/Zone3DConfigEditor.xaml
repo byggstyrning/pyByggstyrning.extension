@@ -225,14 +225,15 @@
                                             Style="{DynamicResource StandardListBoxStyle}" BorderThickness="0">
                                         <ListBox.ItemTemplate>
                                             <DataTemplate>
-                                                <TextBlock Text="{Binding}" Foreground="{DynamicResource TextBrush}">
+                                                <TextBlock Text="{Binding}">
                                                     <TextBlock.Style>
                                                         <Style TargetType="TextBlock">
                                                             <Setter Property="FontWeight" Value="Normal"/>
+                                                            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
                                                             <Style.Triggers>
                                                                 <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=ListBoxItem}, Path=IsSelected}" Value="True">
-                                                                    <Setter Property="FontWeight" Value="Bold"/>
-                                                                    <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                                                    <Setter Property="Foreground" Value="White"/>
                                                                 </DataTrigger>
                                                             </Style.Triggers>
                                                         </Style>
@@ -291,8 +292,8 @@
                                                 <DataGridTemplateColumn.CellTemplate>
                                                     <DataTemplate>
                                                         <TextBlock Text="→" FontSize="16" FontWeight="Bold"
-                                                                   Foreground="{DynamicResource AccentBrush}"
-                                                                   HorizontalAlignment="Center" 
+                                                                   Foreground="{DynamicResource ArrowBrush}"
+                                                                   HorizontalAlignment="Center"
                                                                    VerticalAlignment="Center"
                                                                    Style="{DynamicResource DefaultTextBlockStyle}"/>
                                                     </DataTemplate>

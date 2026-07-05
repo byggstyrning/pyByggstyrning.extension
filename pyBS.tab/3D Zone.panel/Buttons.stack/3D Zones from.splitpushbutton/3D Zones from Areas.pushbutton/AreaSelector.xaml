@@ -73,7 +73,7 @@
                             <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
                         </Trigger>
                         <Trigger Property="IsSelected" Value="True">
-                            <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
+                            <Setter Property="Background" Value="{DynamicResource SelectionBrush}"/>
                             <Setter Property="Foreground" Value="White"/>
                         </Trigger>
                         <MultiTrigger>
@@ -81,7 +81,7 @@
                                 <Condition Property="IsSelected" Value="True"/>
                                 <Condition Property="IsMouseOver" Value="True"/>
                             </MultiTrigger.Conditions>
-                            <Setter Property="Background" Value="{DynamicResource AccentHoverBrush}"/>
+                            <Setter Property="Background" Value="{DynamicResource SelectionHoverBrush}"/>
                             <Setter Property="Foreground" Value="White"/>
                         </MultiTrigger>
                     </Style.Triggers>
@@ -89,11 +89,11 @@
                 <!-- Override column header height for more condensed look -->
                 <Style TargetType="DataGridColumnHeader">
                     <Setter Property="Background" Value="{DynamicResource BackgroundLightBrush}"/>
-                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
                     <Setter Property="FontWeight" Value="SemiBold"/>
                     <Setter Property="FontSize" Value="12"/>
                     <Setter Property="Padding" Value="6,6"/>
-                    <Setter Property="BorderThickness" Value="0,0,0,2"/>
+                    <Setter Property="BorderThickness" Value="0,0,0,1"/>
                     <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
                     <Setter Property="HorizontalContentAlignment" Value="Left"/>
                     <Setter Property="VerticalContentAlignment" Value="Center"/>
@@ -110,7 +110,7 @@
                             <Setter Property="Foreground" Value="White"/>
                         </Trigger>
                         <Trigger Property="IsKeyboardFocusWithin" Value="True">
-                            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                            <Setter Property="BorderBrush" Value="{DynamicResource SelectionBrush}"/>
                             <Setter Property="BorderThickness" Value="1"/>
                         </Trigger>
                     </Style.Triggers>
