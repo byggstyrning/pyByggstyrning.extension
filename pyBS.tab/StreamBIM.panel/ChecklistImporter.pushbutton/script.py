@@ -321,13 +321,15 @@ class StreamBIMImporterUI(forms.WPFWindow):
             
             # Populate ComboBox
             self.serverRegionComboBox.ItemsSource = [r.Title for r in self.regions]
-            
-            # Select default region
-            self.serverRegionComboBox.SelectedIndex = default_index
-            
+
+            # Select the region the user last signed in to (restored from
+            # tokens.json via StreamBIMClient), falling back to the default.
+            self.serverRegionComboBox.SelectedIndex = \
+                self._region_index_for_url(default_index)
+
             # Hide busy indicator
             self.set_busy(False)
-            
+
         except Exception as e:
             logger.error("Error loading regions: {}".format(str(e)))
             # Fallback to default region
@@ -336,10 +338,32 @@ class StreamBIMImporterUI(forms.WPFWindow):
                 Region(Subdomain="custom", Title="Custom", Url="", IsCustom=True)
             ]
             self.serverRegionComboBox.ItemsSource = [r.Title for r in self.regions]
-            self.serverRegionComboBox.SelectedIndex = 0
-            
+            self.serverRegionComboBox.SelectedIndex = self._region_index_for_url(0)
+
             # Hide busy indicator
             self.set_busy(False)
+
+    def _region_index_for_url(self, default_index):
+        """Index of the region matching the client's current base_url.
+
+        Selects the saved region on re-login instead of silently reverting
+        to the default; unknown URLs select the Custom entry with the URL
+        prefilled.
+        """
+        try:
+            saved_url = self.streambim_client.base_url
+            if saved_url:
+                for i, region in enumerate(self.regions):
+                    if region.Url and region.Url == saved_url:
+                        return i
+                if saved_url != streambim_api.DEFAULT_BASE_URL:
+                    for i, region in enumerate(self.regions):
+                        if region.IsCustom:
+                            self.customUrlTextBox.Text = saved_url
+                            return i
+        except Exception as e:
+            logger.debug("Could not preselect saved region: {}".format(str(e)))
+        return default_index
 
     def server_region_selection_changed(self, sender, args):
         """Handle server region ComboBox selection change."""

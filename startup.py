@@ -114,7 +114,7 @@ try:
     lib_path = op.join(extension_dir, 'lib')
     if lib_path not in sys.path:
         sys.path.insert(0, lib_path)
-    
+
     from zone3d import ifc_export
     if ifc_export.register_ifc_export_handler():
         pass
@@ -122,3 +122,32 @@ try:
         script_logger.warning("Failed to register 3D Zone IFC export handler")
 except Exception as e:
     script_logger.warning("Could not register 3D Zone IFC export handler: {}".format(str(e)))
+
+# Register the CDE dockable panel (current connection: StreamBIM).
+# Dockable panes can only be registered during Revit startup; the ribbon
+# button (StreamBIM panel > CDE Panel) merely toggles its visibility.
+try:
+    import sys
+    import os.path as op
+    extension_dir = op.dirname(op.abspath(__file__))
+    lib_path = op.join(extension_dir, 'lib')
+    if lib_path not in sys.path:
+        sys.path.insert(0, lib_path)
+
+    from pyrevit import forms
+    from streambim.panel_ui import CDEPanel
+    # On pyRevit reload the pane is already registered; registering again
+    # would construct an orphan panel instance (with its event subscriptions).
+    if forms.is_registered_dockable_panel(CDEPanel):
+        script_logger.debug("CDE panel already registered; skipping.")
+    else:
+        forms.register_dockable_panel(CDEPanel, default_visible=False)
+        script_logger.info("CDE panel registered.")
+except Exception as e:
+    # NOTE: Revit only allows dockable-pane registration during its startup
+    # sequence. A mid-session pyRevit reload re-runs this script but the
+    # registration is rejected - a full Revit restart is needed the first time.
+    import traceback
+    script_logger.warning(
+        "Could not register CDE panel (a full Revit restart is required "
+        "the first time): {}\n{}".format(str(e), traceback.format_exc()))
