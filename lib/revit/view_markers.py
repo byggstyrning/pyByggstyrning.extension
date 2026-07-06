@@ -41,23 +41,30 @@ _TEXT_COLOR = Color.FromArgb(255, 28, 30, 36)
 
 
 class MarkerStyle(object):
-    """Bitmap and clustering settings for one marker session / tool."""
+    """Bitmap and clustering settings for one marker session / tool.
+
+    Revit hit-tests in-canvas controls against the full bitmap rectangle
+    (chroma-key pixels included), so canvases must stay tight to the visible
+    graphic or nearby markers get overlapping hover borders.
+    """
 
     def __init__(
         self,
         cache_subdir='pyBS_view_markers',
-        cache_version='v8',
-        marker_bmp_size=40,
+        cache_version='v9',
+        marker_bmp_size=36,
         dot_diameter=14,
+        dot_padding=2,
         span_factor=0.10,
         max_markers_per_view=500,
-        badge_margin=3,
+        badge_margin=1,
         shadow_offset=2,
     ):
         self.cache_subdir = cache_subdir
         self.cache_version = cache_version
         self.marker_bmp_size = marker_bmp_size
         self.dot_diameter = dot_diameter
+        self.dot_padding = dot_padding
         self.span_factor = span_factor
         self.max_markers_per_view = max_markers_per_view
         self.badge_margin = badge_margin
@@ -257,7 +264,10 @@ def _bitmap_cache_key(count, style_key, marker_style=None):
 
 
 def _bitmap_size_for_key(key, marker_style=None):
+    """Tight canvas per marker kind (bitmap rect is the hover hit-area)."""
     style = marker_style or DEFAULT_MARKER_STYLE
+    if key.startswith('dot'):
+        return style.dot_diameter + style.dot_padding * 2
     return style.marker_bmp_size
 
 
@@ -283,13 +293,11 @@ def _invalidate_stale_bitmap_cache(marker_style=None):
 
 
 def _cached_bitmap_valid(path, expected_size, marker_style=None):
-    style = marker_style or DEFAULT_MARKER_STYLE
     try:
         probe = Bitmap(path)
         ok = (
             probe.Width == expected_size
-            and probe.Height == expected_size
-            and probe.Width == style.marker_bmp_size)
+            and probe.Height == expected_size)
         probe.Dispose()
         return ok
     except Exception:
@@ -418,7 +426,8 @@ def _generate_marker_bitmap(path, count, style_key, marker_style=None):
             os.makedirs(parent)
         except Exception:
             pass
-    size = style.marker_bmp_size
+    size = _bitmap_size_for_key(
+        _bitmap_cache_key(count, style_key, style), style)
     bmp = Bitmap(size, size, PixelFormat.Format24bppRgb)
     g = _begin_marker_graphics(bmp)
     try:

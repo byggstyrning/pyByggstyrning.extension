@@ -46,8 +46,8 @@ from cde.dfp_icons import (
 
 DFP_MARKER_STYLE = MarkerStyle(
     cache_subdir="pyBS_dfp_markers",
-    cache_version="v5",
-    marker_bmp_size=48,
+    cache_version="v6",
+    marker_bmp_size=44,
     dot_diameter=14,
     span_factor=0.09,
     max_markers_per_view=500,
@@ -627,10 +627,11 @@ class DfpMarkerDriver(ViewMarkerDriver):
                 code = code_from_value_key(key)
                 if code:
                     active_codes.append(code)
-        img_path, _, _ = get_dfp_summary_composite(active_codes)
+        img_path, summary_layout, _ = get_dfp_summary_composite(active_codes)
         door_payload = dict(door_payload)
         door_payload["active_flags"] = list(active_flags)
         door_payload["image_path"] = img_path
+        door_payload["summary_layout"] = dict(summary_layout)
 
         comp_idx = door_payload.get("composite_ctrl_idx")
         if comp_idx is not None:

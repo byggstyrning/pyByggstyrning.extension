@@ -18,11 +18,13 @@ _CELL_PX = 20
 _GAP_PX = 1
 _PAD_PX = 1
 _MAX_COLS = 4
-_CACHE_VERSION = "v6"
+_CACHE_VERSION = "v7"
 _MAX_MARKER_PX = 128
 _MAX_OVERLAY_PX = 256
 _MIN_MARKER_PX = 28
-_MARKER_CELL_PX = 24
+# Revit hover hit-tests the full control bitmap, so overlay cells must not
+# exceed the grid pitch (_CELL_PX + _GAP_PX) or adjacent cells double-hover.
+_MARKER_CELL_PX = 20
 
 # Revit TGM chroma key (see view_markers)
 _CHROMA = Color.FromArgb(0, 128, 128)
@@ -170,9 +172,14 @@ def dfp_code_sort_key(code):
 
 
 def _grid_geometry(slot_count, max_px=None):
-    """Pixel layout for a 4-column table grid inside a square BMP."""
+    """Pixel layout for a table grid (max 4 cols) inside a square BMP.
+
+    Columns shrink to the slot count so the BMP hugs the visible icons —
+    Revit hover hit-tests the whole control rect, and oversized transparent
+    canvases make neighboring markers hover-highlight simultaneously.
+    """
     cap = max_px if max_px is not None else _MAX_MARKER_PX
-    cols = _MAX_COLS
+    cols = min(max(int(slot_count), 1), _MAX_COLS)
     rows = int((int(slot_count) + cols - 1) / cols)
     grid_w = _PAD_PX * 2 + cols * _CELL_PX + (cols + 1) * _GAP_PX
     grid_h = _PAD_PX * 2 + rows * _CELL_PX + (rows + 1) * _GAP_PX
