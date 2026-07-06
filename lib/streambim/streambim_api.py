@@ -81,12 +81,58 @@ def get_or_create_settings_storage(doc):
         logger.error("Error in get_or_create_settings_storage: {}".format(str(e)))
         return None
 
+def find_settings_storage(doc):
+    """Find the StreamBIM settings storage element WITHOUT creating one.
+
+    Safe to call from read-only contexts (no transaction is ever opened).
+    Returns None when the document has no StreamBIM storage yet.
+    """
+    if not doc:
+        return None
+    try:
+        data_storages = FilteredElementCollector(doc)\
+            .OfClass(ExtensibleStorage.DataStorage)\
+            .ToElements()
+        for ds in data_storages:
+            try:
+                entity = ds.GetEntity(StreamBIMSettingsSchema.schema)
+                if entity.IsValid():
+                    return ds
+            except Exception:
+                continue
+        return None
+    except Exception as e:
+        logger.error("Error in find_settings_storage: {}".format(str(e)))
+        return None
+
+def load_configs_readonly(doc):
+    """Load configurations without ever modifying the document.
+
+    Unlike load_configs_with_pickle, this never creates the storage
+    element, so it is safe for passive readers (e.g. the dockable panel).
+    """
+    storage = find_settings_storage(doc)
+    if not storage:
+        return []
+    try:
+        schema = StreamBIMSettingsSchema(storage)
+        if not schema.is_valid:
+            return []
+        pickled_configs = schema.get("pickled_configs")
+        if not pickled_configs:
+            return []
+        decoded_data = base64.b64decode(pickled_configs)
+        return pickle.loads(decoded_data)
+    except Exception as e:
+        logger.error("Error loading configurations (readonly): {}".format(str(e)))
+        return []
+
 def load_configs_with_pickle(doc):
     """Load configurations from StreamBIM storage using pickle serialization."""
     if not doc:
         logger.error("No active document available")
         return []
-        
+
     try:
         # Get storage
         storage = get_or_create_settings_storage(doc)
@@ -184,9 +230,14 @@ def get_saved_project_id(doc):
         return None
 
 # StreamBIM API client
+DEFAULT_BASE_URL = "https://app.streambim.com"
+
 class StreamBIMClient:
-    def __init__(self, base_url="https://app.streambim.com"):
+    def __init__(self, base_url=DEFAULT_BASE_URL):
         self.base_url = base_url
+        # When the caller passed an explicit region URL, the saved one
+        # from tokens.json must not override it.
+        self._base_url_is_explicit = (base_url != DEFAULT_BASE_URL)
         self.idToken = None
         self.accessToken = None
         self.username = None
@@ -194,13 +245,13 @@ class StreamBIMClient:
         self.current_project = None
         self.last_error = None
         self.mfa_session = None  # Store MFA session token
-        
+
         # Load saved tokens if they exist
         self.token_file = os.path.join(os.getenv('APPDATA'), 'pyBS', 'tokens.json')
         self.load_tokens()
-    
+
     def load_tokens(self):
-        """Load saved tokens from file."""
+        """Load saved tokens (and the region base_url they belong to) from file."""
         try:
             if os.path.exists(self.token_file):
                 with open(self.token_file, 'r') as f:
@@ -208,36 +259,52 @@ class StreamBIMClient:
                     self.idToken = data.get('idToken')
                     self.accessToken = data.get('accessToken')
                     self.username = data.get('username')
+                    # Restore the region the user logged in to, so tools that
+                    # never show a region picker talk to the right server.
+                    saved_url = data.get('base_url')
+                    if saved_url and not self._base_url_is_explicit:
+                        self.base_url = saved_url
         except Exception as e:
             self.idToken = None
             self.accessToken = None
             self.username = None
-    
+
     def save_tokens(self):
-        """Save tokens to file."""
+        """Save tokens (and the region base_url) to file."""
         try:
             # Create directory if it doesn't exist
             token_dir = os.path.dirname(self.token_file)
             if not os.path.exists(token_dir):
                 os.makedirs(token_dir)
-                
+
             with open(self.token_file, 'w') as f:
                 json.dump({
                     'idToken': self.idToken,
                     'accessToken': self.accessToken,
-                    'username': self.username
+                    'username': self.username,
+                    'base_url': self.base_url
                 }, f)
         except Exception as e:
             pass
     
     def clear_tokens(self):
-        """Clear saved tokens."""
+        """Clear saved credentials but keep the region base_url.
+
+        Preserving base_url means a re-login after logout/expiry still talks
+        to the server region the user originally chose.
+        """
         self.idToken = None
         self.accessToken = None
         self.username = None
         try:
             if os.path.exists(self.token_file):
-                os.remove(self.token_file)
+                with open(self.token_file, 'w') as f:
+                    json.dump({
+                        'idToken': None,
+                        'accessToken': None,
+                        'username': None,
+                        'base_url': self.base_url
+                    }, f)
         except Exception as e:
             pass
         
