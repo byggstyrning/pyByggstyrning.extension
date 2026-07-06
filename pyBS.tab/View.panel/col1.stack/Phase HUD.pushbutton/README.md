@@ -7,13 +7,16 @@ in `lib/revit/phase_label.py` (see Alternatives surveyed below).
 
 ## How it works
 
-- Built on the reusable overlay driver `lib/revit/view_hud.py`
-  (`ViewHudDriver`): one borderless WPF window per document — no chrome,
+- Built on the reusable in-view switcher framework `lib/revit/view_hud.py`
+  (`ViewHudHost` + `HudItem`/`TextSwitcher`): one borderless WPF window
+  per document hosting a horizontal bar of switchers — no chrome,
   transparent background, owned by the Revit main window (so it never
   floats above other applications), non-activating via
-  `WS_EX_NOACTIVATE`, so Revit keeps keyboard focus. New HUDs of this
-  kind only need a text provider and optional click actions;
-  `lib/revit/phase_label_wpf.py` is the phase-specific adapter.
+  `WS_EX_NOACTIVATE`, so Revit keeps keyboard focus. New switchers only need a text provider and optional click actions
+  (`TextSwitcher`), register via `get_hud_host`/`add_item`, and line up
+  side by side in the same bar; richer kinds (single/multi-select
+  dropdowns for temporary isolate, parameter colorization, ...) subclass
+  `HudItem`. `lib/revit/phase_label_wpf.py` is the phase-specific adapter.
 - The window is parked off-screen until WPF completes its first layout
   pass (`SizeChanged`), then anchored — avoids the mis-sized first frame
   that `EnsureHandle` + `SizeToContent` produces.

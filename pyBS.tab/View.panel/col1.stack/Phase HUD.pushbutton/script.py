@@ -91,7 +91,13 @@ if __name__ == '__main__':
             "Phase HUD failed to load:\n\n{}".format(_IMPORT_ERROR),
             title="Phase HUD")
     else:
-        is_shift = script.get_config().get_option('shiftclick', False)
+        # pyRevit signals Shift+Click as "config mode" via EXEC_PARAMS,
+        # not as a persisted config option
+        try:
+            from pyrevit import EXEC_PARAMS
+            is_shift = bool(EXEC_PARAMS.config_mode)
+        except Exception:
+            is_shift = script.get_config().get_option('shiftclick', False)
         driver = find_phase_hud_driver(doc)
         if is_shift:
             if driver is None:

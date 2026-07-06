@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Phase HUD: view phase badge built on the reusable revit.view_hud driver.
+"""Phase HUD: view phase switcher built on the revit.view_hud framework.
 
 Shows the active view's Phase name centered over the viewport's top edge,
 in any graphical view that has a Phase parameter (3D, plan, section,
@@ -9,9 +9,10 @@ phase, right-click to the previous one (via ExternalEvent + transaction).
 Beyond that parameter change, nothing is written to the model and nothing
 prints.
 
-All overlay mechanics (positioning, theming, hide-on-window-move, click
-plumbing) live in revit.view_hud — build more HUDs like this by supplying
-different providers to ViewHudDriver.
+All overlay mechanics live in revit.view_hud: a per-document ViewHudHost
+bar hosts this switcher alongside any future ones (they line up
+horizontally). This module only supplies the phase text provider and the
+phase-cycling click actions.
 """
 
 import sys
@@ -25,9 +26,11 @@ from Autodesk.Revit.DB import BuiltInParameter, Transaction
 from revit.compat import get_element_id_value
 from revit.phase_label import _label_text_for_view
 from revit.view_hud import (
-    ViewHudDriver,
-    find_hud_driver,
-    stop_hud_driver,
+    TextSwitcher,
+    get_hud_host,
+    find_hud_host,
+    find_hud_item,
+    remove_hud_item,
     get_uiview,
     window_rect,
     revit_theme_is_dark,
@@ -95,27 +98,25 @@ def _phase_tooltip(text):
 
 
 def find_phase_hud_driver(document):
-    return find_hud_driver(document, _HUD_ID)
+    return find_hud_item(document, _HUD_ID)
 
 
 def stop_phase_hud_driver(document):
-    return stop_hud_driver(document, _HUD_ID)
+    return remove_hud_item(document, _HUD_ID)
 
 
 def start_phase_hud_driver(uiapp, document, logger=None):
-    driver = find_phase_hud_driver(document)
-    if driver is not None:
-        driver.refresh()
-        return driver
-    driver = ViewHudDriver(
-        uiapp, document, _HUD_ID,
+    item = find_hud_item(document, _HUD_ID)
+    if item is not None:
+        item.refresh()
+        return item
+    host = get_hud_host(uiapp, document, logger=logger)
+    return host.add_item(TextSwitcher(
+        _HUD_ID,
         text_provider=_label_text_for_view,
         tooltip_provider=_phase_tooltip,
         on_left_click=lambda ua: _shift_view_phase(ua, 1),
-        on_right_click=lambda ua: _shift_view_phase(ua, -1),
-        logger=logger)
-    driver.start()
-    return driver
+        on_right_click=lambda ua: _shift_view_phase(ua, -1)))
 
 
 def collect_diagnostics(uiapp, document):
@@ -152,19 +153,24 @@ def collect_diagnostics(uiapp, document):
     if uiview is not None:
         add('window_rect', lambda: str(uiview.GetWindowRectangle()))
 
-    driver = find_phase_hud_driver(document)
-    lines.append('driver_running: {}'.format(driver is not None))
-    if driver is not None:
-        lines.append('window_built: {}'.format(driver._window is not None))
-        lines.append('window_visible_flag: {}'.format(driver._visible))
-        if driver._window is not None:
+    host = find_hud_host(document)
+    lines.append('host_running: {}'.format(host is not None))
+    if host is not None:
+        add('host_items', lambda: ', '.join(host.item_ids()) or '(none)')
+        lines.append('window_built: {}'.format(host._window is not None))
+        lines.append('window_visible_flag: {}'.format(host._visible))
+        if host._window is not None:
             add('window_pos', lambda: '{}, {} ({}x{})'.format(
-                driver._window.Left, driver._window.Top,
-                driver._window.ActualWidth, driver._window.ActualHeight))
-            add('window_is_visible', lambda: driver._window.IsVisible)
-            add('window_text', lambda: driver._text_block.Text)
-        lines.append('owner_hwnd: {}'.format(driver._owner_hwnd_int))
-        add('owner_rect', lambda: str(window_rect(driver._owner_hwnd_int)))
+                host._window.Left, host._window.Top,
+                host._window.ActualWidth, host._window.ActualHeight))
+            add('window_is_visible', lambda: host._window.IsVisible)
+        lines.append('owner_hwnd: {}'.format(host._owner_hwnd_int))
+        add('owner_rect', lambda: str(window_rect(host._owner_hwnd_int)))
         add('theme_dark', revit_theme_is_dark)
-        lines.append('last_error: {}'.format(driver._last_error))
+        lines.append('last_error: {}'.format(host._last_error))
+    item = find_hud_item(document, _HUD_ID)
+    lines.append('phase_item_registered: {}'.format(item is not None))
+    if item is not None and item.root is not None:
+        add('item_visibility', lambda: str(item.root.Visibility))
+        add('item_text', lambda: item._text_block.Text)
     return '\n'.join(lines)
