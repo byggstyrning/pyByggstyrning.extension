@@ -123,9 +123,9 @@ try:
 except Exception as e:
     script_logger.warning("Could not register 3D Zone IFC export handler: {}".format(str(e)))
 
-# Register the CDE dockable panel (current connection: StreamBIM).
+# Register the CDE dockable panel (hosts the CDE Schedule cockpit).
 # Dockable panes can only be registered during Revit startup; the ribbon
-# button (StreamBIM panel > CDE Panel) merely toggles its visibility.
+# button (CDE panel > CDE Panel) merely toggles its visibility.
 try:
     import sys
     import os.path as op
@@ -135,13 +135,13 @@ try:
         sys.path.insert(0, lib_path)
 
     from pyrevit import forms
-    from streambim.panel_ui import CDEPanel
+    from cde.panel_ui import CDESchedulePanel
     # On pyRevit reload the pane is already registered; registering again
     # would construct an orphan panel instance (with its event subscriptions).
-    if forms.is_registered_dockable_panel(CDEPanel):
+    if forms.is_registered_dockable_panel(CDESchedulePanel):
         script_logger.debug("CDE panel already registered; skipping.")
     else:
-        forms.register_dockable_panel(CDEPanel, default_visible=False)
+        forms.register_dockable_panel(CDESchedulePanel, default_visible=False)
         script_logger.info("CDE panel registered.")
 except Exception as e:
     # NOTE: Revit only allows dockable-pane registration during its startup

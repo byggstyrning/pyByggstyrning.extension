@@ -35,8 +35,9 @@ if _lib_path not in sys.path:
 from styles import load_styles_to_window
 from cde import config as cde_config
 import cde.service as cde_service
-reload(cde_config)
-reload(cde_service)
+# NOTE: no reload()s here. The dockable CDE panel (lib/cde/panel_ui.py)
+# holds live instances of these modules' classes for the whole session;
+# reloading would break class identity across the panel and this window.
 from cde import storage
 from cde.auth import CDEAuthClient
 from cde.service import CDEService, MockCDEService

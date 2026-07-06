@@ -1,17 +1,21 @@
 # -*- coding: utf-8 -*-
-"""CDE door/element schedule - a modeless Revit cockpit over the CDE graph.
+"""Dockable CDE panel hosting the CDE Schedule UX.
 
-Joins CDE elements (by IFC GlobalId) to Revit elements, lists them in a
-groupable/filterable table, lets the user add CDE/Revit parameter columns,
-color elements in the active view by any value (temporary view graphics),
-sync selection back into Revit when rows are picked, and vertically set values back to the CDE.
+Same cockpit as the CDE Schedule window (Schedule.pushbutton), rehosted in
+a Revit dockable pane: joins CDE elements (by IFC GlobalId) to Revit
+elements, groupable/filterable table, dynamic parameter columns, view
+coloring, DFP markers, staged pending edits and the dry-run -> confirm ->
+commit mutation pipeline.
 
-DB-first: vertical value setting writes to the CDE; Revit parameter sync is a
-separate, opt-in action (later phase).
+Hosting rules (the Schedule window is already modeless; the pane keeps its
+discipline):
+* All Revit API access goes through cde.revit_events.ExternalEventRunner.
+* HTTP runs on background threads with Dispatcher.BeginInvoke callbacks.
+* This module MUST be first imported from startup.py (Revit API context) so
+  ExternalEvent.Create and the ViewActivated subscription are legal.
+* No module reload()s here: the pane lives for the whole session and
+  reloads would break class identity for its live objects.
 """
-__title__ = "CDE\nSchedule"
-__author__ = "Byggstyrning AB"
-__doc__ = "Open the CDE door/element schedule for the mapped project."
 
 import os.path as op
 import sys
@@ -35,10 +39,8 @@ from System.Windows.Media import SolidColorBrush, Color as WpfColor, FontFamily
 
 from pyrevit import forms, revit, script, HOST_APP
 
-# --- lib bootstrap --------------------------------------------------------
-_pushbutton_dir = op.dirname(__file__)
-_extension_dir = op.dirname(op.dirname(op.dirname(_pushbutton_dir)))
-_lib_path = op.join(_extension_dir, "lib")
+# --- lib bootstrap (this module lives in lib/cde) -------------------------
+_lib_path = op.dirname(op.dirname(__file__))
 if _lib_path not in sys.path:
     sys.path.insert(0, _lib_path)
 
@@ -47,9 +49,6 @@ from cde import storage, coloring, config as cde_config
 import cde.service as cde_service
 import cde.matching as cde_matching
 import cde.viewmodels as cde_viewmodels
-# NOTE: no reload()s here. The dockable CDE panel (lib/cde/panel_ui.py)
-# holds live instances of these modules' classes for the whole session;
-# reloading would break class identity (isinstance checks, converters).
 matching = cde_matching
 from cde.auth import CDEAuthClient
 from cde.service import CDEService, MockCDEService, param_def, MUTATION_SUCCESS_STATES
@@ -305,13 +304,23 @@ def _infer_cde_value_type(sample_values):
     return "string"
 
 
-class ScheduleWindow(forms.WPFWindow):
+CDE_PANEL_ID = "3d7a6f6e-2c9b-4f8e-9a41-c5e8b1c9d0a2"
+
+
+class CDESchedulePanel(forms.WPFPanel):
+    """Dockable pane host for the CDE Schedule cockpit."""
+
+    panel_id = CDE_PANEL_ID
+    panel_source = op.join(op.dirname(__file__), "CDEPanel.xaml")
+    panel_title = "CDE Panel"
 
     def __init__(self):
-        forms.WPFWindow.__init__(self, op.join(_pushbutton_dir, "ScheduleWindow.xaml"))
+        forms.WPFPanel.__init__(self)
         load_styles_to_window(self)
 
         self.uiapp = HOST_APP.uiapp
+        # None when registered at Revit startup; re-resolved per document
+        # event / runner task afterwards.
         self.doc = revit.doc
         self.auth = CDEAuthClient()
         self.offline = False
@@ -449,20 +458,50 @@ class ScheduleWindow(forms.WPFWindow):
         self._style_fixed_column_headers()
         self.vm.on_pending_changed(self._update_pending_ui)
         self._install_dfp_marker_click_handler()
-        self.mapping = storage.load_mapping(self.doc)
+        # Pane lifecycle: registration happens at Revit startup in a valid
+        # API context, so subscribing the watcher directly here is legal.
+        # It stays on for the whole session to track document switches;
+        # the 'Active view only' toggle only changes refresh behavior.
+        self._mapping_doc = None
+        self.mapping = {}
+        try:
+            self._watcher.start()
+        except Exception as ex:
+            logger.debug("CDE panel: watcher start failed: {}".format(ex))
+        if self.doc is not None:
+            self._load_mapping_for_doc(self.doc)
+        else:
+            self._set_status("Open a document, then click Refresh.")
+        self._update_pending_ui()
+
+    def _load_mapping_for_doc(self, doc):
+        """(Re)load the per-document CDE mapping. Requires Revit API context."""
+        self.doc = doc
+        self._mapping_doc = doc
+        try:
+            self.mapping = storage.load_mapping(doc) or {}
+        except Exception as ex:
+            self.mapping = {}
+            self._logger.debug("CDE panel: mapping load failed: {}".format(ex))
         if self.mapping:
             stored = (self.mapping.get("base_url") or "").rstrip("/")
             cfg = cde_config.get_base_url()
             effective = stored or cfg
             auth_url = (self.auth.base_url or "").rstrip("/")
-            logger.debug(
-                "CDE Schedule URLs — stored: '{}', config: '{}', "
+            self._logger.debug(
+                "CDE panel URLs - stored: '{}', config: '{}', "
                 "effective: '{}', auth client: '{}'".format(
                     stored or "(empty)", cfg, effective, auth_url))
+            # Recover from offline demo mode once a real mapping shows up.
+            if self.offline:
+                self.offline = False
+                self.service = CDEService(self.auth)
+            self._set_status("Mapped to '{}'. Click Refresh to load elements.".format(
+                self.mapping.get("cde_project_name")
+                or self.mapping.get("cde_project_id") or "CDE project"))
         else:
             self._set_status("Model is not mapped. Run 'CDE Login' first "
                              "(or enable offline demo via Login).")
-        self._update_pending_ui()
 
     def _update_pending_ui(self):
         count = self.vm.pending_count()
@@ -632,10 +671,30 @@ class ScheduleWindow(forms.WPFWindow):
 
     # --- refresh orchestration -----------------------------------------
 
+    def _sync_offline_mode(self):
+        """Enter/leave offline demo mode as sign-in and mapping state change.
+
+        The window ran _detect_offline once at launch; the session-long pane
+        re-evaluates on every refresh so signing in via CDE Login (or mapping
+        the model) recovers without a Revit restart.
+        """
+        try:
+            self.auth.reload_from_disk()
+        except Exception:
+            pass
+        if not self.offline:
+            if not self.mapping and not self.auth.is_authenticated():
+                _detect_offline(self)
+        elif self.mapping or self.auth.is_authenticated():
+            self.offline = False
+            self.service = CDEService(self.auth)
+            self._set_status("Reconnected to the CDE.")
+
     def on_refresh_click(self, sender, args):
         self.refresh()
 
     def refresh(self, preserve_pending=False):
+        self._sync_offline_mode()
         if not preserve_pending and self.vm.pending_count() > 0:
             # Non-modal gate: a modal dialog here pumps Revit's message loop
             # while ArrowEditor is active and crashes (0xe0434352). Require an
@@ -659,6 +718,13 @@ class ScheduleWindow(forms.WPFWindow):
 
     def _collect_revit(self, uiapp, token):
         if token != self._refresh_token:
+            return
+        # Pane-host guard: the pane can be visible with no document open.
+        if uiapp.ActiveUIDocument is None:
+            self.Dispatcher.BeginInvoke(
+                self._DispatcherPriority.Normal,
+                self._Action(lambda: self._set_status(
+                    "Open a document, then click Refresh.")))
             return
         try:
             doc = uiapp.ActiveUIDocument.Document
@@ -982,10 +1048,95 @@ class ScheduleWindow(forms.WPFWindow):
         self.refresh()
 
     def _on_active_view_changed(self, view):
+        # Runs on the Revit UI thread inside ViewActivated (valid API
+        # context). The pane outlives documents: detect document switches
+        # and reload the per-document mapping before anything else.
+        try:
+            new_doc = getattr(view, "Document", None)
+        except Exception:
+            new_doc = None
+        # Family-editor excursions must not tear down per-project state;
+        # the user returns to the project doc, which is still mapped.
+        if new_doc is not None and getattr(new_doc, "IsFamilyDocument", False):
+            return
+        if new_doc is not None and not self._is_same_doc(new_doc, self._mapping_doc):
+            self._handle_document_changed(new_doc)
+            return
         if bool(self.activeViewCheck.IsChecked):
             self.refresh()
         elif self._dfp_markers_active:
             self._refresh_dfp_markers()
+
+    def _is_same_doc(self, doc_a, doc_b):
+        if doc_a is None or doc_b is None:
+            return False
+        try:
+            return doc_a.Equals(doc_b)
+        except Exception:
+            return False
+
+    def _handle_document_changed(self, new_doc):
+        """Reset per-document state when the active document changes.
+
+        Runs in API context (ViewActivated). Pending edits, DFP sessions,
+        deferred etag writes and cached rows are all per-document.
+        """
+        if self._apply_in_flight:
+            # Never rip state out from under an in-flight apply; the next
+            # view activation after it completes will land here again.
+            return
+        old_doc = self._mapping_doc
+        discarded_pending = self.vm.pending_count()
+        # Clean the old document's temporary graphics session, if any.
+        if self._dfp_markers_active and self._clean_dfp_session is not None \
+                and old_doc is not None:
+            def _clean_old(uiapp, doc=old_doc):
+                try:
+                    if doc.IsValidObject:
+                        self._clean_dfp_session(doc)
+                except Exception:
+                    pass
+            self._runner.run(_clean_old)
+        self._dfp_markers_active = False
+        self._dfp_markers_need_manual_reset = False
+        self._update_dfp_markers_button()
+        self._pending_etag_persist = None
+        self._pending_commit_ctx = None
+        self._show_commit_confirm(False)
+        # Invalidate any in-flight refresh pipeline: its token check will
+        # drop results fetched for the previous document.
+        self._refresh_token += 1
+        self._node_by_gid = {}
+        self._revit_infos = {}
+        # Fresh service per document: CDEService caches last_revision_etag
+        # and mutation identity with no cross-document invalidation - a
+        # stale If-Match from another model must never leak into mutations.
+        try:
+            if not self.offline:
+                self.service = CDEService(self.auth)
+        except Exception:
+            pass
+        try:
+            self.vm.discard_all_pending()
+        except Exception:
+            pass
+        try:
+            self.vm.set_rows([])
+            self._refresh_grid_items_from_vm()
+            self.doorGrid.ItemsSource = self._grid_items
+        except Exception as ex:
+            self._logger.debug("CDE panel: grid clear failed: {}".format(ex))
+        try:
+            self._apply_detail_pane(None, None)
+        except Exception:
+            pass
+        self._load_mapping_for_doc(new_doc)
+        self._update_pending_ui()
+        if discarded_pending:
+            self._set_status(
+                "Document changed - {} staged edit(s) for the previous "
+                "document were discarded. {}".format(
+                    discarded_pending, self.statusText.Text or ""))
 
     # --- dynamic columns (searchable combo + header grouping) ------------
 
@@ -1730,7 +1881,8 @@ class ScheduleWindow(forms.WPFWindow):
             view = doc.ActiveView
             color_map = self._coloring.apply_coloring(doc, view, rows, key)
             legend = self._coloring.build_legend(color_map)
-            self.Dispatcher.Invoke(
+            # BeginInvoke: Invoke from an ExternalEvent handler can deadlock.
+            self.Dispatcher.BeginInvoke(
                 self._Action(lambda: self._render_legend(legend, pdef.label)))
 
         self._runner.run(task)
@@ -1750,7 +1902,8 @@ class ScheduleWindow(forms.WPFWindow):
         def task(uiapp):
             doc = uiapp.ActiveUIDocument.Document
             self._coloring.reset_coloring(doc, doc.ActiveView, rows)
-            self.Dispatcher.Invoke(self._Action(lambda: self._clear_legend()))
+            # BeginInvoke: Invoke from an ExternalEvent handler can deadlock.
+            self.Dispatcher.BeginInvoke(self._Action(lambda: self._clear_legend()))
 
         self._runner.run(task)
 
@@ -1799,12 +1952,13 @@ class ScheduleWindow(forms.WPFWindow):
     def on_dfp_markers_click(self, sender, args):
         self._release_dfp_frozen_state()
         if not self._dfp_markers_ok or self._build_dfp_view_points is None:
-            msg = (
-                "DFP markers require Revit 2022 or newer "
-                "(TemporaryGraphicsManager API).")
+            msg = ("DFP markers require Revit 2022 or newer "
+                   "(TemporaryGraphicsManager API).")
             if self._dfp_markers_import_error:
-                msg += "\n\n{}".format(self._dfp_markers_import_error)
-            forms.alert(msg, title="DFP Markers")
+                msg += "  ({})".format(self._dfp_markers_import_error)
+            # Status line instead of a modal alert: modal dialogs from the
+            # pane can pump Revit's message loop mid-edit and crash.
+            self._set_status(msg)
             return
         if self._dfp_markers_active:
             self._dfp_markers_active = False
@@ -2294,21 +2448,16 @@ class ScheduleWindow(forms.WPFWindow):
         self._apply_detail_pane(row, cached)
 
     # --- lifecycle ------------------------------------------------------
+    # A dockable pane has no Closing event: it hides instead of closing and
+    # lives for the whole Revit session. The window's close-time cleanup is
+    # re-homed as follows: deferred etag persistence flushes after Apply
+    # completes (existing behavior); DFP sessions and pending edits are
+    # cleaned per-document in _handle_document_changed; the ViewActivated
+    # watcher stays subscribed for the session by design.
 
-    def window_closing(self, sender, args):
-        if self._apply_in_flight:
-            args.Cancel = True
-            return
-        pending = self.vm.pending_count()
-        if pending > 0:
-            if not forms.alert(
-                    "You have {} pending edit(s). Close without applying?".format(
-                        pending),
-                    yes=True, no=True):
-                args.Cancel = True
-                return
-
-        def stop_watcher(uiapp):
+    def shutdown_cleanup(self):
+        """Best-effort cleanup, callable from a Revit shutdown hook."""
+        def cleanup_task(uiapp):
             try:
                 self._flush_deferred_etag_persist()
             except Exception:
@@ -2324,21 +2473,16 @@ class ScheduleWindow(forms.WPFWindow):
                 except Exception:
                     pass
 
-        self._runner.run(stop_watcher)
+        try:
+            self._runner.run(cleanup_task)
+        except Exception:
+            pass
 
 
-def _detect_offline(window):
+def _detect_offline(panel):
     """Use the offline mock service if no token and no mapping exist."""
-    if not window.mapping and not window.auth.is_authenticated():
-        window.offline = True
-        window.service = MockCDEService(window.auth)
-        window._set_status("Offline demo mode (no mapping/sign-in found). "
-                           "Showing sample data.")
-
-
-if __name__ == "__main__":
-    __window__ = ScheduleWindow()
-    __window__.Closing += __window__.window_closing
-    _detect_offline(__window__)
-    __window__.Show()
-    __window__.refresh()
+    if not panel.mapping and not panel.auth.is_authenticated():
+        panel.offline = True
+        panel.service = MockCDEService(panel.auth)
+        panel._set_status("Offline demo mode (no mapping/sign-in found). "
+                          "Showing sample data.")
