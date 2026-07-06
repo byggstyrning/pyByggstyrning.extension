@@ -521,6 +521,7 @@ class DropdownSwitcher(HudItem):
         self._last_state = None
         self._is_hovered = False
         self._suppress_selection = False
+        self._popup_closed_ms = 0
 
     def build(self, style):
         self._style = style
@@ -545,7 +546,10 @@ class DropdownSwitcher(HudItem):
         badge.Child = row
         badge.Cursor = Cursors.Hand
         badge.Opacity = style.idle_opacity
-        badge.MouseLeftButtonDown += self._on_badge_click
+        # open on button-UP, not down: setting Popup.IsOpen while the mouse
+        # button is held puts a StaysOpen=False popup into native drag-select
+        # mode (it closes on button-up unless you drag into an item)
+        badge.MouseLeftButtonUp += self._on_badge_click
         badge.MouseEnter += self._on_mouse_enter
         badge.MouseLeave += self._on_mouse_leave
 
@@ -640,6 +644,11 @@ class DropdownSwitcher(HudItem):
         if self._popup.IsOpen:
             self._close_popup()
             return
+        # if this same click just dismissed the popup (StaysOpen=False
+        # closes it on the button-down that precedes this up), don't reopen
+        # — the badge acts as a close toggle
+        if int(time.time() * 1000) - self._popup_closed_ms < 300:
+            return
         if len(self._options) <= 1:
             return
         # one popup open at a time across the bar
@@ -700,6 +709,7 @@ class DropdownSwitcher(HudItem):
         self._update_opacity()
 
     def _on_popup_closed(self, sender, args):
+        self._popup_closed_ms = int(time.time() * 1000)
         self._update_opacity()
 
     # ----------------------------------------------------- lifecycle hooks
