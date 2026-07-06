@@ -7,10 +7,16 @@ in `lib/revit/phase_label.py` (see Alternatives surveyed below).
 
 ## How it works
 
-- `lib/revit/phase_label_wpf.py` creates one borderless WPF window per
-  document: no chrome, transparent background, owned by the Revit main
-  window (so it never floats above other applications), and made
-  non-activating via `WS_EX_NOACTIVATE`, so Revit keeps keyboard focus.
+- Built on the reusable overlay driver `lib/revit/view_hud.py`
+  (`ViewHudDriver`): one borderless WPF window per document — no chrome,
+  transparent background, owned by the Revit main window (so it never
+  floats above other applications), non-activating via
+  `WS_EX_NOACTIVATE`, so Revit keeps keyboard focus. New HUDs of this
+  kind only need a text provider and optional click actions;
+  `lib/revit/phase_label_wpf.py` is the phase-specific adapter.
+- The window is parked off-screen until WPF completes its first layout
+  pass (`SizeChanged`), then anchored — avoids the mis-sized first frame
+  that `EnsureHandle` + `SizeToContent` produces.
 - The badge is clickable: left-click switches the view to the next
   project phase, right-click to the previous one (wrapping). The click
   raises an `ExternalEvent` whose handler sets the view's Phase
