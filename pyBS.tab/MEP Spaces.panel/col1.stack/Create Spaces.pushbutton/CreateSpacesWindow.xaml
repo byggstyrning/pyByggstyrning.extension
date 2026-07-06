@@ -104,8 +104,8 @@
         </Grid>
         
         <!-- Busy Indicator Overlay - placed AFTER content so it renders on top -->
-        <Border x:Name="busyOverlay" 
-                Background="#80000000"
+        <Border x:Name="busyOverlay"
+                Background="{DynamicResource BusyOverlayBrush}"
                 Visibility="Collapsed"
                 Panel.ZIndex="100">
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
