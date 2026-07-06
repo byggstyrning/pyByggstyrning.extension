@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """Stock in-view context switchers and the default View HUD bundle.
 
-Builds on revit.view_hud (ViewHudHost + TextSwitcher). The default bar
-shows, left to right:
+Builds on revit.view_hud (ViewHudHost + TextSwitcher / DropdownSwitcher).
+The default bar shows, left to right:
 
 - Phase (clickable: cycles the view's Phase — see revit.phase_label_wpf)
-- Active workset (clickable: cycles the document's active workset;
+- Active workset (dropdown: single-select the document's active workset;
   hidden in non-workshared models)
 
 start_view_hud / stop_view_hud / is_view_hud_running manage the bundle as
@@ -30,14 +30,12 @@ from Autodesk.Revit.DB import (
     WorksetKind,
 )
 
-from System.Windows.Input import Cursors
-
 from revit.phase_label_wpf import (
     make_phase_switcher,
     collect_diagnostics as _phase_diagnostics,
 )
 from revit.view_hud import (
-    TextSwitcher,
+    DropdownSwitcher,
     get_hud_host,
     find_hud_item,
     remove_hud_item,
@@ -80,8 +78,30 @@ def _user_worksets(document):
         return []
 
 
-def _shift_active_workset(uiapp, step):
-    """Set the document's active workset to the next/previous user workset.
+def _workset_options(document, view):
+    """(active id, active name, [(id, name), ...]) or None if N/A."""
+    try:
+        if not document.IsWorkshared:
+            return None
+        table = document.GetWorksetTable()
+        active_id = table.GetActiveWorksetId().IntegerValue
+        active = table.GetWorkset(table.GetActiveWorksetId())
+        active_name = _truncate(active.Name) if active is not None else None
+        options = []
+        for w in _user_worksets(document):
+            options.append((w.Id.IntegerValue, _truncate(w.Name)))
+        if not options:
+            return None
+        options.sort(key=lambda kv: kv[1].lower())
+        if active_name is None:
+            active_id, active_name = options[0]
+        return (active_id, active_name, options)
+    except Exception:
+        return None
+
+
+def _set_active_workset(uiapp, workset_id_value):
+    """Set the document's active workset by workset id value.
 
     Runs inside a Revit API context. SetActiveWorksetId normally needs no
     transaction (the active workset is session state, not a model change);
@@ -96,23 +116,21 @@ def _shift_active_workset(uiapp, step):
             return None
     except Exception:
         return None
-    worksets = _user_worksets(doc)
-    if len(worksets) < 2:
+    target = None
+    for w in _user_worksets(doc):
+        if w.Id.IntegerValue == workset_id_value:
+            target = w
+            break
+    if target is None:
         return None
     table = doc.GetWorksetTable()
-    values = [w.Id.IntegerValue for w in worksets]
     try:
-        idx = values.index(table.GetActiveWorksetId().IntegerValue)
-    except ValueError:
-        idx = 0
-    new_id = worksets[(idx + step) % len(worksets)].Id
-    try:
-        table.SetActiveWorksetId(new_id)
+        table.SetActiveWorksetId(target.Id)
     except Exception:
         t = Transaction(doc, 'Switch active workset')
         t.Start()
         try:
-            table.SetActiveWorksetId(new_id)
+            table.SetActiveWorksetId(target.Id)
             t.Commit()
         except Exception:
             try:
@@ -125,38 +143,15 @@ def _shift_active_workset(uiapp, step):
 
 def _workset_tooltip(text):
     return (u"Active workset: {}\nNew elements are created here.\n"
-            u"Click: next workset. Right-click: previous.".format(text))
-
-
-class _WorksetSwitcher(TextSwitcher):
-    """Workset badge that drops the click affordance when cycling is moot.
-
-    With a single user workset the badge stays as an indicator, but the
-    hand cursor goes away and the tooltip stops promising a switch."""
-
-    def sync(self, document, view):
-        state = TextSwitcher.sync(self, document, view)
-        if state is None or self.root is None:
-            return state
-        cyclable = len(_user_worksets(document)) > 1
-        try:
-            self.root.Cursor = Cursors.Hand if cyclable else None
-            if not cyclable:
-                self.root.ToolTip = (
-                    u"Active workset: {}\n"
-                    u"New elements are created here.".format(state))
-        except Exception:
-            pass
-        return (state, cyclable)
+            u"Click to pick a workset.".format(text))
 
 
 def make_workset_switcher():
-    return _WorksetSwitcher(
+    return DropdownSwitcher(
         WORKSET_ID,
-        text_provider=_workset_text,
-        tooltip_provider=_workset_tooltip,
-        on_left_click=lambda ua: _shift_active_workset(ua, 1),
-        on_right_click=lambda ua: _shift_active_workset(ua, -1))
+        options_provider=_workset_options,
+        on_select=_set_active_workset,
+        tooltip_provider=_workset_tooltip)
 
 
 # ------------------------------------------------------------ the bundle

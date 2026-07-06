@@ -5,7 +5,7 @@ Normal click:
 - ON: show a bar of context switchers centered over the viewport's top
   edge (screen-anchored, so it stays put during pan/zoom):
   - Phase — click: next phase, right-click: previous.
-  - Active workset — click: next user workset, right-click: previous
+  - Active workset — click opens a dropdown to pick the active workset
     (workshared models only).
   The bar follows Revit's light/dark theme and idles at 50% opacity
   until hovered. Switchers hide themselves where they don't apply.
@@ -17,9 +17,9 @@ Shift+Click:
 
 __title__ = "View HUD"
 __author__ = "Byggstyrning AB"
-__doc__ = ("Toggle the in-view context HUD: phase and active workset "
-           "badges at the top of the view. Click a badge to switch "
-           "(right-click: previous). Shift+Click: refresh + diagnostics.")
+__doc__ = ("Toggle the in-view context HUD: phase badge (click cycles) and "
+           "active workset dropdown at the top of the view. "
+           "Shift+Click: refresh + diagnostics.")
 __highlight__ = 'new'
 __persistentengine__ = True
 

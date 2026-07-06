@@ -38,18 +38,26 @@ Adding a simple switcher (a text badge, optionally clickable):
     else:
         item.stop()                                   # toggle off
 
-Adding new switcher *kinds* (planned: single/multi-select dropdowns for
+For a single-select dropdown badge use the built-in DropdownSwitcher:
+
+        host.add_item(DropdownSwitcher(
+            'my-picker',
+            options_provider=lambda doc, view: (key1, 'Current', [
+                (key1, 'Current'), (key2, 'Other')]),  # None hides the item
+            on_select=lambda uiapp, key: ...,          # API context
+            tooltip_provider=lambda label: 'hint',     # optional
+        ))
+
+Adding further switcher *kinds* (e.g. multi-select / checkbox popups for
 temporary isolate, parameter colorization, ...): subclass HudItem —
-build() returns any WPF element (e.g. a badge opening a Popup with a
-ListBox or CheckBoxes), sync() returns an immutable value-equality
-snapshot of its state (str/tuple; lists are defensively copied) or None
-to hide, and run_in_api_context() executes model changes safely. Notes
-for popup authors: a WPF Popup is its own top-level HWND — close or
-reposition it in the on_bar_hidden / on_bar_moved / on_removed hooks;
-the host window is non-activating (WS_EX_NOACTIVATE) and not focusable,
-so light-dismiss (StaysOpen=False) may not see focus changes — prefer
-StaysOpen=True with explicit close; and set hover_dim = False to keep
-the badge solid while its popup is open.
+build() returns any WPF element, sync() returns an immutable value-
+equality snapshot of its state (str/tuple; lists are defensively copied)
+or None to hide, and run_in_api_context() executes model changes safely.
+Notes for popup authors (DropdownSwitcher already handles these): a WPF
+Popup is its own top-level HWND — close it in the on_bar_hidden /
+on_bar_moved / on_removed hooks; StaysOpen=False gives click-outside
+dismissal; and set hover_dim = False to keep the badge solid (self-manage
+opacity) while its popup is open.
 
 Hosts and items are registered per document in an AppDomain slot (so the
 registry survives pyRevit engine reloads), letting stateless toggle
@@ -78,7 +86,10 @@ from System.Windows import (
     Window, WindowStyle, ResizeMode, SizeToContent, Thickness,
     CornerRadius, PresentationSource, Visibility,
 )
-from System.Windows.Controls import Border, TextBlock, StackPanel, Orientation
+from System.Windows.Controls import (
+    Border, TextBlock, StackPanel, Orientation, ListBox, ListBoxItem,
+)
+from System.Windows.Controls.Primitives import Popup, PlacementMode
 from System.Windows.Input import Cursors
 from System.Windows.Interop import WindowInteropHelper
 from System.Windows.Media import SolidColorBrush, Color, Brushes, FontFamily
@@ -380,6 +391,10 @@ class HudItem(object):
         """Called when the item leaves its host (removal or teardown)."""
         pass
 
+    def close_popup(self):
+        """Close any popup this item owns (no-op unless the item has one)."""
+        pass
+
     def refresh(self):
         """Force the host to re-sync all items."""
         if self.host is not None:
@@ -468,6 +483,235 @@ class TextSwitcher(HudItem):
     def _on_mouse_right(self, sender, args):
         if self._on_right_click is not None:
             self.run_in_api_context(self._on_right_click)
+
+
+class DropdownSwitcher(HudItem):
+    """Badge that opens a single-select dropdown popup.
+
+    options_provider(document, view) -> (current_key, current_label,
+    options) or None to hide the cell. ``options`` is a list of
+    (key, label) pairs; ``key`` is any hashable id (matched by value, so
+    display-label collisions never mis-select). ``current_key`` marks the
+    active option, ``current_label`` is shown on the badge. on_select(
+    uiapp, key) runs inside a Revit API context when a different item is
+    picked.
+
+    The badge shows the current label plus a caret. Clicking it opens a
+    themed ListBox popup; picking an item closes the popup and (if the key
+    changed) queues on_select. Clicking elsewhere dismisses the popup
+    (StaysOpen=False); the popup is also closed when the bar hides, moves,
+    or the item is removed. Opacity is self-managed so the badge stays
+    solid while its popup is open.
+    """
+
+    hover_dim = False
+
+    def __init__(self, item_id, options_provider, on_select,
+                 tooltip_provider=None):
+        HudItem.__init__(self, item_id)
+        self._options_provider = options_provider
+        self._on_select = on_select
+        self._tooltip_provider = tooltip_provider
+        self._style = None
+        self._label = None
+        self._popup = None
+        self._listbox = None
+        self._current_key = None
+        self._options = []
+        self._last_state = None
+        self._is_hovered = False
+        self._suppress_selection = False
+
+    def build(self, style):
+        self._style = style
+        label = TextBlock()
+        label.FontFamily = FontFamily(style.font_family)
+        label.FontSize = style.font_size
+        caret = TextBlock()
+        caret.FontFamily = FontFamily(style.font_family)
+        caret.FontSize = style.font_size
+        caret.Text = u'  ▾'  # small down triangle
+
+        row = StackPanel()
+        row.Orientation = Orientation.Horizontal
+        row.Children.Add(label)
+        row.Children.Add(caret)
+
+        badge = Border()
+        badge.BorderThickness = Thickness(1)
+        badge.CornerRadius = CornerRadius(style.corner_radius)
+        pad = style.padding
+        badge.Padding = Thickness(pad[0], pad[1], pad[2], pad[3])
+        badge.Child = row
+        badge.Cursor = Cursors.Hand
+        badge.Opacity = style.idle_opacity
+        badge.MouseLeftButtonDown += self._on_badge_click
+        badge.MouseEnter += self._on_mouse_enter
+        badge.MouseLeave += self._on_mouse_leave
+
+        listbox = ListBox()
+        listbox.FontFamily = FontFamily(style.font_family)
+        listbox.FontSize = style.font_size
+        listbox.BorderThickness = Thickness(0)
+        listbox.SelectionChanged += self._on_selection_changed
+
+        popup_border = Border()
+        popup_border.BorderThickness = Thickness(1)
+        popup_border.CornerRadius = CornerRadius(style.corner_radius)
+        popup_border.Child = listbox
+
+        popup = Popup()
+        popup.StaysOpen = False
+        popup.AllowsTransparency = True
+        popup.PlacementTarget = badge
+        popup.Placement = PlacementMode.Bottom
+        popup.Child = popup_border
+        popup.Opened += self._on_popup_opened
+        popup.Closed += self._on_popup_closed
+
+        self._label = label
+        self._caret = caret
+        self._listbox = listbox
+        self._popup = popup
+        self._popup_border = popup_border
+        self._last_state = None
+        self.root = badge
+        return badge
+
+    def sync(self, document, view):
+        result = self._options_provider(document, view)
+        if not result:
+            self.root.Visibility = Visibility.Collapsed
+            self._close_popup()
+            return None
+        current_key, current_label, options = result
+        self._current_key = current_key
+        self._options = list(options or [])
+        self._label.Text = current_label
+        self._caret.Visibility = (
+            Visibility.Visible if len(self._options) > 1
+            else Visibility.Collapsed)
+        if self._tooltip_provider is not None:
+            try:
+                self.root.ToolTip = self._tooltip_provider(current_label)
+            except Exception:
+                pass
+        self.root.Visibility = Visibility.Visible
+        # value-equality snapshot for host change detection
+        return (current_key, current_label, tuple(self._options))
+
+    def apply_theme(self, dark, palette):
+        bg, border, fg = [Color.FromArgb(*argb) for argb in palette]
+        bg_brush = SolidColorBrush(bg)
+        border_brush = SolidColorBrush(border)
+        fg_brush = SolidColorBrush(fg)
+        self.root.Background = bg_brush
+        self.root.BorderBrush = border_brush
+        self._label.Foreground = fg_brush
+        self._caret.Foreground = fg_brush
+        if self._popup_border is not None:
+            self._popup_border.Background = bg_brush
+            self._popup_border.BorderBrush = border_brush
+        if self._listbox is not None:
+            self._listbox.Background = bg_brush
+            self._listbox.Foreground = fg_brush
+
+    # -------------------------------------------------------------- popup
+
+    def _populate_listbox(self):
+        self._suppress_selection = True
+        try:
+            self._listbox.Items.Clear()
+            selected = None
+            for key, lbl in self._options:
+                item = ListBoxItem()
+                item.Content = lbl
+                item.Tag = key
+                self._listbox.Items.Add(item)
+                if key == self._current_key:
+                    selected = item
+            self._listbox.SelectedItem = selected
+        finally:
+            self._suppress_selection = False
+
+    def _on_badge_click(self, sender, args):
+        if self._popup is None:
+            return
+        if self._popup.IsOpen:
+            self._close_popup()
+            return
+        if len(self._options) <= 1:
+            return
+        # one popup open at a time across the bar
+        if self.host is not None:
+            self.host.close_item_popups(except_item=self)
+        self._populate_listbox()
+        try:
+            self._popup.IsOpen = True
+        except Exception:
+            pass
+
+    def _on_selection_changed(self, sender, args):
+        if self._suppress_selection:
+            return
+        item = self._listbox.SelectedItem
+        self._close_popup()
+        if item is None:
+            return
+        key = item.Tag
+        if key == self._current_key:
+            return
+        # optimistic: reflect the pick now so a fast reopen before the
+        # ExternalEvent runs shows the right selection and re-picking the
+        # same item is a no-op
+        self._current_key = key
+        on_select = self._on_select
+        self.run_in_api_context(lambda ua: on_select(ua, key))
+
+    def close_popup(self):
+        self._close_popup()
+
+    def _close_popup(self):
+        if self._popup is not None and self._popup.IsOpen:
+            try:
+                self._popup.IsOpen = False
+            except Exception:
+                pass
+
+    def _update_opacity(self):
+        try:
+            solid = self._is_hovered or (
+                self._popup is not None and self._popup.IsOpen)
+            self.root.Opacity = (
+                self._style.hover_opacity if solid
+                else self._style.idle_opacity)
+        except Exception:
+            pass
+
+    def _on_mouse_enter(self, sender, args):
+        self._is_hovered = True
+        self._update_opacity()
+
+    def _on_mouse_leave(self, sender, args):
+        self._is_hovered = False
+        self._update_opacity()
+
+    def _on_popup_opened(self, sender, args):
+        self._update_opacity()
+
+    def _on_popup_closed(self, sender, args):
+        self._update_opacity()
+
+    # ----------------------------------------------------- lifecycle hooks
+
+    def on_bar_hidden(self):
+        self._close_popup()
+
+    def on_bar_moved(self):
+        self._close_popup()
+
+    def on_removed(self):
+        self._close_popup()
 
 
 # ------------------------------------------------------------------- host
@@ -603,6 +847,15 @@ class ViewHudHost(object):
             self._action_event.Raise()
         except Exception:
             pass
+
+    def close_item_popups(self, except_item=None):
+        """Close every item's popup except one (single-open-popup bar)."""
+        for item in self._items:
+            if item is not except_item:
+                try:
+                    item.close_popup()
+                except Exception:
+                    pass
 
     # ---------------------------------------------------------------- ui
 

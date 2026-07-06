@@ -11,7 +11,12 @@ Alternatives surveyed below).
 | Badge | Shows | Click | Hidden when |
 | --- | --- | --- | --- |
 | Phase | The view's Phase | next phase (right-click: previous) | view has no Phase parameter |
-| Workset | The document's active workset | next user workset (right-click: previous) | model is not workshared |
+| Workset | The document's active workset | opens a single-select dropdown of user worksets | model is not workshared |
+
+The workset badge is a `DropdownSwitcher` (reusable framework primitive:
+badge + themed `Popup` `ListBox`, click-outside to dismiss, popup closed
+on bar hide/move/removal). The phase badge is a `TextSwitcher` (cycles on
+click).
 
 The bundle is managed by `lib/revit/context_switchers.py`
 (`start_view_hud` / `stop_view_hud`); the phase switcher itself lives in
@@ -77,6 +82,10 @@ behind a HUD click.
 - Does not print or export, and screen captures of the Revit window may or
   may not include it depending on the capture method.
 - Crossing monitors with different DPI can be one tick late to rescale.
+- The workset dropdown's popup can be visually offset if the Revit view
+  window straddles the seam between two monitors with different DPI scaling
+  (a WPF `Popup` placement limitation); it renders correctly when the view
+  is within one monitor.
 
 ## Alternatives surveyed (2026-07)
 
