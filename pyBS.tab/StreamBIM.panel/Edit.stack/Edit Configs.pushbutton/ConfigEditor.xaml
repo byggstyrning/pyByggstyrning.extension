@@ -53,9 +53,9 @@
                     </StackPanel>
 
                     <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Left">
-                        <Button x:Name="editButton" Content="Edit Selected" Width="120" Height="30" Margin="0,0,10,0" IsEnabled="False" Style="{DynamicResource StandardButtonStyle}"/>
                         <Button x:Name="runAllButton" Content="Run All Configurations" Width="150" Height="30" Margin="0,0,10,0" Style="{DynamicResource StandardButtonStyle}"/>
-                        <Button x:Name="runSelectedButton" Content="Run Selected" Width="150" Height="30" Margin="0,0,10,0" Style="{DynamicResource StandardButtonStyle}"/>
+                        <Button x:Name="runSelectedButton" Content="Run Selected" Width="150" Height="30" Margin="0,0,10,0" Style="{DynamicResource SecondaryButtonStyle}"/>
+                        <Button x:Name="editButton" Content="Edit Selected" Width="120" Height="30" Margin="0,0,10,0" IsEnabled="False" Style="{DynamicResource SecondaryButtonStyle}"/>
                     </StackPanel>
                 </Grid>
             </TabItem>
@@ -120,9 +120,9 @@
                     </Grid>
                     
                     <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,15,0,0">
-                        <Button x:Name="backButton" Content="Back" Width="100" Height="30" Margin="0,0,10,0" Style="{DynamicResource SecondaryButtonStyle}"/>
+                        <Button x:Name="backButton" Content="Back" Width="100" Height="30" Margin="0,0,10,0" Style="{DynamicResource GhostButtonStyle}"/>
                         <Button x:Name="saveButton" Content="Save Changes" Width="120" Height="30" Margin="0,0,10,0" Style="{DynamicResource StandardButtonStyle}"/>
-                        <Button x:Name="deleteButton" Content="Delete Configuration" Width="150" Height="30" Style="{DynamicResource SecondaryButtonStyle}"/>
+                        <Button x:Name="deleteButton" Content="Delete Configuration" Width="150" Height="30" Style="{DynamicResource DangerButtonStyle}"/>
                     </StackPanel>
                 </Grid>
             </TabItem>

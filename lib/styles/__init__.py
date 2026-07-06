@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # Styles module for reusable WPF UI styles
 """
 This module provides reusable WPF styles for PyRevit extensions.
@@ -16,57 +17,81 @@ Usage in Python:
 import os
 import os.path as op
 
-# Color palettes for light and dark themes
+# Color palettes for light and dark themes.
+# IMPORTANT: these values are the runtime source of truth - they override the
+# Color/Brush resources parsed from CommonStyles.xaml at load time, so any
+# palette change must be mirrored in both places.
+# Color roles: Accent (brand yellow) = primary actions/selected tabs;
+# Selection (blue) = selection, checked state, focus; Success/Error/Warning =
+# semantic status; neutrals for surfaces/borders/text.
 LIGHT_THEME_COLORS = {
-    'PlaceholderForegroundColor': '#999999',
-    'BusyOverlayColor': '#80000000',
-    'AccentColor': '#ffbb00',
-    'AccentHoverColor': '#e6a800',
-    'AccentPressedColor': '#cc9900',
-    'ErrorColor': '#D32F2F',
-    'SuccessColor': '#4CAF50',
-    'WarningColor': '#FF9800',
-    'BorderColor': '#CCCCCC',
-    'BackgroundLightColor': '#F5F5F5',
-    'BackgroundLighterColor': '#F0F0F0',
-    'TextColor': '#333333',
-    'TextSecondaryColor': '#666666',
-    'TextLightColor': '#999999',
-    'DisabledColor': '#CCCCCC',
-    'DisabledTextColor': '#666666',
+    'PlaceholderForegroundColor': '#6B7280',
+    'BusyOverlayColor': '#A6000000',
+    'AccentColor': '#FFBB00',
+    'AccentHoverColor': '#EBA700',
+    'AccentPressedColor': '#D69800',
+    'SelectionColor': '#0078D4',
+    'SelectionHoverColor': '#106EBE',
+    'SelectionIndicatorColor': '#0078D4',
+    'ProgressFillColor': '#0078D4',
+    'ErrorColor': '#C62828',
+    'ErrorHoverColor': '#B02525',
+    'ErrorPressedColor': '#8E1C1C',
+    'SuccessColor': '#2E7D32',
+    'SuccessHoverColor': '#27692B',
+    'SuccessPressedColor': '#1B5E20',
+    'WarningColor': '#B45309',
+    'BorderColor': '#D5D9DE',
+    'BackgroundLightColor': '#F4F5F7',
+    'BackgroundLighterColor': '#EAECEF',
+    'TextColor': '#1F2328',
+    'TextSecondaryColor': '#5B6470',
+    'TextLightColor': '#8B939E',
+    'DisabledColor': '#E4E7EB',
+    'DisabledTextColor': '#9AA1AA',
     # Additional colors used in styles
-    'WindowBackgroundColor': '#FFFFFF',
+    'WindowBackgroundColor': '#FAFAFA',
     'ControlBackgroundColor': '#FFFFFF',
     'PopupBackgroundColor': '#FFFFFF',
     'DataGridRowBackgroundColor': '#FFFFFF',
-    'ArrowColor': '#2196F3',  # Blue for light mode
-    'ColoredButtonTextColor': '#000000',  # Black text for colored buttons (orange/green/red)
+    'ArrowColor': '#6B7280',  # Neutral grey dropdown/sort glyphs
+    'ColoredButtonTextColor': '#1A1A1A',  # Near-black text on the yellow accent
+    'SemanticButtonTextColor': '#FFFFFF',  # White text on deep green/red buttons
 }
 
 DARK_THEME_COLORS = {
-    'PlaceholderForegroundColor': '#808080',
-    'BusyOverlayColor': '#80000000',
-    'AccentColor': '#ffbb00',  # Keep accent color consistent
-    'AccentHoverColor': '#e6a800',
-    'AccentPressedColor': '#cc9900',
-    'ErrorColor': '#EF5350',  # Slightly lighter for dark bg
-    'SuccessColor': '#66BB6A',  # Slightly lighter for dark bg
-    'WarningColor': '#FFA726',  # Slightly lighter for dark bg
-    'BorderColor': '#555555',
-    'BackgroundLightColor': '#3C3C3C',  # Dark grey
-    'BackgroundLighterColor': '#454545',  # Slightly lighter dark grey
-    'TextColor': '#E0E0E0',  # Light text for dark bg
-    'TextSecondaryColor': '#B0B0B0',
-    'TextLightColor': '#808080',
-    'DisabledColor': '#555555',
-    'DisabledTextColor': '#808080',
+    'PlaceholderForegroundColor': '#9CA3AF',
+    'BusyOverlayColor': '#66000000',
+    'AccentColor': '#FFBB00',  # Keep accent color consistent
+    'AccentHoverColor': '#EBA700',
+    'AccentPressedColor': '#D69800',
+    'SelectionColor': '#0078D4',
+    'SelectionHoverColor': '#106EBE',
+    'SelectionIndicatorColor': '#4CA0E0',  # Lighter blue so focus rings hit 3:1 on dark surfaces
+    'ProgressFillColor': '#FFBB00',  # Yellow reads well against dark tracks
+    'ErrorColor': '#E57373',  # Lighter for readability on dark surfaces
+    'ErrorHoverColor': '#D75F5F',
+    'ErrorPressedColor': '#D26666',
+    'SuccessColor': '#81C784',
+    'SuccessHoverColor': '#66BB6A',
+    'SuccessPressedColor': '#4CAF50',
+    'WarningColor': '#FFB74D',
+    'BorderColor': '#4D5157',
+    'BackgroundLightColor': '#37393D',
+    'BackgroundLighterColor': '#43464B',
+    'TextColor': '#E8EAED',
+    'TextSecondaryColor': '#B4BAC2',
+    'TextLightColor': '#8B939E',
+    'DisabledColor': '#43464B',
+    'DisabledTextColor': '#7D848D',
     # Additional colors used in styles
-    'WindowBackgroundColor': '#2D2D2D',  # Dark grey window background
-    'ControlBackgroundColor': '#3C3C3C',  # Control background
-    'PopupBackgroundColor': '#383838',  # Popup/dropdown background
-    'DataGridRowBackgroundColor': '#2D2D2D',
-    'ArrowColor': '#64B5F6',  # Light blue for dark mode
-    'ColoredButtonTextColor': '#000000',  # Pure black text for colored buttons in dark mode (ensures contrast against bright colors)
+    'WindowBackgroundColor': '#2B2C2E',
+    'ControlBackgroundColor': '#353639',
+    'PopupBackgroundColor': '#38393C',
+    'DataGridRowBackgroundColor': '#303134',
+    'ArrowColor': '#9CA3AF',  # Neutral grey dropdown/sort glyphs
+    'ColoredButtonTextColor': '#1A1A1A',  # Near-black text on the yellow accent
+    'SemanticButtonTextColor': '#1A1A1A',  # Dark text on the pastel green/red buttons
 }
 
 
@@ -211,8 +236,16 @@ def apply_theme_to_resources(resources, theme=None):
             'AccentBrush': 'AccentColor',
             'AccentHoverBrush': 'AccentHoverColor',
             'AccentPressedBrush': 'AccentPressedColor',
+            'SelectionBrush': 'SelectionColor',
+            'SelectionHoverBrush': 'SelectionHoverColor',
+            'SelectionIndicatorBrush': 'SelectionIndicatorColor',
+            'ProgressFillBrush': 'ProgressFillColor',
             'ErrorBrush': 'ErrorColor',
+            'ErrorHoverBrush': 'ErrorHoverColor',
+            'ErrorPressedBrush': 'ErrorPressedColor',
             'SuccessBrush': 'SuccessColor',
+            'SuccessHoverBrush': 'SuccessHoverColor',
+            'SuccessPressedBrush': 'SuccessPressedColor',
             'WarningBrush': 'WarningColor',
             'BorderBrush': 'BorderColor',
             'BackgroundLightBrush': 'BackgroundLightColor',
@@ -228,6 +261,7 @@ def apply_theme_to_resources(resources, theme=None):
             'DataGridRowBackgroundBrush': 'DataGridRowBackgroundColor',
             'ArrowBrush': 'ArrowColor',
             'ColoredButtonTextBrush': 'ColoredButtonTextColor',
+            'SemanticButtonTextBrush': 'SemanticButtonTextColor',
         }
         
         brushes_applied = 0

@@ -116,7 +116,7 @@
                             <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
                         </MultiTrigger>
                         <Trigger Property="IsSelected" Value="True">
-                            <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
+                            <Setter Property="Background" Value="{DynamicResource SelectionBrush}"/>
                             <Setter Property="Foreground" Value="White"/>
                         </Trigger>
                         <MultiTrigger>
@@ -124,7 +124,7 @@
                                 <Condition Property="IsSelected" Value="True"/>
                                 <Condition Property="IsMouseOver" Value="True"/>
                             </MultiTrigger.Conditions>
-                            <Setter Property="Background" Value="{DynamicResource AccentHoverBrush}"/>
+                            <Setter Property="Background" Value="{DynamicResource SelectionHoverBrush}"/>
                             <Setter Property="Foreground" Value="White"/>
                         </MultiTrigger>
                     </Style.Triggers>
@@ -174,7 +174,7 @@
                                                 <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
                                                 <Style.Triggers>
                                                     <Trigger Property="IsMouseOver" Value="True">
-                                                        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                                        <Setter Property="Foreground" Value="{DynamicResource SelectionIndicatorBrush}"/>
                                                     </Trigger>
                                                 </Style.Triggers>
                                             </Style>
@@ -202,7 +202,7 @@
                                                 <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
                                                 <Style.Triggers>
                                                     <Trigger Property="IsMouseOver" Value="True">
-                                                        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                                        <Setter Property="Foreground" Value="{DynamicResource SelectionIndicatorBrush}"/>
                                                     </Trigger>
                                                 </Style.Triggers>
                                             </Style>
@@ -260,7 +260,7 @@
                                                 <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
                                                 <Style.Triggers>
                                                     <Trigger Property="IsMouseOver" Value="True">
-                                                        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                                        <Setter Property="Foreground" Value="{DynamicResource SelectionIndicatorBrush}"/>
                                                     </Trigger>
                                                 </Style.Triggers>
                                             </Style>
@@ -288,7 +288,7 @@
                                                 <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
                                                 <Style.Triggers>
                                                     <Trigger Property="IsMouseOver" Value="True">
-                                                        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                                        <Setter Property="Foreground" Value="{DynamicResource SelectionIndicatorBrush}"/>
                                                     </Trigger>
                                                 </Style.Triggers>
                                             </Style>
@@ -346,7 +346,7 @@
                                                 <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
                                                 <Style.Triggers>
                                                     <Trigger Property="IsMouseOver" Value="True">
-                                                        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                                        <Setter Property="Foreground" Value="{DynamicResource SelectionIndicatorBrush}"/>
                                                     </Trigger>
                                                 </Style.Triggers>
                                             </Style>
@@ -374,7 +374,7 @@
                                                 <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
                                                 <Style.Triggers>
                                                     <Trigger Property="IsMouseOver" Value="True">
-                                                        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                                        <Setter Property="Foreground" Value="{DynamicResource SelectionIndicatorBrush}"/>
                                                     </Trigger>
                                                 </Style.Triggers>
                                             </Style>
@@ -432,7 +432,7 @@
                                                 <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
                                                 <Style.Triggers>
                                                     <Trigger Property="IsMouseOver" Value="True">
-                                                        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                                        <Setter Property="Foreground" Value="{DynamicResource SelectionIndicatorBrush}"/>
                                                     </Trigger>
                                                 </Style.Triggers>
                                             </Style>
@@ -460,7 +460,7 @@
                                                 <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
                                                 <Style.Triggers>
                                                     <Trigger Property="IsMouseOver" Value="True">
-                                                        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                                        <Setter Property="Foreground" Value="{DynamicResource SelectionIndicatorBrush}"/>
                                                     </Trigger>
                                                 </Style.Triggers>
                                             </Style>
@@ -516,7 +516,7 @@
                                                 <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
                                                 <Style.Triggers>
                                                     <Trigger Property="IsMouseOver" Value="True">
-                                                        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                                        <Setter Property="Foreground" Value="{DynamicResource SelectionIndicatorBrush}"/>
                                                     </Trigger>
                                                 </Style.Triggers>
                                             </Style>
@@ -544,7 +544,7 @@
                                                 <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
                                                 <Style.Triggers>
                                                     <Trigger Property="IsMouseOver" Value="True">
-                                                        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                                        <Setter Property="Foreground" Value="{DynamicResource SelectionIndicatorBrush}"/>
                                                     </Trigger>
                                                 </Style.Triggers>
                                             </Style>
@@ -691,7 +691,7 @@
                                                 <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
                                                 <Style.Triggers>
                                                     <Trigger Property="IsMouseOver" Value="True">
-                                                        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                                        <Setter Property="Foreground" Value="{DynamicResource SelectionIndicatorBrush}"/>
                                                     </Trigger>
                                                 </Style.Triggers>
                                             </Style>
@@ -719,7 +719,7 @@
                                                 <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
                                                 <Style.Triggers>
                                                     <Trigger Property="IsMouseOver" Value="True">
-                                                        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                                        <Setter Property="Foreground" Value="{DynamicResource SelectionIndicatorBrush}"/>
                                                     </Trigger>
                                                 </Style.Triggers>
                                             </Style>
