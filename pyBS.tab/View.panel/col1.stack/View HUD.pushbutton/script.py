@@ -7,8 +7,6 @@ Normal click:
   - Phase — click: next phase, right-click: previous.
   - Active workset — click: next user workset, right-click: previous
     (workshared models only).
-  - Active design option — indicator (the Revit API cannot switch it);
-    shown only when the model has design options.
   The bar follows Revit's light/dark theme and idles at 50% opacity
   until hovered. Switchers hide themselves where they don't apply.
 - OFF: close the bar and stop tracking.
@@ -19,10 +17,9 @@ Shift+Click:
 
 __title__ = "View HUD"
 __author__ = "Byggstyrning AB"
-__doc__ = ("Toggle the in-view context HUD: phase, active workset and "
-           "design option badges at the top of the view. Click a badge to "
-           "switch (right-click: previous). Shift+Click: refresh + "
-           "diagnostics.")
+__doc__ = ("Toggle the in-view context HUD: phase and active workset "
+           "badges at the top of the view. Click a badge to switch "
+           "(right-click: previous). Shift+Click: refresh + diagnostics.")
 __highlight__ = 'new'
 __persistentengine__ = True
 

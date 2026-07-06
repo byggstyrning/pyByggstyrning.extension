@@ -12,11 +12,18 @@ Alternatives surveyed below).
 | --- | --- | --- | --- |
 | Phase | The view's Phase | next phase (right-click: previous) | view has no Phase parameter |
 | Workset | The document's active workset | next user workset (right-click: previous) | model is not workshared |
-| Design option | The active design option (or *Main Model*) | — indicator only: the Revit API has no setter for the active option | model has no design options |
 
 The bundle is managed by `lib/revit/context_switchers.py`
 (`start_view_hud` / `stop_view_hud`); the phase switcher itself lives in
-`lib/revit/phase_label_wpf.py`.
+`lib/revit/phase_label_wpf.py`. New switchers subclass `HudItem` /
+`TextSwitcher` and register in `start_view_hud`.
+
+An active-design-option badge was considered and left out: the Revit API
+has no setter for the active design option (only
+`DesignOption.GetActiveDesignOptionId`), and the only known way to switch
+it is a fragile out-of-process UI-automation hack on the status-bar
+combobox (Jeremy Tammik's *DesignOptionModifier*) — not worth wiring
+behind a HUD click.
 
 ## How it works
 

@@ -7,13 +7,17 @@ shows, left to right:
 - Phase (clickable: cycles the view's Phase — see revit.phase_label_wpf)
 - Active workset (clickable: cycles the document's active workset;
   hidden in non-workshared models)
-- Active design option (indicator only: the Revit API exposes
-  DesignOption.GetActiveDesignOptionId but no setter, so clicking cannot
-  switch it; hidden when the model has no design options)
 
 start_view_hud / stop_view_hud / is_view_hud_running manage the bundle as
 one toggle for the ribbon button. Each switcher hides itself when not
 applicable, so the bar only shows what matters in the current model.
+
+An active-design-option switcher was considered but left out: the Revit
+API has no setter for the active design option (only
+DesignOption.GetActiveDesignOptionId), and the only known workaround is a
+fragile, out-of-process UI-automation hack on the status-bar combobox
+(Jeremy Tammik's DesignOptionModifier). Add a HudItem here if that ever
+becomes worthwhile.
 """
 
 import clr
@@ -21,20 +25,17 @@ import clr
 clr.AddReference('RevitAPI')
 
 from Autodesk.Revit.DB import (
-    DesignOption,
-    ElementId,
-    FilteredElementCollector,
     FilteredWorksetCollector,
     Transaction,
     WorksetKind,
 )
 
+from System.Windows.Input import Cursors
+
 from revit.phase_label_wpf import (
     make_phase_switcher,
     collect_diagnostics as _phase_diagnostics,
 )
-from System.Windows.Input import Cursors
-
 from revit.view_hud import (
     TextSwitcher,
     get_hud_host,
@@ -44,8 +45,7 @@ from revit.view_hud import (
 
 PHASE_ID = 'phase'
 WORKSET_ID = 'workset'
-DESIGN_OPTION_ID = 'design-option'
-_DEFAULT_IDS = (PHASE_ID, WORKSET_ID, DESIGN_OPTION_ID)
+_DEFAULT_IDS = (PHASE_ID, WORKSET_ID)
 _MAX_CHARS = 40
 
 
@@ -159,41 +159,6 @@ def make_workset_switcher():
         on_right_click=lambda ua: _shift_active_workset(ua, -1))
 
 
-# ---------------------------------------------------------- design option
-
-def _design_option_text(document, view):
-    """Active design option name, 'Main Model' when options exist but none
-    is active, or None in models without design options."""
-    try:
-        active_id = DesignOption.GetActiveDesignOptionId(document)
-        if active_id is not None \
-                and active_id != ElementId.InvalidElementId:
-            option = document.GetElement(active_id)
-            if option is not None:
-                return _truncate(option.Name)
-        has_options = (
-            FilteredElementCollector(document)
-            .OfClass(DesignOption)
-            .GetElementCount() > 0)
-        if has_options:
-            return u'Main Model'
-        return None
-    except Exception:
-        return None
-
-
-def _design_option_tooltip(text):
-    return (u"Active design option: {}\n(Indicator only — the Revit API "
-            u"does not expose switching the active option.)".format(text))
-
-
-def make_design_option_switcher():
-    return TextSwitcher(
-        DESIGN_OPTION_ID,
-        text_provider=_design_option_text,
-        tooltip_provider=_design_option_tooltip)
-
-
 # ------------------------------------------------------------ the bundle
 
 def is_view_hud_running(document):
@@ -204,14 +169,12 @@ def is_view_hud_running(document):
 
 
 def start_view_hud(uiapp, document, logger=None):
-    """Show the default switcher bar (phase, workset, design option)."""
+    """Show the default switcher bar (phase, workset)."""
     host = get_hud_host(uiapp, document, logger=logger)
     if host.find_item(PHASE_ID) is None:
         host.add_item(make_phase_switcher())
     if host.find_item(WORKSET_ID) is None:
         host.add_item(make_workset_switcher())
-    if host.find_item(DESIGN_OPTION_ID) is None:
-        host.add_item(make_design_option_switcher())
     host.refresh()
     return host
 
@@ -224,7 +187,7 @@ def stop_view_hud(document):
 
 
 def collect_diagnostics(uiapp, document):
-    """Phase diagnostics plus the workset / design option provider states."""
+    """Phase diagnostics plus the workset provider states."""
     lines = [_phase_diagnostics(uiapp, document)]
     uidoc = uiapp.ActiveUIDocument
     view = uidoc.ActiveView if uidoc is not None else None
@@ -238,6 +201,4 @@ def collect_diagnostics(uiapp, document):
     add('is_workshared', lambda: document.IsWorkshared)
     lines.append(u'workset_text: {}'.format(_workset_text(document, view)))
     add('user_worksets', lambda: len(_user_worksets(document)))
-    lines.append(u'design_option_text: {}'.format(
-        _design_option_text(document, view)))
     return u'\n'.join(lines)
