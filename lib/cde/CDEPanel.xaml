@@ -27,10 +27,30 @@
                            Foreground="{DynamicResource TextBrush}"/>
             </StackPanel>
         </DataTemplate>
+        <DataTemplate x:Key="GroupPickerItemTemplate">
+            <StackPanel Orientation="Horizontal" Margin="2,1">
+                <CheckBox IsChecked="{Binding is_checked, Mode=TwoWay}"
+                          VerticalAlignment="Center" Margin="0,0,4,0"
+                          Click="on_group_picker_checked"/>
+                <TextBlock Text="{Binding source_icon}" FontFamily="Segoe MDL2 Assets"
+                           Foreground="{Binding source_brush}" Width="18" FontSize="13"
+                           VerticalAlignment="Center" Margin="0,0,6,0"/>
+                <TextBlock Text="{Binding display_name}" VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextBrush}"/>
+            </StackPanel>
+        </DataTemplate>
+        <!-- Thin vertical divider between toolbar clusters -->
+        <Style x:Key="ToolbarDividerStyle" TargetType="Border">
+            <Setter Property="Width" Value="1"/>
+            <Setter Property="Background" Value="{DynamicResource BorderBrush}"/>
+            <Setter Property="Margin" Value="10,4,10,4"/>
+            <Setter Property="VerticalAlignment" Value="Stretch"/>
+        </Style>
     </Page.Resources>
 
     <Grid Margin="{DynamicResource GridMargin}">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="2*" MinHeight="80"/>
@@ -40,67 +60,123 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- Toolbar row 1: source -->
-        <WrapPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,6">
+        <!-- Toolbar row 1: data source (what is listed) -->
+        <WrapPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,4">
             <TextBlock Text="Category" Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center" Margin="0,0,6,0"/>
             <ComboBox x:Name="categoryCombo" Width="130" Style="{DynamicResource DefaultComboBoxStyle}"
+                      ToolTip="Element category to load from the CDE"
                       SelectionChanged="on_category_changed"/>
-            <CheckBox x:Name="activeViewCheck" Content="Active view only" Margin="14,0,0,0"
+            <CheckBox x:Name="activeViewCheck" Content="Active view only" Margin="10,0,0,0"
                       VerticalAlignment="Center" Style="{DynamicResource DefaultCheckBoxStyle}"
+                      ToolTip="Limit rows to elements visible in the active view"
                       Click="on_active_view_toggled"/>
-            <Button x:Name="refreshButton" Content="Refresh" Width="90" Margin="14,0,0,0"
-                    Style="{DynamicResource DefaultButtonStyle}" Click="on_refresh_click"/>
-            <TextBlock Text="Group by" Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center" Margin="18,0,6,0"/>
-            <ComboBox x:Name="groupCombo" Width="130" Style="{DynamicResource DefaultComboBoxStyle}"
-                      SelectionChanged="on_group_changed"/>
-            <TextBlock Text="Filter" Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center" Margin="18,0,6,0"/>
+            <Button x:Name="refreshButton" Content="Refresh" Width="90" Margin="10,0,0,0"
+                    Style="{DynamicResource SecondaryButtonStyle}"
+                    ToolTip="Reload elements from Revit and the CDE"
+                    Click="on_refresh_click"/>
+            <Border Style="{StaticResource ToolbarDividerStyle}"/>
+            <TextBlock Text="Group by" Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+            <ComboBox x:Name="groupCombo" Width="170"
+                      Style="{DynamicResource SearchableComboBoxStyle}"
+                      Tag="No grouping"
+                      ToolTip="Group rows by one or more columns - check them in grouping order"
+                      ItemTemplate="{StaticResource GroupPickerItemTemplate}"
+                      DropDownOpened="on_group_dropdown_opened"
+                      DropDownClosed="on_group_dropdown_closed"/>
+            <TextBlock Text="Filter" Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center" Margin="10,0,6,0"/>
             <TextBox x:Name="filterBox" Width="180" Style="{DynamicResource PlaceholderTextBoxStyle}"
-                     Tag="Quick filter..." TextChanged="on_filter_changed"/>
+                     Tag="Quick filter..."
+                     ToolTip="Show only rows containing this text"
+                     TextChanged="on_filter_changed"/>
         </WrapPanel>
 
-        <!-- Toolbar row 2: parameter actions -->
-        <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
-            <TextBlock Text="Parameter" Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center" Margin="0,0,6,0"/>
-            <ComboBox x:Name="paramCombo" Width="220"
-                      Style="{DynamicResource SearchableComboBoxStyle}"
-                      Tag="Select parameter..."
-                      ItemTemplate="{StaticResource ParamItemTemplate}"
-                      DropDownOpened="on_param_dropdown_opened"/>
-            <ComboBox x:Name="columnsCombo" Width="200" Margin="8,0,0,0"
+        <!-- Toolbar row 2: columns, coloring and staged edits -->
+        <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,4">
+            <TextBlock Text="Columns" Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+            <ComboBox x:Name="columnsCombo" Width="190"
                       Style="{DynamicResource SearchableComboBoxStyle}"
                       Tag="Choose columns..."
+                      ToolTip="Show or hide parameter columns (lists every parameter found on the elements)"
                       ItemTemplate="{StaticResource ColumnPickerItemTemplate}"
                       DropDownOpened="on_columns_dropdown_opened"
                       DropDownClosed="on_columns_dropdown_closed"/>
-            <Button x:Name="colorButton" Content="Color by" Width="90" Margin="8,0,0,0"
-                    Style="{DynamicResource DefaultButtonStyle}" Click="on_color_click"/>
-            <Button x:Name="resetColorButton" Content="Reset colors" Width="100" Margin="8,0,0,0"
-                    Style="{DynamicResource SecondaryButtonStyle}" Click="on_reset_color_click"/>
-            <Button x:Name="dfpMarkersButton" Content="DFP markers" Width="100" Margin="8,0,0,0"
-                    Style="{DynamicResource SecondaryButtonStyle}" Click="on_dfp_markers_click"/>
-            <TextBlock Text="Set value" Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center" Margin="18,0,6,0"/>
-            <TextBox x:Name="valueBox" Width="120" Style="{DynamicResource PlaceholderTextBoxStyle}" Tag="value"/>
-            <Button x:Name="setValueButton" Content="Stage on selected" Width="130" Margin="8,0,0,0"
-                    Style="{DynamicResource DefaultButtonStyle}" Click="on_set_value_click"/>
+            <Border Style="{StaticResource ToolbarDividerStyle}"/>
+            <TextBlock Text="Color" Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+            <ComboBox x:Name="paramCombo" Width="200"
+                      Style="{DynamicResource SearchableComboBoxStyle}"
+                      Tag="Select parameter..."
+                      ToolTip="Parameter used by 'Color by' and 'Stage on selected'"
+                      ItemTemplate="{StaticResource ParamItemTemplate}"
+                      DropDownOpened="on_param_dropdown_opened"/>
+            <Button x:Name="colorButton" Content="Color by" Width="80" Margin="6,0,0,0"
+                    Style="{DynamicResource SecondaryButtonStyle}"
+                    ToolTip="Color elements in the active view by the selected parameter"
+                    Click="on_color_click"/>
+            <Button x:Name="resetColorButton" Content="Reset" Width="60" Margin="4,0,0,0"
+                    Style="{DynamicResource GhostButtonStyle}"
+                    ToolTip="Remove the color overrides from the active view"
+                    Click="on_reset_color_click"/>
+            <Button x:Name="dfpMarkersButton" Content="DFP markers" Width="100" Margin="4,0,0,0"
+                    Style="{DynamicResource SecondaryButtonStyle}"
+                    ToolTip="Toggle door-function markers in the view (click markers to stage values)"
+                    Click="on_dfp_markers_click"/>
+            <Border Style="{StaticResource ToolbarDividerStyle}"/>
+            <TextBlock Text="Edit" Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+            <TextBox x:Name="valueBox" Width="110" Style="{DynamicResource PlaceholderTextBoxStyle}"
+                     Tag="value"
+                     ToolTip="Value to stage on the selected rows for the selected parameter"/>
+            <Button x:Name="setValueButton" Content="Stage on selected" Width="130" Margin="6,0,0,0"
+                    Style="{DynamicResource SecondaryButtonStyle}"
+                    ToolTip="Stage this value on all selected rows (nothing is written until Apply)"
+                    Click="on_set_value_click"/>
             <TextBlock x:Name="pendingCountText" Text="Pending: 0"
                        Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center"
-                       Margin="18,0,6,0"/>
-            <Button x:Name="applyPendingButton" Content="Apply" Width="80" Margin="0,0,6,0"
-                    Style="{DynamicResource DefaultButtonStyle}" Click="on_apply_pending_click"
+                       Margin="12,0,6,0"/>
+            <Button x:Name="applyPendingButton" Content="Apply" Width="80" Margin="0,0,4,0"
+                    Style="{DynamicResource StandardButtonStyle}"
+                    ToolTip="Dry-run the staged edits against the CDE, then confirm to commit"
+                    Click="on_apply_pending_click"
                     IsEnabled="False"/>
             <Button x:Name="discardPendingButton" Content="Discard" Width="80"
-                    Style="{DynamicResource SecondaryButtonStyle}" Click="on_discard_pending_click"
+                    Style="{DynamicResource GhostButtonStyle}"
+                    ToolTip="Throw away all staged edits"
+                    Click="on_discard_pending_click"
                     IsEnabled="False"/>
-            <Button x:Name="confirmCommitButton" Content="Confirm commit" Width="120" Margin="8,0,6,0"
-                    Style="{DynamicResource DefaultButtonStyle}" Click="on_confirm_commit_click"
+            <Button x:Name="confirmCommitButton" Content="Confirm commit" Width="130" Margin="8,0,4,0"
+                    Style="{DynamicResource SuccessButtonStyle}"
+                    ToolTip="Write the dry-run result to the CDE"
+                    Click="on_confirm_commit_click"
                     Visibility="Collapsed"/>
             <Button x:Name="cancelCommitButton" Content="Cancel" Width="80"
-                    Style="{DynamicResource SecondaryButtonStyle}" Click="on_cancel_commit_click"
+                    Style="{DynamicResource GhostButtonStyle}"
+                    ToolTip="Abort the commit; staged edits stay pending"
+                    Click="on_cancel_commit_click"
                     Visibility="Collapsed"/>
         </WrapPanel>
 
+        <!-- Toolbar row 3: saved schedule configurations -->
+        <WrapPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8">
+            <TextBlock Text="Schedule config" Style="{DynamicResource LabelTextBlockStyle}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+            <ComboBox x:Name="scheduleConfigCombo" Width="180"
+                      Style="{DynamicResource DefaultComboBoxStyle}"
+                      ToolTip="Load a saved schedule configuration (category, columns, grouping, filter)"
+                      SelectionChanged="on_config_selected"/>
+            <TextBox x:Name="configNameBox" Width="150" Margin="8,0,0,0"
+                     Style="{DynamicResource PlaceholderTextBoxStyle}"
+                     Tag="config name..."
+                     ToolTip="Name for saving the current layout as a schedule config"/>
+            <Button x:Name="saveConfigButton" Content="Save" Width="70" Margin="6,0,0,0"
+                    Style="{DynamicResource SecondaryButtonStyle}"
+                    ToolTip="Save the current category, columns, grouping and filter under this name"
+                    Click="on_save_config_click"/>
+            <Button x:Name="deleteConfigButton" Content="Delete" Width="70" Margin="4,0,0,0"
+                    Style="{DynamicResource GhostButtonStyle}"
+                    ToolTip="Delete the selected schedule config"
+                    Click="on_delete_config_click"/>
+        </WrapPanel>
+
         <!-- Door table -->
-        <DataGrid x:Name="doorGrid" Grid.Row="2"
+        <DataGrid x:Name="doorGrid" Grid.Row="3"
                   SelectionChanged="on_grid_selection_changed"
                   Sorting="on_grid_sorting"
                   PreparingCellForEdit="on_preparing_cell_for_edit"
@@ -135,8 +211,11 @@
                 <GroupStyle>
                     <GroupStyle.HeaderTemplate>
                         <DataTemplate>
+                            <!-- Explicit Foreground: template TextBlocks do not
+                                 inherit theme text color (black-on-dark bug). -->
                             <StackPanel Orientation="Horizontal" Margin="2,6,2,2">
                                 <TextBlock Text="{Binding Name}" FontWeight="Bold"
+                                           Foreground="{DynamicResource TextBrush}"
                                            Style="{DynamicResource DefaultTextBlockStyle}"/>
                                 <TextBlock Text="{Binding ItemCount, StringFormat=' ({0})'}"
                                            Foreground="{DynamicResource TextSecondaryBrush}"
@@ -149,12 +228,12 @@
         </DataGrid>
 
         <!-- Resize splitter between table and detail panel -->
-        <GridSplitter Grid.Row="3" Height="5" HorizontalAlignment="Stretch"
+        <GridSplitter Grid.Row="4" Height="5" HorizontalAlignment="Stretch"
                       Background="{DynamicResource BorderBrush}" Opacity="0.4"
                       ResizeDirection="Rows" ResizeBehavior="PreviousAndNext"/>
 
         <!-- Element properties inspector (CDE effectiveValues for selected row) -->
-        <Grid Grid.Row="4">
+        <Grid Grid.Row="5">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
@@ -177,7 +256,7 @@
         </Grid>
 
         <!-- Legend -->
-        <ItemsControl x:Name="legendList" Grid.Row="5" Margin="0,8,0,0">
+        <ItemsControl x:Name="legendList" Grid.Row="6" Margin="0,8,0,0">
             <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>
                     <WrapPanel Orientation="Horizontal"/>
@@ -188,14 +267,18 @@
                     <StackPanel Orientation="Horizontal" Margin="0,0,12,4">
                         <Border Width="14" Height="14" Background="{Binding Brush}" Margin="0,0,4,0"
                                 BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"/>
-                        <TextBlock Text="{Binding Label}" Style="{DynamicResource DefaultTextBlockStyle}"/>
+                        <!-- Explicit Foreground: template TextBlocks do not
+                             inherit theme text color (black-on-dark bug). -->
+                        <TextBlock Text="{Binding Label}"
+                                   Foreground="{DynamicResource TextBrush}"
+                                   Style="{DynamicResource DefaultTextBlockStyle}"/>
                     </StackPanel>
                 </DataTemplate>
             </ItemsControl.ItemTemplate>
         </ItemsControl>
 
         <!-- Status bar -->
-        <Border Grid.Row="6" Style="{DynamicResource StatusBarBorderStyle}" Margin="0,8,0,0">
+        <Border Grid.Row="7" Style="{DynamicResource StatusBarBorderStyle}" Margin="0,8,0,0">
             <TextBlock x:Name="statusText" Text="Ready." Style="{DynamicResource StatusTextBlockStyle}" Margin="6,3,6,3"/>
         </Border>
     </Grid>

@@ -95,6 +95,10 @@ class ElementRow(object):
     def GroupValue(self):
         """Value used by PropertyGroupDescription for the active group column."""
         key = self._vm.group_key if self._vm else None
+        return self.group_value_for(key)
+
+    def group_value_for(self, key):
+        """Group value for an explicit column key (multilevel grouping)."""
         if not key:
             return u""
         fixed = self._FIXED_BUCKET.get(key)

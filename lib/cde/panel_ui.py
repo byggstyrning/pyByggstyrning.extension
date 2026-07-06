@@ -244,10 +244,16 @@ _BOOL_STRINGS = frozenset(["true", "false", "1", "0", "yes", "no"])
 
 
 class GroupKeyConverter(IValueConverter):
-    """Converts a string row-key to the ElementRow.GroupValue for CollectionView grouping."""
+    """Converts a string row-key to a group value for CollectionView grouping.
 
-    def __init__(self, owner=None):
+    With ``group_key`` set the converter resolves that specific column
+    (one converter per grouping level); without it, the legacy single-level
+    behavior (ElementRow.GroupValue via vm.group_key) applies.
+    """
+
+    def __init__(self, owner=None, group_key=None):
         self._owner = owner
+        self._group_key = group_key
 
     def Convert(self, value, target_type, parameter, culture):
         try:
@@ -256,12 +262,54 @@ class GroupKeyConverter(IValueConverter):
             row = self._owner._row_for_grid_key(value)
             if row is None:
                 return u""
+            if self._group_key:
+                return row.group_value_for(self._group_key)
             return row.GroupValue
         except Exception:
             return u""
 
     def ConvertBack(self, value, target_type, parameter, culture):
         return None
+
+
+def _schedule_config_path():
+    import os
+    return op.join(os.getenv("APPDATA") or "", "pyBS", "cde_schedule_configs.json")
+
+
+def _load_schedule_configs():
+    """User-level schedule configs: named presets + per-project auto state."""
+    import json
+    import os
+    path = _schedule_config_path()
+    try:
+        if os.path.exists(path):
+            with open(path, "r") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                data.setdefault("version", 1)
+                data.setdefault("named", {})
+                data.setdefault("auto", {})
+                return data
+    except Exception as ex:
+        logger.debug("CDE: schedule config load failed: {}".format(ex))
+    return {"version": 1, "named": {}, "auto": {}}
+
+
+def _save_schedule_configs(data):
+    import json
+    import os
+    path = _schedule_config_path()
+    try:
+        cfg_dir = op.dirname(path)
+        if not os.path.exists(cfg_dir):
+            os.makedirs(cfg_dir)
+        with open(path, "w") as f:
+            json.dump(data, f, indent=1)
+        return True
+    except Exception as ex:
+        logger.debug("CDE: schedule config save failed: {}".format(ex))
+        return False
 
 
 def _int_types_for_isinstance():
@@ -363,6 +411,15 @@ class CDESchedulePanel(forms.WPFPanel):
         self._detail_fetch_token = 0
         self._node_by_gid = {}
         self._dfp_markers_active = False
+        # Multilevel grouping + saved schedule configurations (user-level).
+        self._group_keys = []
+        self._group_dropdown_open = False
+        self._group_search_wired = False
+        self._all_group_items = []
+        self._schedule_configs = _load_schedule_configs()
+        self._config_desired_columns = None
+        self._suppress_auto_save = False
+        self._suppress_config_selection = False
         self._runner = ExternalEventRunner()
         self._watcher = ActiveViewWatcher(self.uiapp, self._on_active_view_changed)
         # Capture ALL module-level names used in any method; pyRevit may dispose the
@@ -608,8 +665,10 @@ class CDESchedulePanel(forms.WPFPanel):
     def _init_combos(self):
         self.categoryCombo.ItemsSource = [_ComboItem(l, c) for l, c in CATEGORIES]
         self.categoryCombo.SelectedIndex = 0
-        self.groupCombo.ItemsSource = [_ComboItem(l, p) for l, p in GROUP_OPTIONS]
-        self.groupCombo.SelectedIndex = 0
+        # groupCombo is a checkbox picker (multilevel); items populate on
+        # dropdown open, the placeholder Tag shows the active levels.
+        self.groupCombo.Tag = "No grouping"
+        self._populate_config_combo()
 
     def _make_grid_key(self, index, row):
         return "{}".format(index)
@@ -825,10 +884,17 @@ class CDESchedulePanel(forms.WPFPanel):
         if elements:
             seen = set()
             samples_by_key = {}
-            dfp_prefix = self._dfp_pset_name + "."
+            # Discover EVERY pset property present on the elements (flat
+            # 'Pset.Prop' keys), so the parameter/column pickers list all
+            # parameters of the doors - not just Pset_DFP. Role-prefixed
+            # copies (authored./derived./effective./...) are internal.
+            role_prefixes = ("authored.", "derived.", "effective.",
+                             "RuleTrace.", "Relationship.")
             for e in elements:
                 for key, val in e.values.items():
-                    if not key.startswith(dfp_prefix):
+                    if "." not in key:
+                        continue
+                    if key.startswith(role_prefixes):
                         continue
                     samples_by_key.setdefault(key, []).append(val)
                     if key not in seen:
@@ -903,7 +969,8 @@ class CDESchedulePanel(forms.WPFPanel):
             except Exception:
                 pass
             self._sync_columns(element_list)
-            self.vm.group_key = None
+            # Grouping levels persist across refreshes (multilevel).
+            self.vm.group_key = self._group_keys[0] if self._group_keys else None
             self._clear_grouping()
             self.vm.set_rows(rows)
             self._refresh_grid_items_from_vm()
@@ -920,6 +987,13 @@ class CDESchedulePanel(forms.WPFPanel):
 
             self.doorGrid.ItemsSource = self._grid_items
             self._apply_grouping()
+            self._update_group_combo_summary()
+            # Pane host: force a deferred re-measure after every rebuild.
+            # The first build after the pane becomes visible can otherwise
+            # leave cells blank until a column change forces regeneration.
+            self.Dispatcher.BeginInvoke(
+                self._DispatcherPriority.Loaded,
+                self._Action(self._post_rebuild_render_fix))
             if self._dfp_markers_active:
                 self.Dispatcher.BeginInvoke(
                     self._DispatcherPriority.Background,
@@ -1000,12 +1074,6 @@ class CDESchedulePanel(forms.WPFPanel):
         self._apply_grouping()
         self._maybe_refresh_dfp_markers()
 
-    def on_group_changed(self, sender, args):
-        if getattr(self, "_suppress_group_changed", False):
-            return
-        item = self.groupCombo.SelectedItem
-        self.vm.group_key = item.value if item else None
-        self._apply_grouping()
 
     def _clear_grouping(self):
         try:
@@ -1021,30 +1089,277 @@ class CDESchedulePanel(forms.WPFPanel):
             if view is None:
                 return
             view.GroupDescriptions.Clear()
-            path = self.vm.group_key
-            if not path:
-                item = self.groupCombo.SelectedItem
-                path = item.value if item else None
-            if path:
-                pgd = self._PropertyGroupDescription(".", self._group_converter)
+            for key in (self._group_keys or []):
+                converter = GroupKeyConverter(self, key)
+                pgd = self._PropertyGroupDescription(".", converter)
                 view.GroupDescriptions.Add(pgd)
         except Exception as ex:
             self._logger.debug("CDE: grouping failed: {}".format(ex))
+
+    def _group_label_for_key(self, key):
+        for label, path in GROUP_OPTIONS:
+            if path == key:
+                return label
+        for path, label, _source in FIXED_COLUMN_META:
+            if path == key:
+                return label
+        meta = self._column_meta.get(key)
+        if meta and meta.get("label"):
+            return meta["label"]
+        pdef = self._def_by_key.get(key)
+        if pdef is not None:
+            return pdef.label
+        return key
+
+    def _update_group_combo_summary(self):
+        """The group picker shows the active levels in its placeholder text."""
+        try:
+            if self._group_keys:
+                labels = [self._group_label_for_key(k) for k in self._group_keys]
+                self.groupCombo.Tag = u" › ".join(labels)
+            else:
+                self.groupCombo.Tag = "No grouping"
+        except Exception:
+            pass
+
+    def _set_group_keys(self, keys, announce=True):
+        self._group_keys = [k for k in (keys or []) if k]
+        self.vm.group_key = self._group_keys[0] if self._group_keys else None
+        self._apply_grouping()
+        self._update_group_combo_summary()
+        self._persist_auto_state()
+        if announce:
+            if self._group_keys:
+                self._set_status("Grouped by {}.".format(
+                    u" › ".join(self._group_label_for_key(k)
+                                for k in self._group_keys)))
+            else:
+                self._set_status("Grouping cleared.")
+
+    def _groupable_defs(self):
+        """Everything offered by the group picker: fixed + visible dynamic columns."""
+        defs = []
+        for path, label, source in FIXED_COLUMN_META:
+            if path in ("GlobalId",):
+                continue
+            defs.append(self._param_def(path, label, value_type="string",
+                                        source=source))
+        for key in self.vm.value_columns:
+            meta = self._column_meta.get(key) or {}
+            defs.append(self._param_def(
+                key, meta.get("label") or key,
+                value_type=meta.get("value_type", "string"),
+                source=meta.get("source", "cde")))
+        return defs
+
+    def _populate_group_combo(self):
+        self._all_group_items = [
+            self._ColumnPickerItem(
+                d, d.key in (self._group_keys or []),
+                self._cde_brush, self._revit_brush, self)
+            for d in self._groupable_defs()]
+        from System.Collections.ObjectModel import ObservableCollection
+        from System import Object
+        collection = ObservableCollection[Object]()
+        for item in self._all_group_items:
+            collection.Add(item)
+        self.groupCombo.ItemsSource = collection
+        self.groupCombo.SelectedIndex = -1
+
+    def on_group_dropdown_opened(self, sender, args):
+        self._group_dropdown_open = True
+        self._populate_group_combo()
+        self.Dispatcher.BeginInvoke(
+            self._DispatcherPriority.Loaded,
+            self._Action(lambda: self._wire_picker_popup(self.groupCombo)))
+        self.Dispatcher.BeginInvoke(
+            self._DispatcherPriority.Loaded,
+            self._Action(lambda: self._wire_search_textbox(
+                self.groupCombo, self._filter_group_items, "_group_search_wired")))
+
+    def on_group_dropdown_closed(self, sender, args):
+        self._group_dropdown_open = False
+        try:
+            if self.groupCombo.Template:
+                popup = self.groupCombo.Template.FindName("Popup", self.groupCombo)
+                if popup is not None:
+                    popup.StaysOpen = False
+        except Exception:
+            pass
+        self.groupCombo.SelectedIndex = -1
+        self._update_group_combo_summary()
+
+    def on_group_picker_checked(self, sender, args):
+        item = sender.DataContext
+        if item is None:
+            return
+        keys = list(self._group_keys or [])
+        if sender.IsChecked:
+            if item.key not in keys:
+                keys.append(item.key)  # order of checking = grouping order
+        else:
+            keys = [k for k in keys if k != item.key]
+        item.is_checked = bool(sender.IsChecked)
+        self._set_group_keys(keys)
+
+    def _filter_group_items(self, sender, args):
+        try:
+            needle = (sender.Text or "").lower().strip()
+            from System.Collections.ObjectModel import ObservableCollection
+            from System import Object
+            filtered = ObservableCollection[Object]()
+            for item in self._all_group_items:
+                if not needle or needle in item.display_name.lower():
+                    filtered.Add(item)
+            self.groupCombo.ItemsSource = filtered
+        except Exception as ex:
+            self._logger.debug("CDE: group filter failed: {}".format(ex))
+
+    def _wire_picker_popup(self, combo):
+        """Keep a checkbox-picker dropdown open while toggling items."""
+        try:
+            if not combo.Template:
+                return
+            popup = combo.Template.FindName("Popup", combo)
+            if popup is not None:
+                popup.StaysOpen = True
+        except Exception as ex:
+            self._logger.debug("CDE: picker popup stays-open failed: {}".format(ex))
+
+    # --- saved schedule configurations (user-level, %APPDATA%/pyBS) ------
+
+    def _auto_slot_key(self):
+        project = (self.mapping or {}).get("cde_project_id") or "unmapped"
+        return u"{}|{}".format(project, self.vm.ifc_class or "IfcDoor")
+
+    def _persist_auto_state(self):
+        """Write-through the current columns + grouping for this project/category."""
+        if self._suppress_auto_save:
+            return
+        try:
+            slot = self._auto_slot_key()
+            self._schedule_configs.setdefault("auto", {})[slot] = {
+                "columns": list(self.vm.value_columns),
+                "group_keys": list(self._group_keys or []),
+            }
+            _save_schedule_configs(self._schedule_configs)
+        except Exception as ex:
+            self._logger.debug("CDE: auto state persist failed: {}".format(ex))
+
+    def _saved_auto_state(self):
+        try:
+            return (self._schedule_configs.get("auto") or {}).get(
+                self._auto_slot_key())
+        except Exception:
+            return None
+
+    def _populate_config_combo(self):
+        try:
+            names = sorted((self._schedule_configs.get("named") or {}).keys())
+            self._suppress_config_selection = True
+            try:
+                self.scheduleConfigCombo.ItemsSource = names
+                self.scheduleConfigCombo.SelectedIndex = -1
+            finally:
+                self._suppress_config_selection = False
+        except Exception as ex:
+            self._logger.debug("CDE: config combo populate failed: {}".format(ex))
+
+    def _select_config_name(self, name):
+        try:
+            items = self.scheduleConfigCombo.ItemsSource or []
+            self._suppress_config_selection = True
+            try:
+                for idx, item in enumerate(items):
+                    if item == name:
+                        self.scheduleConfigCombo.SelectedIndex = idx
+                        return
+                self.scheduleConfigCombo.SelectedIndex = -1
+            finally:
+                self._suppress_config_selection = False
+        except Exception:
+            pass
+
+    def on_save_config_click(self, sender, args):
+        name = (self.configNameBox.Text or "").strip()
+        if not name:
+            sel = self.scheduleConfigCombo.SelectedItem
+            name = unicode(sel) if sel is not None else u""
+        if not name:
+            self._set_status("Type a config name, then click Save "
+                             "(or pick an existing config to overwrite).")
+            return
+        self._schedule_configs.setdefault("named", {})[name] = {
+            "category": self.vm.ifc_class,
+            "columns": list(self.vm.value_columns),
+            "group_keys": list(self._group_keys or []),
+            "filter": self.filterBox.Text or "",
+        }
+        if _save_schedule_configs(self._schedule_configs):
+            self._populate_config_combo()
+            self._select_config_name(name)
+            self.configNameBox.Text = ""
+            self._set_status(u"Schedule config '{}' saved.".format(name))
+        else:
+            self._set_status("Could not write the schedule config file.")
+
+    def on_delete_config_click(self, sender, args):
+        sel = self.scheduleConfigCombo.SelectedItem
+        if sel is None:
+            self._set_status("Pick a saved config to delete.")
+            return
+        name = unicode(sel)
+        named = self._schedule_configs.setdefault("named", {})
+        if name in named:
+            del named[name]
+            _save_schedule_configs(self._schedule_configs)
+            self._populate_config_combo()
+            self._set_status(u"Schedule config '{}' deleted.".format(name))
+
+    def on_config_selected(self, sender, args):
+        if self._suppress_config_selection:
+            return
+        sel = self.scheduleConfigCombo.SelectedItem
+        if sel is None:
+            return
+        self._apply_named_config(unicode(sel))
+
+    def _apply_named_config(self, name):
+        cfg = (self._schedule_configs.get("named") or {}).get(name)
+        if not cfg:
+            self._set_status(u"Schedule config '{}' not found.".format(name))
+            return
+        if self.vm.pending_count() > 0:
+            self._set_status("Pending edits - click Discard or Apply before "
+                             "loading a schedule config.")
+            self._populate_config_combo()
+            return
+        self._config_desired_columns = list(cfg.get("columns") or [])
+        self._set_group_keys(list(cfg.get("group_keys") or []), announce=False)
+        try:
+            self.filterBox.Text = cfg.get("filter") or ""
+        except Exception:
+            pass
+        self._set_status(u"Loading schedule config '{}'...".format(name))
+        target_class = cfg.get("category")
+        item = self.categoryCombo.SelectedItem
+        current_class = item.value if item is not None else None
+        if target_class and target_class != current_class:
+            for idx, combo_item in enumerate(self.categoryCombo.ItemsSource or []):
+                if combo_item.value == target_class:
+                    # SelectionChanged triggers refresh() once loaded.
+                    self.categoryCombo.SelectedIndex = idx
+                    return
+        self.refresh()
 
     def on_category_changed(self, sender, args):
         if self.IsLoaded:
             self.refresh()
 
     def on_active_view_toggled(self, sender, args):
-        # ViewActivated subscription must happen on the Revit API thread;
-        # route through ExternalEventRunner instead of calling directly.
-        enabled = bool(self.activeViewCheck.IsChecked)
-        def task(uiapp):
-            if enabled:
-                self._watcher.start(uiapp)
-            else:
-                self._watcher.stop()
-        self._runner.run(task)
+        # Pane host: the ViewActivated watcher stays subscribed for the
+        # whole session (it also drives document-switch tracking). The
+        # toggle only changes refresh behavior inside the callback.
         self.refresh()
 
     def _on_active_view_changed(self, view):
@@ -1108,6 +1423,11 @@ class CDESchedulePanel(forms.WPFPanel):
         self._refresh_token += 1
         self._node_by_gid = {}
         self._revit_infos = {}
+        # Columns/grouping are per project: force the auto-state restore
+        # for the new document's project on its first refresh.
+        self._columns_ifc_class = None
+        self._group_keys = []
+        self._update_group_combo_summary()
         # Fresh service per document: CDEService caches last_revision_etag
         # and mutation identity with no cross-document invalidation - a
         # stale If-Match from another model must never leak into mutations.
@@ -1238,32 +1558,16 @@ class CDESchedulePanel(forms.WPFPanel):
             self._logger.debug("CDE: fixed header styling failed: {}".format(ex))
 
     def on_header_group_click(self, sender, args):
+        """Header group icon: toggle this column as a grouping level."""
         key = sender.Tag
         if not key:
             return
-        self.vm.group_key = key
-        self._sync_group_combo(key)
-        self._apply_grouping()
-        self._set_status("Grouped by '{}'.".format(key))
-
-    def _sync_group_combo(self, key):
-        try:
-            for idx, item in enumerate(self.groupCombo.ItemsSource or []):
-                if item.value == key:
-                    self._suppress_group_changed = True
-                    try:
-                        self.groupCombo.SelectedIndex = idx
-                    finally:
-                        self._suppress_group_changed = False
-                    return
-            # Header grouped by a column outside toolbar presets — avoid stale combo label.
-            self._suppress_group_changed = True
-            try:
-                self.groupCombo.SelectedIndex = 0
-            finally:
-                self._suppress_group_changed = False
-        except Exception:
-            pass
+        keys = list(self._group_keys or [])
+        if key in keys:
+            keys = [k for k in keys if k != key]
+        else:
+            keys.append(key)
+        self._set_group_keys(keys)
 
     def _end_grid_edit(self, commit=False):
         """Leave cell/row edit mode before programmatic grid refresh (avoids native crash)."""
@@ -1278,6 +1582,19 @@ class CDESchedulePanel(forms.WPFPanel):
                 self.doorGrid.CancelEdit(unit_row)
         except Exception as ex:
             self._logger.debug("CDE: end grid edit failed: {}".format(ex))
+
+    def _post_rebuild_render_fix(self):
+        """Deferred re-measure/refresh after a grid rebuild (pane host)."""
+        try:
+            self.doorGrid.Items.Refresh()
+        except Exception:
+            pass
+        try:
+            self.doorGrid.InvalidateMeasure()
+            self.doorGrid.InvalidateArrange()
+            self.doorGrid.UpdateLayout()
+        except Exception:
+            pass
 
     def _refresh_grid_cells(self):
         """Rebind dynamic cells after programmatic multi-row updates."""
@@ -1444,18 +1761,60 @@ class CDESchedulePanel(forms.WPFPanel):
         return dfp_defs
 
     def _sync_columns(self, elements):
-        """Reconcile dynamic columns with the freshly loaded parameter set."""
+        """Reconcile dynamic columns with the freshly loaded parameter set.
+
+        Priority: explicitly loaded schedule config > auto-saved user state
+        for this project/category > DFP defaults.
+        """
         current_class = self.vm.ifc_class
         category_changed = current_class != self._columns_ifc_class
-        if category_changed:
-            for key in list(self._value_column_map.keys()):
-                self._remove_value_column(key)
-            if self._param_defs:
-                chosen = self._pick_default_column_defs(
-                    elements, self._param_defs)
-                for d in chosen:
-                    self._add_value_column(d.key, d.label, d)
-                self._columns_ifc_class = current_class
+        desired = self._config_desired_columns
+        self._config_desired_columns = None
+
+        if desired is not None:
+            self._suppress_auto_save = True
+            try:
+                for key in list(self._value_column_map.keys()):
+                    self._remove_value_column(key)
+                missing = []
+                for key in desired:
+                    pdef = self._def_by_key.get(key)
+                    if pdef is not None:
+                        self._add_value_column(pdef.key, pdef.label, pdef)
+                    else:
+                        missing.append(key)
+            finally:
+                self._suppress_auto_save = False
+            self._columns_ifc_class = current_class
+            self._persist_auto_state()
+            if missing:
+                self._logger.debug(
+                    "CDE: config columns not in current data: {}".format(
+                        ", ".join(missing)))
+        elif category_changed:
+            saved = self._saved_auto_state()
+            self._suppress_auto_save = True
+            try:
+                for key in list(self._value_column_map.keys()):
+                    self._remove_value_column(key)
+                applied = False
+                if saved and saved.get("columns"):
+                    for key in saved["columns"]:
+                        pdef = self._def_by_key.get(key)
+                        if pdef is not None:
+                            self._add_value_column(pdef.key, pdef.label, pdef)
+                            applied = True
+                if not applied and self._param_defs:
+                    chosen = self._pick_default_column_defs(
+                        elements, self._param_defs)
+                    for d in chosen:
+                        self._add_value_column(d.key, d.label, d)
+            finally:
+                self._suppress_auto_save = False
+            self._columns_ifc_class = current_class
+            # Restore the saved grouping for this project/category once.
+            if saved and saved.get("group_keys") and not self._group_keys:
+                self._set_group_keys(saved["group_keys"], announce=False)
         else:
             valid_keys = set(d.key for d in self._param_defs)
             for key in list(self._value_column_map.keys()):
@@ -1488,6 +1847,7 @@ class CDESchedulePanel(forms.WPFPanel):
         else:
             self._remove_value_column(key)
         item.is_checked = bool(sender.IsChecked)
+        self._persist_auto_state()
 
     def on_columns_dropdown_opened(self, sender, args):
         self._columns_dropdown_open = True

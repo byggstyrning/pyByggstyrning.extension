@@ -138,8 +138,11 @@
                 <GroupStyle>
                     <GroupStyle.HeaderTemplate>
                         <DataTemplate>
+                            <!-- Explicit Foreground: template TextBlocks do not
+                                 inherit theme text color (black-on-dark bug). -->
                             <StackPanel Orientation="Horizontal" Margin="2,6,2,2">
                                 <TextBlock Text="{Binding Name}" FontWeight="Bold"
+                                           Foreground="{DynamicResource TextBrush}"
                                            Style="{DynamicResource DefaultTextBlockStyle}"/>
                                 <TextBlock Text="{Binding ItemCount, StringFormat=' ({0})'}"
                                            Foreground="{DynamicResource TextSecondaryBrush}"
@@ -191,7 +194,11 @@
                     <StackPanel Orientation="Horizontal" Margin="0,0,12,4">
                         <Border Width="14" Height="14" Background="{Binding Brush}" Margin="0,0,4,0"
                                 BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"/>
-                        <TextBlock Text="{Binding Label}" Style="{DynamicResource DefaultTextBlockStyle}"/>
+                        <!-- Explicit Foreground: template TextBlocks do not
+                             inherit theme text color (black-on-dark bug). -->
+                        <TextBlock Text="{Binding Label}"
+                                   Foreground="{DynamicResource TextBrush}"
+                                   Style="{DynamicResource DefaultTextBlockStyle}"/>
                     </StackPanel>
                 </DataTemplate>
             </ItemsControl.ItemTemplate>
