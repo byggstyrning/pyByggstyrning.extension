@@ -40,6 +40,8 @@ from Autodesk.Revit.UI import RevitCommandId, PostableCommand
 
 import sys
 import os.path as op
+import json
+import time
 from collections import OrderedDict, namedtuple
 from itertools import combinations
 
@@ -53,6 +55,28 @@ panel_dir = op.dirname(stack_dir)
 tab_dir = op.dirname(panel_dir)
 extension_dir = op.dirname(tab_dir)
 lib_path = op.join(extension_dir, 'lib')
+_AGENT_DEBUG_LOG = op.join(extension_dir, 'debug-13c4b2.log')
+
+
+def _agent_debug_log(hypothesis_id, location, message, data=None, run_id='pre-fix'):
+    # region agent log
+    try:
+        payload = {
+            'sessionId': '13c4b2',
+            'runId': run_id,
+            'hypothesisId': hypothesis_id,
+            'location': location,
+            'message': message,
+            'data': data or {},
+            'timestamp': int(time.time() * 1000),
+        }
+        with open(_AGENT_DEBUG_LOG, 'a') as f:
+            f.write(json.dumps(payload) + '\n')
+    except Exception:
+        pass
+    # endregion
+
+
 if lib_path not in sys.path:
     sys.path.insert(0, lib_path)
 
@@ -827,6 +851,18 @@ class LinkVisibilityRefinementDriver(object):
                 uidoc.RequestViewChange(view)
             except Exception:
                 self._idx += 1
+            # region agent log
+            _agent_debug_log(
+                'H6', 'LinkVisibilityRefinementDriver._on_idling',
+                'view switch requested',
+                {
+                    'job_idx': self._idx,
+                    'target_view_id': self._get_element_id_value(job.view_id),
+                    'active_view_id': (
+                        self._get_element_id_value(current.Id)
+                        if current is not None else None),
+                })
+            # endregion
             return
         self._idx += 1
         if self._progress_update_callback is not None:
@@ -865,6 +901,19 @@ class LinkVisibilityRefinementDriver(object):
                 same_cat = int(_giv(job.a_cat_id)) == int(_giv(job.b_cat_id))
             except Exception:
                 same_cat = str(job.a_cat_id) == str(job.b_cat_id)
+        # region agent log
+        _agent_debug_log(
+            'H5', 'LinkVisibilityRefinementDriver._process',
+            'job start',
+            {
+                'view_name': view.Name,
+                'same_cat': same_cat,
+                'clash_b_count': len(clash_set),
+                'a_cat_id': _giv(job.a_cat_id) if job.a_cat_id else None,
+                'b_cat_id': _giv(job.b_cat_id) if job.b_cat_id else None,
+            })
+        # endregion
+        a_cat_collect_count = 0
         if job.a_cat_id is not None and not same_cat:
             a_cat_fresh = _EId(_giv(job.a_cat_id))
             try:
@@ -872,6 +921,7 @@ class LinkVisibilityRefinementDriver(object):
                               .OfCategoryId(a_cat_fresh)
                               .WhereElementIsNotElementType()
                               .ToElementIds())
+                a_cat_collect_count = len(a_eids)
                 for eid in a_eids:
                     el = linked_doc.GetElement(eid)
                     if el is None:
@@ -883,6 +933,7 @@ class LinkVisibilityRefinementDriver(object):
                         continue
             except Exception:
                 pass
+        all_b_collect_count = 0
         if job.b_cat_id is not None:
             all_b_eids = []
             b_cat_fresh = _EId(_giv(job.b_cat_id))
@@ -906,6 +957,7 @@ class LinkVisibilityRefinementDriver(object):
                                       .ToElementIds())
                 except Exception:
                     all_b_eids = []
+            all_b_collect_count = len(all_b_eids)
             for eid in all_b_eids:
                 if _giv(eid) in clash_set:
                     continue
@@ -923,17 +975,44 @@ class LinkVisibilityRefinementDriver(object):
                 "Link refinement: {} clash B link elements marked for hide in '{}' "
                 "(same_category={})".format(
                     len(clash_wrongly_hidden), view.Name, same_cat))
+        # region agent log
+        _agent_debug_log(
+            'H1', 'LinkVisibilityRefinementDriver._process',
+            'refs built',
+            {
+                'view_name': view.Name,
+                'refs_count': len(refs),
+                'a_cat_in_link_count': a_cat_collect_count,
+                'b_cat_in_bbox_count': all_b_collect_count,
+                'max_complement': self.MAX_COMPLEMENT_SIZE,
+            })
+        # endregion
         if not refs:
             return
         if len(refs) > self.MAX_COMPLEMENT_SIZE:
+            # region agent log
+            _agent_debug_log(
+                'H1', 'LinkVisibilityRefinementDriver._process',
+                'skipped too many refs',
+                {'view_name': view.Name, 'refs_count': len(refs)})
+            # endregion
             logger.warning(
                 "Link refinement: too many refs ({}) for view '{}', skipping.".format(
                     len(refs), view.Name))
             return
         _L = self._List
+        set_refs_ok = False
+        post_cmd_ok = False
         try:
             uidoc.Selection.SetReferences(_L[_Ref](refs))
+            set_refs_ok = True
         except Exception as ex:
+            # region agent log
+            _agent_debug_log(
+                'H2', 'LinkVisibilityRefinementDriver._process',
+                'SetReferences failed',
+                {'view_name': view.Name, 'error': str(ex)})
+            # endregion
             logger.warning("Link refinement: SetReferences failed: {}".format(ex))
             return
         try:
@@ -941,8 +1020,26 @@ class LinkVisibilityRefinementDriver(object):
                 self._PostableCommand.HideElements)
             if self._uiapp.CanPostCommand(cmd_id):
                 self._uiapp.PostCommand(cmd_id)
+                post_cmd_ok = True
         except Exception as ex:
+            # region agent log
+            _agent_debug_log(
+                'H2', 'LinkVisibilityRefinementDriver._process',
+                'PostCommand failed',
+                {'view_name': view.Name, 'error': str(ex)})
+            # endregion
             logger.warning("Link refinement: PostCommand failed: {}".format(ex))
+        # region agent log
+        _agent_debug_log(
+            'H2', 'LinkVisibilityRefinementDriver._process',
+            'hide command posted',
+            {
+                'view_name': view.Name,
+                'set_refs_ok': set_refs_ok,
+                'post_cmd_ok': post_cmd_ok,
+                'refs_count': len(refs),
+            })
+        # endregion
 
 
 # =============================================================================
@@ -2027,6 +2124,28 @@ class ClashViewsWindow(forms.WPFWindow):
                     vg.Dispose()
 
                 if info.get("link_mode") and shell.get('link_instance_id') is not None:
+                    # region agent log
+                    link_b_cat_val = None
+                    try:
+                        if link_doc is not None and info.get("cat_b_id") is not None:
+                            from Autodesk.Revit.DB import BuiltInCategory as _BIC
+                            # cat_b_id is host doc id; log link doc id for same BIC if possible
+                            host_b = info.get("cat_b_id")
+                            link_b_cat_val = get_element_id_value(host_b)
+                    except Exception:
+                        pass
+                    _agent_debug_log(
+                        'H7', '_create_clash_views',
+                        'refinement job queued',
+                        {
+                            'view_name': shell['view'].Name,
+                            'host_b_cat_id': (
+                                get_element_id_value(info.get('cat_b_id'))
+                                if info.get('cat_b_id') else None),
+                            'b_clash_count': len(info.get('b_ids') or []),
+                            'a_clash_count': len(info.get('a_ids') or []),
+                        })
+                    # endregion
                     refinement_queue.append(RefinementJob(
                         view_id=shell['view'].Id,
                         link_instance_id=shell['link_instance_id'],
@@ -2133,6 +2252,16 @@ class ClashViewsWindow(forms.WPFWindow):
                 show_summary_callback=_show_summary,
                 progress_close_callback=_close_progress,
                 progress_update_callback=_update_progress)
+            # region agent log
+            _agent_debug_log(
+                'H6', '_create_clash_views',
+                'refinement driver starting',
+                {
+                    'job_count': len(refinement_queue),
+                    'sample_b_clash_counts': [
+                        len(j.b_clash_link_eids) for j in refinement_queue[:5]],
+                })
+            # endregion
             self._refinement_driver = driver
             driver.start()
         else:
@@ -2276,7 +2405,18 @@ class ClashViewsWindow(forms.WPFWindow):
                     except Exception:
                         pass
             try:
-                _hide_non_target_model_categories(view, keep_values)
+                hidden, skipped = _hide_non_target_model_categories(view, keep_values)
+                # region agent log
+                _agent_debug_log(
+                    'H3', '_configure_clash_view',
+                    'category hide pass',
+                    {
+                        'view_name': view.Name,
+                        'keep_cat_ids': keep_values,
+                        'categories_hidden': hidden,
+                        'categories_skipped': skipped,
+                    })
+                # endregion
             except Exception as ex:
                 logger.debug("_hide_non_target_model_categories failed: {}".format(ex))
             if link_instance_id is not None:
