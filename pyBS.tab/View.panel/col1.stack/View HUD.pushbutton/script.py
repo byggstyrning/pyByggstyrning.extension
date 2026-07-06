@@ -1,23 +1,28 @@
 # -*- coding: utf-8 -*-
-"""Toggle a WPF phase badge pinned over the top middle of the view.
+"""Toggle the in-view context HUD pinned over the top middle of the view.
 
 Normal click:
-- ON: show the active view's Phase name as a WPF overlay badge centered
-  over the viewport's top edge in screen pixels, so it stays put during
-  pan/zoom. Clicking the badge switches the view to the next project
-  phase; right-clicking switches to the previous one. The badge follows
-  Revit's light/dark theme and idles at 50% opacity until hovered.
-- OFF: close the overlay and stop tracking.
+- ON: show a bar of context switchers centered over the viewport's top
+  edge (screen-anchored, so it stays put during pan/zoom):
+  - Phase — click: next phase, right-click: previous.
+  - Active workset — click: next user workset, right-click: previous
+    (workshared models only).
+  - Active design option — indicator (the Revit API cannot switch it);
+    shown only when the model has design options.
+  The bar follows Revit's light/dark theme and idles at 50% opacity
+  until hovered. Switchers hide themselves where they don't apply.
+- OFF: close the bar and stop tracking.
 
 Shift+Click:
 - Force a redraw and show a diagnostics report.
 """
 
-__title__ = "Phase HUD"
+__title__ = "View HUD"
 __author__ = "Byggstyrning AB"
-__doc__ = ("Toggle a phase badge at the top middle of any view with a "
-           "Phase. Click the badge to switch to the next phase, right-click "
-           "for the previous. Shift+Click: refresh + diagnostics.")
+__doc__ = ("Toggle the in-view context HUD: phase, active workset and "
+           "design option badges at the top of the view. Click a badge to "
+           "switch (right-click: previous). Shift+Click: refresh + "
+           "diagnostics.")
 __highlight__ = 'new'
 __persistentengine__ = True
 
@@ -43,15 +48,15 @@ if lib_path not in sys.path:
 
 _IMPORT_ERROR = None
 try:
-    from revit.phase_label_wpf import (
-        find_phase_hud_driver,
-        start_phase_hud_driver,
-        stop_phase_hud_driver,
+    from revit.context_switchers import (
+        is_view_hud_running,
+        start_view_hud,
+        stop_view_hud,
         collect_diagnostics,
     )
-    _PHASE_HUD_OK = True
+    _VIEW_HUD_OK = True
 except Exception as ex:
-    _PHASE_HUD_OK = False
+    _VIEW_HUD_OK = False
     _IMPORT_ERROR = str(ex)
 
 logger = script.get_logger()
@@ -67,11 +72,11 @@ def _sync_toggle_icon(active):
 
 
 def _hud_on():
-    driver = start_phase_hud_driver(uiapp, doc, logger=logger)
-    if driver is None:
+    host = start_view_hud(uiapp, doc, logger=logger)
+    if host is None:
         forms.show_balloon(
-            header="Phase HUD",
-            text="Could not start phase HUD driver.",
+            header="View HUD",
+            text="Could not start the view HUD.",
             is_new=True)
         return False
     _sync_toggle_icon(True)
@@ -79,17 +84,18 @@ def _hud_on():
 
 
 def _hud_off():
-    stop_phase_hud_driver(doc)
+    stop_view_hud(doc)
     _sync_toggle_icon(False)
     return True
 
 
 if __name__ == '__main__':
-    if not _PHASE_HUD_OK:
-        logger.error("phase_label_wpf import failed: {}".format(_IMPORT_ERROR))
+    if not _VIEW_HUD_OK:
+        logger.error(
+            "context_switchers import failed: {}".format(_IMPORT_ERROR))
         forms.alert(
-            "Phase HUD failed to load:\n\n{}".format(_IMPORT_ERROR),
-            title="Phase HUD")
+            "View HUD failed to load:\n\n{}".format(_IMPORT_ERROR),
+            title="View HUD")
     else:
         # pyRevit signals Shift+Click as "config mode" via EXEC_PARAMS,
         # not as a persisted config option
@@ -98,17 +104,16 @@ if __name__ == '__main__':
             is_shift = bool(EXEC_PARAMS.config_mode)
         except Exception:
             is_shift = script.get_config().get_option('shiftclick', False)
-        driver = find_phase_hud_driver(doc)
+        running = is_view_hud_running(doc)
         if is_shift:
-            if driver is None:
+            if running:
+                start_view_hud(uiapp, doc, logger=logger)
+            else:
                 _hud_on()
-                driver = find_phase_hud_driver(doc)
-            if driver is not None:
-                driver.refresh()
             forms.alert(
                 collect_diagnostics(uiapp, doc),
-                title="Phase HUD diagnostics")
-        elif driver is not None:
+                title="View HUD diagnostics")
+        elif running:
             _hud_off()
         else:
             _hud_on()

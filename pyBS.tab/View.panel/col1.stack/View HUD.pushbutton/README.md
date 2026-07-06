@@ -1,9 +1,22 @@
-# Phase HUD (prototype)
+# View HUD (prototype)
 
-Toggle button that shows the active view's **Phase** name as a WPF overlay
-badge centered over the top edge of the viewport in any view with a Phase parameter (3D, plan, section, elevation, ...). Chosen after side-by-side evaluation
-against the TemporaryGraphicsManager variant, whose implementation is kept
-in `lib/revit/phase_label.py` (see Alternatives surveyed below).
+Toggle button that shows a bar of **in-view context switchers** centered
+over the top edge of the viewport. The WPF-overlay approach was chosen
+after side-by-side evaluation against a TemporaryGraphicsManager variant,
+whose implementation is kept in `lib/revit/phase_label.py` (see
+Alternatives surveyed below).
+
+## Default switchers
+
+| Badge | Shows | Click | Hidden when |
+| --- | --- | --- | --- |
+| Phase | The view's Phase | next phase (right-click: previous) | view has no Phase parameter |
+| Workset | The document's active workset | next user workset (right-click: previous) | model is not workshared |
+| Design option | The active design option (or *Main Model*) | — indicator only: the Revit API has no setter for the active option | model has no design options |
+
+The bundle is managed by `lib/revit/context_switchers.py`
+(`start_view_hud` / `stop_view_hud`); the phase switcher itself lives in
+`lib/revit/phase_label_wpf.py`.
 
 ## How it works
 
@@ -20,10 +33,11 @@ in `lib/revit/phase_label.py` (see Alternatives surveyed below).
 - The window is parked off-screen until WPF completes its first layout
   pass (`SizeChanged`), then anchored — avoids the mis-sized first frame
   that `EnsureHandle` + `SizeToContent` produces.
-- The badge is clickable: left-click switches the view to the next
-  project phase, right-click to the previous one (wrapping). The click
-  raises an `ExternalEvent` whose handler sets the view's Phase
-  parameter inside a transaction; the badge text updates right after.
+- Clickable badges raise an `ExternalEvent` whose handler runs inside a
+  Revit API context: the phase switcher sets the view's Phase parameter
+  in a transaction, the workset switcher calls
+  `WorksetTable.SetActiveWorksetId` (with a transactional retry). The
+  badge text updates right after.
 - The window is horizontally centered over `UIView.GetWindowRectangle()`
   just below the top edge, converting device pixels to WPF units through
   the window's `TransformFromDevice` matrix (per-monitor DPI).
@@ -51,13 +65,11 @@ in `lib/revit/phase_label.py` (see Alternatives surveyed below).
   tick, since the main window rect is unchanged and `UIView` coordinates
   cannot be read outside a Revit API context.
 - The overlay can sit on top of Revit dialogs that open over the viewport
-  corner. Clicks on the badge itself go to the phase switcher, so that
-  small area of the canvas is not click-able for model work.
+  corner. Clicks on the badges go to the switchers, so that
+  strip of the canvas is not click-able for model work.
 - Does not print or export, and screen captures of the Revit window may or
   may not include it depending on the capture method.
 - Crossing monitors with different DPI can be one tick late to rescale.
-- Both phase buttons ON at once will stack two badges in the same corner —
-  toggle one at a time when comparing.
 
 ## Alternatives surveyed (2026-07)
 
@@ -67,7 +79,7 @@ or weren't chosen:
 1. **TemporaryGraphicsManager / InCanvasControl** *(evaluated first; implementation kept in `lib/revit/phase_label.py`, ribbon button retired)* —
    Revit 2022+, bitmap badge, no model impact, no print. Model-anchored, so
    the badge snaps back to the corner only after pan/zoom ends.
-2. **WPF overlay window** *(this button, `lib/revit/phase_label_wpf.py`)* — a borderless, click-through WPF window
+2. **WPF overlay window** *(this button, `lib/revit/phase_label_wpf.py`)* — a borderless, non-activating WPF window (badges receive clicks)
    owned by the Revit main window, positioned over the viewport using
    `UIView.GetWindowRectangle()`. Pixel-anchored: stays in the corner *during*
    pan/zoom/orbit, full text rendering, no model impact, works pre-2022.

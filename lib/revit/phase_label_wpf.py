@@ -97,6 +97,16 @@ def _phase_tooltip(text):
             u"Right-click: previous phase.".format(text))
 
 
+def make_phase_switcher():
+    """Fresh phase TextSwitcher (item id 'phase') for a ViewHudHost."""
+    return TextSwitcher(
+        _HUD_ID,
+        text_provider=_label_text_for_view,
+        tooltip_provider=_phase_tooltip,
+        on_left_click=lambda ua: _shift_view_phase(ua, 1),
+        on_right_click=lambda ua: _shift_view_phase(ua, -1))
+
+
 def find_phase_hud_driver(document):
     return find_hud_item(document, _HUD_ID)
 
@@ -111,12 +121,7 @@ def start_phase_hud_driver(uiapp, document, logger=None):
         item.refresh()
         return item
     host = get_hud_host(uiapp, document, logger=logger)
-    return host.add_item(TextSwitcher(
-        _HUD_ID,
-        text_provider=_label_text_for_view,
-        tooltip_provider=_phase_tooltip,
-        on_left_click=lambda ua: _shift_view_phase(ua, 1),
-        on_right_click=lambda ua: _shift_view_phase(ua, -1)))
+    return host.add_item(make_phase_switcher())
 
 
 def collect_diagnostics(uiapp, document):
