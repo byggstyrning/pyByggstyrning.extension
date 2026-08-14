@@ -1,18 +1,13 @@
 # -*- coding: utf-8 -*-
 """Phase HUD: view phase switcher built on the revit.view_hud framework.
 
-Shows the active view's Phase name centered over the viewport's top edge,
-in any graphical view that has a Phase parameter (3D, plan, section,
-elevation, ...). The badge follows Revit's light/dark theme, idles at 50%
-opacity, and is clickable: left-click switches the view to the next project
-phase, right-click to the previous one (via ExternalEvent + transaction).
-Beyond that parameter change, nothing is written to the model and nothing
-prints.
+Shows the active view's Phase name on the HUD bar. The name is a cycle
+control (left-click next, right-click previous). The caret opens a
+dropdown of all project phases. Changes go through ExternalEvent +
+transaction; nothing else is written to the model.
 
-All overlay mechanics live in revit.view_hud: a per-document ViewHudHost
-bar hosts this switcher alongside any future ones (they line up
-horizontally). This module only supplies the phase text provider and the
-phase-cycling click actions.
+Overlay mechanics live in revit.view_hud. This module supplies the phase
+options provider and the cycle / pick actions.
 """
 
 import sys
@@ -23,10 +18,10 @@ clr.AddReference('RevitAPI')
 
 from Autodesk.Revit.DB import BuiltInParameter, Transaction
 
-from revit.compat import get_element_id_value
+from revit.compat import get_element_id_value, make_element_id
 from revit.phase_label import _label_text_for_view
 from revit.view_hud import (
-    TextSwitcher,
+    DropdownSwitcher,
     get_hud_host,
     find_hud_host,
     find_hud_item,
@@ -50,6 +45,15 @@ def _ordered_phase_ids(document):
     return ids
 
 
+def _view_phase_param(view):
+    if view is None:
+        return None
+    param = view.get_Parameter(BuiltInParameter.VIEW_PHASE)
+    if param is None or param.IsReadOnly:
+        return None
+    return param
+
+
 def _shift_view_phase(uiapp, step):
     """Set the active view's Phase to the next/previous project phase.
 
@@ -61,10 +65,8 @@ def _shift_view_phase(uiapp, step):
         return None
     doc = uidoc.Document
     view = uidoc.ActiveView
-    if view is None:
-        return None
-    param = view.get_Parameter(BuiltInParameter.VIEW_PHASE)
-    if param is None or param.IsReadOnly:
+    param = _view_phase_param(view)
+    if param is None:
         return None
     phase_ids = _ordered_phase_ids(doc)
     if len(phase_ids) < 2:
@@ -74,7 +76,23 @@ def _shift_view_phase(uiapp, step):
         idx = id_values.index(get_element_id_value(param.AsElementId()))
     except ValueError:
         idx = 0
-    new_id = phase_ids[(idx + step) % len(phase_ids)]
+    return _commit_view_phase(doc, param, phase_ids[(idx + step) % len(phase_ids)])
+
+
+def _set_view_phase(uiapp, phase_id_value):
+    """Set the active view's Phase to the given project phase id value."""
+    uidoc = uiapp.ActiveUIDocument
+    if uidoc is None:
+        return None
+    doc = uidoc.Document
+    view = uidoc.ActiveView
+    param = _view_phase_param(view)
+    if param is None:
+        return None
+    return _commit_view_phase(doc, param, make_element_id(phase_id_value))
+
+
+def _commit_view_phase(doc, param, new_id):
     t = Transaction(doc, 'Switch view phase')
     t.Start()
     try:
@@ -92,17 +110,42 @@ def _shift_view_phase(uiapp, step):
         return None
 
 
+def _phase_options(document, view):
+    """(current id, current name, [(id, name), ...]) or None if N/A."""
+    text = _label_text_for_view(document, view)
+    if not text:
+        return None
+    param = view.get_Parameter(BuiltInParameter.VIEW_PHASE)
+    if param is None:
+        return None
+    current_id = get_element_id_value(param.AsElementId())
+    options = []
+    try:
+        for phase in document.Phases:
+            options.append((get_element_id_value(phase.Id), phase.Name))
+    except Exception:
+        return None
+    if not options:
+        return None
+    return (current_id, text, options)
+
+
 def _phase_tooltip(text):
-    return (u"Phase: {}\nClick: next phase. "
-            u"Right-click: previous phase.".format(text))
+    return u"Click: next phase.\nRight-click: previous phase."
+
+
+def _phase_caret_tooltip(text):
+    return u"Pick a phase"
 
 
 def make_phase_switcher():
-    """Fresh phase TextSwitcher (item id 'phase') for a ViewHudHost."""
-    return TextSwitcher(
+    """Phase badge: name cycles, caret opens the phase list."""
+    return DropdownSwitcher(
         _HUD_ID,
-        text_provider=_label_text_for_view,
+        options_provider=_phase_options,
+        on_select=_set_view_phase,
         tooltip_provider=_phase_tooltip,
+        caret_tooltip_provider=_phase_caret_tooltip,
         on_left_click=lambda ua: _shift_view_phase(ua, 1),
         on_right_click=lambda ua: _shift_view_phase(ua, -1))
 
@@ -177,5 +220,5 @@ def collect_diagnostics(uiapp, document):
     lines.append('phase_item_registered: {}'.format(item is not None))
     if item is not None and item.root is not None:
         add('item_visibility', lambda: str(item.root.Visibility))
-        add('item_text', lambda: item._text_block.Text)
+        add('item_text', lambda: item._label.Text if item._label else None)
     return '\n'.join(lines)

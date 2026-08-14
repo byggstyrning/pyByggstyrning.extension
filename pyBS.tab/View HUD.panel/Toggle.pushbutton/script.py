@@ -1,24 +1,20 @@
 # -*- coding: utf-8 -*-
-"""Toggle the in-view context HUD pinned over the top middle of the view.
+"""Toggle the in-view context HUD pinned over the viewport.
 
 Normal click:
-- ON: show a bar of context switchers centered over the viewport's top
-  edge (screen-anchored, so it stays put during pan/zoom):
-  - Phase — click: next phase, right-click: previous.
-  - Active workset — click opens a dropdown to pick the active workset
-    (workshared models only).
-  The bar follows Revit's light/dark theme and idles at 50% opacity
-  until hovered. Switchers hide themselves where they don't apply.
+- ON: show a bar of context switchers over the view. Gear on the right
+  opens chip toggles (pyRevit CommandSwitchWindow). Phase: click the name
+  to cycle, caret opens the phase list.
 - OFF: close the bar and stop tracking.
 
 Shift+Click:
 - Force a redraw and show a diagnostics report.
 """
 
-__title__ = "View HUD"
+__title__ = "Toggle"
 __author__ = "Byggstyrning AB"
-__doc__ = ("Toggle the in-view context HUD: phase badge (click cycles) and "
-           "active workset dropdown at the top of the view. "
+__doc__ = ("Toggle the in-view context HUD. Gear on the bar opens chip "
+           "toggles. Phase name click cycles; caret opens the phase list. "
            "Shift+Click: refresh + diagnostics.")
 __highlight__ = 'new'
 __persistentengine__ = True
@@ -35,8 +31,7 @@ from pyrevit import revit
 
 script_path = __file__
 pushbutton_dir = op.dirname(script_path)
-stack_dir = op.dirname(pushbutton_dir)
-panel_dir = op.dirname(stack_dir)
+panel_dir = op.dirname(pushbutton_dir)
 tab_dir = op.dirname(panel_dir)
 extension_dir = op.dirname(tab_dir)
 lib_path = op.join(extension_dir, 'lib')
@@ -94,8 +89,6 @@ if __name__ == '__main__':
             "View HUD failed to load:\n\n{}".format(_IMPORT_ERROR),
             title="View HUD")
     else:
-        # pyRevit signals Shift+Click as "config mode" via EXEC_PARAMS,
-        # not as a persisted config option
         try:
             from pyrevit import EXEC_PARAMS
             is_shift = bool(EXEC_PARAMS.config_mode)
