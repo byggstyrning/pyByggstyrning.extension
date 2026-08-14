@@ -324,7 +324,7 @@ class ApplyColorsHandler(UI.IExternalEventHandler):
                             if self.ui.overrideProjectionCheckbox.IsChecked:
                                 ogs.SetProjectionLineColor(color)
                                 ogs.SetCutLineColor(color)
-                                ogs.SetProjectionLinePatternId(make_element_id(-1))
+                                ogs.SetProjectionLinePatternId(self.ui.make_element_id(-1))
                             
                             # Always set surface pattern color
                             ogs.SetSurfaceForegroundPatternColor(color)
@@ -357,12 +357,12 @@ class ApplyColorsHandler(UI.IExternalEventHandler):
         return "Apply Colors to Elements"
     
     def log_exception(self):
-        exc_type, exc_value, exc_traceback = sys.exc_info()
+        exc_type, exc_value, exc_traceback = self.ui._pysys.exc_info()
         logger = self.ui.logger
         logger.debug("Exception type: %s", exc_type)
         logger.debug("Exception value: %s", exc_value)
         logger.debug("Traceback details:")
-        for tb in extract_tb(exc_traceback):
+        for tb in self.ui.extract_tb(exc_traceback):
             logger.debug("File: %s, Line: %s, Function: %s, Code: %s", tb[0], tb[1], tb[2], tb[3])
 
 class ResetColorsHandler(UI.IExternalEventHandler):
@@ -450,12 +450,12 @@ class ResetColorsHandler(UI.IExternalEventHandler):
         return "Reset Element Colors"
     
     def log_exception(self):
-        exc_type, exc_value, exc_traceback = sys.exc_info()
+        exc_type, exc_value, exc_traceback = self.ui._pysys.exc_info()
         logger = self.ui.logger
         logger.debug("Exception type: %s", exc_type)
         logger.debug("Exception value: %s", exc_value)
         logger.debug("Traceback details:")
-        for tb in extract_tb(exc_traceback):
+        for tb in self.ui.extract_tb(exc_traceback):
             logger.debug("File: %s, Line: %s, Function: %s, Code: %s", tb[0], tb[1], tb[2], tb[3])
 
 
@@ -516,6 +516,12 @@ class RevitColorizerWindow(WPFWindow):
             self.ParameterDisplayItem = ParameterDisplayItem  # Store reference to the wrapper class
             self.revit = revit  # Store reference to the revit module
             self.UI = UI  # Store reference to the UI module
+            # pyRevit disposes script-module globals after the pushbutton returns;
+            # event handlers must use instance-captured names.
+            self.is_param_yesno = is_param_yesno
+            self.make_element_id = make_element_id
+            self.extract_tb = extract_tb
+            self._pysys = sys
             
             # Flag indicating if the window is active
             self.is_window_active = True
@@ -2588,7 +2594,7 @@ class RevitColorizerWindow(WPFWindow):
                 return "None"
         elif para.StorageType == self.DB.StorageType.Integer:
             # Version-safe YesNo check via compat helper.
-            if is_param_yesno(para.Definition):
+            if self.is_param_yesno(para.Definition):
                 return "True" if para.AsInteger() == 1 else "False"
             return para.AsValueString()
         elif para.StorageType == self.DB.StorageType.String:
