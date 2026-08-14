@@ -18,6 +18,8 @@ Host machinery (items get all of this for free):
   EnsureHandle + SizeToContent produces
 - hidden while the Revit main window is moved/resized (DispatcherTimer
   still ticks inside the modal move loop; Idling does not fire there)
+- the whole bar fades out/in on view switch so chips do not collapse
+  one-by-one
 - an ExternalEvent executor so item click actions run inside a Revit API
   context (transactions allowed)
 
@@ -47,6 +49,9 @@ For a single-select dropdown badge use the built-in DropdownSwitcher:
             on_select=lambda uiapp, key: ...,          # API context
             tooltip_provider=lambda label: 'hint',     # optional
         ))
+
+Pass on_left_click / on_right_click to split the badge: the label cycles
+on click, the caret still opens the dropdown (see the phase switcher).
 
 Adding further switcher *kinds* (e.g. multi-select / checkbox popups for
 temporary isolate, parameter colorization, ...): subclass HudItem —
@@ -84,7 +89,7 @@ from System import TimeSpan, AppDomain
 from System.Collections import ArrayList
 from System.Windows import (
     Window, WindowStyle, ResizeMode, SizeToContent, Thickness,
-    CornerRadius, PresentationSource, Visibility,
+    CornerRadius, PresentationSource, Visibility, Duration,
 )
 from System.Windows.Controls import (
     Border, TextBlock, StackPanel, Orientation, ListBox, ListBoxItem,
@@ -93,6 +98,7 @@ from System.Windows.Controls.Primitives import Popup, PlacementMode
 from System.Windows.Input import Cursors
 from System.Windows.Interop import WindowInteropHelper
 from System.Windows.Media import SolidColorBrush, Color, Brushes, FontFamily
+from System.Windows.Media.Animation import DoubleAnimation, FillBehavior
 from System.Windows.Threading import DispatcherTimer
 
 from Autodesk.Revit.UI import IExternalEventHandler, ExternalEvent
@@ -103,9 +109,10 @@ from revit.compat import get_element_id_value
 # engine still finds (and can stop or reuse) hosts started by the old one
 # instead of stacking a duplicate bar.
 _HOSTS_DOMAIN_KEY = 'pyBS.view_hud.hosts'
-_THROTTLE_MS = 300
+_THROTTLE_MS = 80
 _MOVE_WATCH_MS = 100
 _OFFSCREEN = -32000
+_FADE_IN_MS = 70
 
 _GWL_EXSTYLE = -20
 _WS_EX_TOOLWINDOW = 0x00000080
@@ -268,6 +275,17 @@ def find_hud_host(document):
     hosts = _hosts_registry()
     for host in list(hosts):
         try:
+            # After an extension reload the AppDomain still holds the old
+            # class instance. Drop it so callers get a current ViewHudHost.
+            if type(host) is not ViewHudHost:
+                try:
+                    host.stop()
+                except Exception:
+                    try:
+                        hosts.Remove(host)
+                    except Exception:
+                        pass
+                continue
             host_doc = host._doc
             if host_doc is None or not _doc_is_valid(host_doc):
                 try:
@@ -369,6 +387,7 @@ class HudItem(object):
         self.item_id = item_id
         self.host = None
         self.root = None
+        self._flash_timer = None
 
     def build(self, style):
         raise NotImplementedError
@@ -389,11 +408,92 @@ class HudItem(object):
 
     def on_removed(self):
         """Called when the item leaves its host (removal or teardown)."""
-        pass
+        timer = self._flash_timer
+        if timer is None:
+            return
+        try:
+            timer.Stop()
+        except Exception:
+            pass
+        self._flash_timer = None
 
     def close_popup(self):
         """Close any popup this item owns (no-op unless the item has one)."""
         pass
+
+    def highlight_briefly(self, duration_ms=2200):
+        """Flash this cell gold (e.g. point at the locking scope box)."""
+        root = self.root
+        if root is None:
+            return
+        try:
+            timer = self._flash_timer
+            if timer is not None:
+                try:
+                    timer.Stop()
+                except Exception:
+                    pass
+            old_opacity = 1.0
+            try:
+                old_opacity = float(root.Opacity)
+            except Exception:
+                pass
+            gold = Color.FromArgb(255, 255, 200, 0)
+            ink = Color.FromArgb(255, 30, 30, 30)
+            root.Opacity = 1.0
+            root.Background = SolidColorBrush(gold)
+            root.BorderBrush = SolidColorBrush(gold)
+            # Keep BorderThickness unchanged. Growing/shrinking the chip
+            # fires SizeChanged → _move_to → on_bar_moved → popup close.
+            for attr in ('_label', '_caret', '_text_block'):
+                child = getattr(self, attr, None)
+                if child is not None:
+                    try:
+                        child.Foreground = SolidColorBrush(ink)
+                    except Exception:
+                        pass
+            timer = DispatcherTimer()
+            timer.Interval = TimeSpan.FromMilliseconds(duration_ms)
+            item = self
+
+            def _restore(sender, args):
+                try:
+                    timer.Stop()
+                except Exception:
+                    pass
+                item._flash_timer = None
+                popup_open = False
+                try:
+                    popup = getattr(item, '_popup', None)
+                    popup_open = popup is not None and bool(popup.IsOpen)
+                except Exception:
+                    popup_open = False
+                try:
+                    if not popup_open:
+                        root.Opacity = old_opacity
+                except Exception:
+                    pass
+                host = item.host
+                if host is None or host._style is None:
+                    return
+                try:
+                    palette = (
+                        host._style.dark_palette if host._theme_dark
+                        else host._style.light_palette)
+                    item.apply_theme(host._theme_dark, palette)
+                except Exception:
+                    pass
+                if popup_open:
+                    try:
+                        item._update_opacity()
+                    except Exception:
+                        pass
+
+            timer.Tick += _restore
+            self._flash_timer = timer
+            timer.Start()
+        except Exception:
+            pass
 
     def refresh(self):
         """Force the host to re-sync all items."""
@@ -502,16 +602,28 @@ class DropdownSwitcher(HudItem):
     (StaysOpen=False); the popup is also closed when the bar hides, moves,
     or the item is removed. Opacity is self-managed so the badge stays
     solid while its popup is open.
+
+    Optional on_left_click / on_right_click split the badge: the label
+    cycles on click, the caret still opens the dropdown. Use
+    caret_tooltip_provider for a distinct hover on the caret.
     """
 
     hover_dim = False
 
     def __init__(self, item_id, options_provider, on_select,
-                 tooltip_provider=None):
+                 tooltip_provider=None,
+                 on_left_click=None,
+                 on_right_click=None,
+                 caret_tooltip_provider=None):
         HudItem.__init__(self, item_id)
         self._options_provider = options_provider
         self._on_select = on_select
         self._tooltip_provider = tooltip_provider
+        self._caret_tooltip_provider = caret_tooltip_provider
+        self._on_left_click = on_left_click
+        self._on_right_click = on_right_click
+        self._split_clicks = (
+            on_left_click is not None or on_right_click is not None)
         self._style = None
         self._label = None
         self._popup = None
@@ -522,6 +634,8 @@ class DropdownSwitcher(HudItem):
         self._is_hovered = False
         self._suppress_selection = False
         self._popup_closed_ms = 0
+        self._caret_hit = None
+        self._split_rule = None
 
     def build(self, style):
         self._style = style
@@ -531,12 +645,26 @@ class DropdownSwitcher(HudItem):
         caret = TextBlock()
         caret.FontFamily = FontFamily(style.font_family)
         caret.FontSize = style.font_size
-        caret.Text = u'  ▾'  # small down triangle
+        caret.Text = u'▾'
+
+        caret_hit = Border()
+        caret_hit.Background = Brushes.Transparent
+        caret_hit.Padding = Thickness(6, 0, 0, 0)
+        caret_hit.Child = caret
+        caret_hit.Cursor = Cursors.Hand
+
+        split_rule = Border()
+        split_rule.Width = 1
+        split_rule.Margin = Thickness(6, 2, 2, 2)
+        split_rule.Visibility = (
+            Visibility.Visible if self._split_clicks
+            else Visibility.Collapsed)
 
         row = StackPanel()
         row.Orientation = Orientation.Horizontal
         row.Children.Add(label)
-        row.Children.Add(caret)
+        row.Children.Add(split_rule)
+        row.Children.Add(caret_hit)
 
         badge = Border()
         badge.BorderThickness = Thickness(1)
@@ -549,7 +677,13 @@ class DropdownSwitcher(HudItem):
         # open on button-UP, not down: setting Popup.IsOpen while the mouse
         # button is held puts a StaysOpen=False popup into native drag-select
         # mode (it closes on button-up unless you drag into an item)
-        badge.MouseLeftButtonUp += self._on_badge_click
+        if self._split_clicks:
+            label.Cursor = Cursors.Hand
+            label.MouseLeftButtonDown += self._on_label_left
+            label.MouseRightButtonDown += self._on_label_right
+            caret_hit.MouseLeftButtonUp += self._on_badge_click
+        else:
+            badge.MouseLeftButtonUp += self._on_badge_click
         badge.MouseEnter += self._on_mouse_enter
         badge.MouseLeave += self._on_mouse_leave
 
@@ -575,6 +709,8 @@ class DropdownSwitcher(HudItem):
 
         self._label = label
         self._caret = caret
+        self._caret_hit = caret_hit
+        self._split_rule = split_rule
         self._listbox = listbox
         self._popup = popup
         self._popup_border = popup_border
@@ -592,14 +728,16 @@ class DropdownSwitcher(HudItem):
         self._current_key = current_key
         self._options = list(options or [])
         self._label.Text = current_label
-        self._caret.Visibility = (
-            Visibility.Visible if len(self._options) > 1
-            else Visibility.Collapsed)
-        if self._tooltip_provider is not None:
-            try:
-                self.root.ToolTip = self._tooltip_provider(current_label)
-            except Exception:
-                pass
+        many = len(self._options) > 1
+        caret_vis = Visibility.Visible if many else Visibility.Collapsed
+        self._caret.Visibility = caret_vis
+        if self._caret_hit is not None:
+            self._caret_hit.Visibility = caret_vis
+        if self._split_rule is not None:
+            self._split_rule.Visibility = (
+                Visibility.Visible if many and self._split_clicks
+                else Visibility.Collapsed)
+        self._apply_tooltips(current_label)
         self.root.Visibility = Visibility.Visible
         # value-equality snapshot for host change detection
         return (current_key, current_label, tuple(self._options))
@@ -613,12 +751,39 @@ class DropdownSwitcher(HudItem):
         self.root.BorderBrush = border_brush
         self._label.Foreground = fg_brush
         self._caret.Foreground = fg_brush
+        if self._split_rule is not None:
+            self._split_rule.Background = border_brush
         if self._popup_border is not None:
             self._popup_border.Background = bg_brush
             self._popup_border.BorderBrush = border_brush
         if self._listbox is not None:
             self._listbox.Background = bg_brush
             self._listbox.Foreground = fg_brush
+
+    def _apply_tooltips(self, current_label):
+        try:
+            if self._split_clicks:
+                if self._tooltip_provider is not None:
+                    self._label.ToolTip = self._tooltip_provider(current_label)
+                if self._caret_tooltip_provider is not None:
+                    tip = self._caret_tooltip_provider(current_label)
+                    self._caret_hit.ToolTip = tip
+                    self._caret.ToolTip = tip
+                self.root.ToolTip = None
+            elif self._tooltip_provider is not None:
+                self.root.ToolTip = self._tooltip_provider(current_label)
+        except Exception:
+            pass
+
+    def _on_label_left(self, sender, args):
+        if self._on_left_click is not None:
+            args.Handled = True
+            self.run_in_api_context(self._on_left_click)
+
+    def _on_label_right(self, sender, args):
+        if self._on_right_click is not None:
+            args.Handled = True
+            self.run_in_api_context(self._on_right_click)
 
     # -------------------------------------------------------------- popup
 
@@ -721,6 +886,7 @@ class DropdownSwitcher(HudItem):
         self._close_popup()
 
     def on_removed(self):
+        HudItem.on_removed(self)
         self._close_popup()
 
 
@@ -757,6 +923,12 @@ class ViewHudHost(object):
         self._last_owner_rect = None
         self._move_timer = None
         self._last_error = None
+        self._last_view_id = None
+        self._fading = False
+        self._fade_resync = False
+        self._fade_anim = None
+        self._fade_gen = 0
+        self._paused = False
 
     # ------------------------------------------------------------- items
 
@@ -769,15 +941,16 @@ class ViewHudHost(object):
     def item_ids(self):
         return [item.item_id for item in self._items]
 
-    def add_item(self, item, index=None):
+    def add_item(self, item, index=None, refresh=True):
         """Register a switcher (replacing any with the same id) and show it.
 
         Call from a command: the first add starts the host, which needs a
-        Revit API context (ExternalEvent.Create).
+        Revit API context (ExternalEvent.Create). Pass refresh=False when
+        adding several items, then call refresh() once.
         """
         # replacing must not tear the host down when the old item was the
         # last one — a full stop would unregister the host mid-add
-        self.remove_item(item.item_id, _teardown_if_empty=False)
+        self.remove_item(item.item_id, _teardown_if_empty=False, refresh=False)
         if not self._started:
             self._start()
         item.host = self
@@ -801,10 +974,11 @@ class ViewHudHost(object):
                 else self._style.light_palette)
         except Exception:
             pass
-        self.refresh()
+        if refresh:
+            self.refresh()
         return item
 
-    def remove_item(self, item_id, _teardown_if_empty=True):
+    def remove_item(self, item_id, _teardown_if_empty=True, refresh=True):
         item = self.find_item(item_id)
         if item is None:
             return False
@@ -817,7 +991,7 @@ class ViewHudHost(object):
         item.host = None
         if not self._items and _teardown_if_empty:
             self._stop()
-        else:
+        elif refresh:
             self.refresh()
         return True
 
@@ -925,9 +1099,10 @@ class ViewHudHost(object):
             except Exception:
                 pass
 
-    def _apply_theme(self):
+    def _apply_theme(self, dark=None):
         """Recolor all items when Revit's light/dark theme flips."""
-        dark = revit_theme_is_dark()
+        if dark is None:
+            dark = revit_theme_is_dark()
         if dark == self._theme_dark:
             return
         self._theme_dark = dark
@@ -941,63 +1116,31 @@ class ViewHudHost(object):
 
     # --------------------------------------------------------- lifecycle
 
-    def _start(self):
-        """Start tracking. Runs inside the command that adds the first item."""
-        # a host can be restarted after a full teardown (e.g. via a stale
-        # reference) — make sure it is findable in the registry again
-        hosts = _hosts_registry()
-        if not hosts.Contains(self):
-            hosts.Add(self)
-        try:
-            self._action_handler = _HudActionEventHandler()
-            self._action_handler.host = self
-            self._action_event = ExternalEvent.Create(self._action_handler)
-        except Exception:
-            self._action_handler = None
-            self._action_event = None
-        self._build_window()
-        self._theme_dark = None
-        self._apply_theme()
-        self._idling_handler = self._on_idling
-        self._view_activated_handler = self._on_view_activated
-        try:
-            self._uiapp.Idling += self._idling_handler
-        except Exception:
-            pass
-        try:
-            self._uiapp.ViewActivated += self._view_activated_handler
-        except Exception:
-            pass
-        # Idling is silent while Windows runs the modal move/size loop on
-        # the Revit window, but WM_TIMER still gets dispatched there — so a
-        # DispatcherTimer can hide the bar the moment the window starts
-        # moving; the first Idling tick after release shows it again.
-        try:
-            self._move_timer = DispatcherTimer()
-            self._move_timer.Interval = TimeSpan.FromMilliseconds(
-                _MOVE_WATCH_MS)
-            self._move_timer.Tick += self._on_move_watch_tick
-            self._move_timer.Start()
-        except Exception:
-            self._move_timer = None
-        # tear down with the document — otherwise the host leaks its
-        # Idling handler and timer for the rest of the session
-        self._doc_closing_handler = self._on_document_closing
-        try:
-            self._uiapp.Application.DocumentClosing += \
-                self._doc_closing_handler
-        except Exception:
-            self._doc_closing_handler = None
-        self._started = True
-
-    def _stop(self):
-        if self._doc_closing_handler is not None:
+    def _hook_live_events(self):
+        """Idling / ViewActivated / move-watch. Cheap to pause/resume."""
+        if self._idling_handler is None:
+            self._idling_handler = self._on_idling
             try:
-                self._uiapp.Application.DocumentClosing -= \
-                    self._doc_closing_handler
+                self._uiapp.Idling += self._idling_handler
             except Exception:
-                pass
-            self._doc_closing_handler = None
+                self._idling_handler = None
+        if self._view_activated_handler is None:
+            self._view_activated_handler = self._on_view_activated
+            try:
+                self._uiapp.ViewActivated += self._view_activated_handler
+            except Exception:
+                self._view_activated_handler = None
+        if self._move_timer is None:
+            try:
+                self._move_timer = DispatcherTimer()
+                self._move_timer.Interval = TimeSpan.FromMilliseconds(
+                    _MOVE_WATCH_MS)
+                self._move_timer.Tick += self._on_move_watch_tick
+                self._move_timer.Start()
+            except Exception:
+                self._move_timer = None
+
+    def _unhook_live_events(self):
         if self._move_timer is not None:
             try:
                 self._move_timer.Stop()
@@ -1017,6 +1160,72 @@ class ViewHudHost(object):
             except Exception:
                 pass
             self._view_activated_handler = None
+
+    def is_paused(self):
+        return bool(self._paused)
+
+    def pause(self):
+        """Toggle off: hide the bar, stop live tracking, keep the WPF tree."""
+        if not self._started or self._paused:
+            self._hide()
+            self._paused = True
+            return
+        self._paused = True
+        self._cancel_fade()
+        self._unhook_live_events()
+        self._hide()
+
+    def resume(self):
+        """Toggle on: rehook events and show the existing bar."""
+        if not self._started:
+            self._start()
+        self._paused = False
+        self._last_view_id = None
+        self._last_tick_ms = 0
+        self._hook_live_events()
+        self._bake_opacity(1.0)
+        self.refresh()
+
+    def _start(self):
+        """Start tracking. Runs inside the command that adds the first item."""
+        # a host can be restarted after a full teardown (e.g. via a stale
+        # reference) — make sure it is findable in the registry again
+        hosts = _hosts_registry()
+        if not hosts.Contains(self):
+            hosts.Add(self)
+        try:
+            self._action_handler = _HudActionEventHandler()
+            self._action_handler.host = self
+            self._action_event = ExternalEvent.Create(self._action_handler)
+        except Exception:
+            self._action_handler = None
+            self._action_event = None
+        self._build_window()
+        self._theme_dark = None
+        self._apply_theme()
+        self._hook_live_events()
+        # tear down with the document — otherwise the host leaks its
+        # Idling handler and timer for the rest of the session
+        self._doc_closing_handler = self._on_document_closing
+        try:
+            self._uiapp.Application.DocumentClosing += \
+                self._doc_closing_handler
+        except Exception:
+            self._doc_closing_handler = None
+        self._paused = False
+        self._started = True
+
+    def _stop(self):
+        self._paused = False
+        self._cancel_fade()
+        if self._doc_closing_handler is not None:
+            try:
+                self._uiapp.Application.DocumentClosing -= \
+                    self._doc_closing_handler
+            except Exception:
+                pass
+            self._doc_closing_handler = None
+        self._unhook_live_events()
         if self._window is not None:
             try:
                 self._window.Close()
@@ -1056,6 +1265,8 @@ class ViewHudHost(object):
         self._sync(force=True)
 
     def _hide(self):
+        if not self._fading:
+            self._cancel_fade()
         was_visible = self._visible
         if self._window is not None and self._visible:
             try:
@@ -1070,6 +1281,124 @@ class ViewHudHost(object):
                     item.on_bar_hidden()
                 except Exception:
                     pass
+
+    # -------------------------------------------------------------- fade
+
+    def _current_view_id(self):
+        try:
+            uidoc = self._uiapp.ActiveUIDocument
+            if uidoc is None:
+                return None
+            view = uidoc.ActiveView
+            if view is None:
+                return None
+            return get_element_id_value(view.Id)
+        except Exception:
+            return None
+
+    def _bake_opacity(self, value):
+        """Drop any opacity animation and pin the current value."""
+        window = self._window
+        if window is None:
+            return
+        try:
+            window.BeginAnimation(Window.OpacityProperty, None)
+        except Exception:
+            pass
+        try:
+            window.Opacity = float(value)
+        except Exception:
+            pass
+        self._fade_anim = None
+
+    def _cancel_fade(self):
+        self._fade_gen += 1
+        self._fading = False
+        self._fade_resync = False
+        self._bake_opacity(1.0)
+
+    def _animate_opacity(self, target, duration_ms, on_done=None):
+        window = self._window
+        if window is None:
+            self._fading = False
+            if on_done is not None:
+                on_done()
+            return
+        try:
+            anim = DoubleAnimation()
+            anim.To = float(target)
+            anim.Duration = Duration(TimeSpan.FromMilliseconds(duration_ms))
+            anim.FillBehavior = FillBehavior.HoldEnd
+            gen = self._fade_gen
+
+            def _done(sender, args):
+                try:
+                    anim.Completed -= _done
+                except Exception:
+                    pass
+                if gen != self._fade_gen:
+                    return
+                if on_done is not None:
+                    on_done()
+
+            if on_done is not None:
+                anim.Completed += _done
+            window.BeginAnimation(Window.OpacityProperty, anim)
+            self._fade_anim = anim
+        except Exception:
+            self._bake_opacity(target)
+            if on_done is not None:
+                on_done()
+
+    def _finish_fade(self):
+        self._bake_opacity(1.0)
+        self._fading = False
+        if self._fade_resync:
+            self._fade_resync = False
+            if self._current_view_id() != self._last_view_id:
+                self._sync(force=True)
+
+    def _crossfade(self):
+        """Fade the whole bar out, rebuild chips, fade in.
+
+        Item.sync() collapses cells as it goes; doing that while the bar
+        is visible makes chips vanish one-by-one. Fade first so the old
+        bar leaves as a unit.
+        """
+        self._fading = True
+        self._fade_resync = False
+        self.close_item_popups()
+        for item in self._items:
+            try:
+                item.on_bar_hidden()
+            except Exception:
+                pass
+
+        def _after_out():
+            if self._window is None:
+                self._fading = False
+                return
+            try:
+                self._last_view_id = self._current_view_id()
+                self._relayout(force=True)
+            except Exception:
+                pass
+            if self._window is None:
+                self._fading = False
+                return
+            if not self._visible:
+                self._bake_opacity(1.0)
+                self._fading = False
+                if self._fade_resync:
+                    self._fade_resync = False
+                    self._sync(force=True)
+                return
+            self._animate_opacity(1.0, _FADE_IN_MS, self._finish_fade)
+
+        # Hide immediately, then fade in. A 50ms fade-out animation's
+        # Completed callback arrived at 85–170ms in practice.
+        self._bake_opacity(0.0)
+        _after_out()
 
     # ------------------------------------------------------------ events
 
@@ -1095,6 +1424,7 @@ class ViewHudHost(object):
             last = self._last_owner_rect
             self._last_owner_rect = rect
             if last is not None and rect != last:
+                self._cancel_fade()
                 self._hide()
         except Exception:
             pass
@@ -1133,8 +1463,15 @@ class ViewHudHost(object):
         else:  # top-center
             center_px = rect.Left + (rect.Right - rect.Left) / 2.0
             left_dip = center_px * scale_x - width_dip / 2.0
+        new_top = (rect.Top + margin) * scale_y
+        old_left = self._window.Left
+        old_top = self._window.Top
         self._window.Left = left_dip
-        self._window.Top = (rect.Top + margin) * scale_y
+        self._window.Top = new_top
+        moved = (abs(float(old_left) - left_dip) > 0.5
+                 or abs(float(old_top) - new_top) > 0.5)
+        if not moved:
+            return
         for item in self._items:
             try:
                 item.on_bar_moved()
@@ -1142,12 +1479,37 @@ class ViewHudHost(object):
                 pass
 
     def _sync(self, force=False):
-        if self._window is None:
+        if self._window is None or self._paused:
+            return
+        if self._fading:
+            self._fade_resync = True
             return
         if self._doc is None or not _doc_is_valid(self._doc):
             # document closed under us (DocumentClosing missed or blocked):
             # full teardown, not just hide, or the handlers leak all session
             self.stop()
+            return
+        uidoc = self._uiapp.ActiveUIDocument
+        if uidoc is None or not uidoc.Document.Equals(self._doc):
+            self._hide()
+            return
+        view = uidoc.ActiveView
+        if view is None or view.IsTemplate:
+            self._hide()
+            return
+
+        view_id = self._current_view_id()
+        if (self._visible
+                and self._last_view_id is not None
+                and view_id != self._last_view_id):
+            self._crossfade()
+            return
+        self._last_view_id = view_id
+        self._relayout(force)
+
+    def _relayout(self, force=False):
+        """Rebuild chip visibility and pin the bar. Caller handles fade."""
+        if self._window is None:
             return
         uidoc = self._uiapp.ActiveUIDocument
         if uidoc is None or not uidoc.Document.Equals(self._doc):
@@ -1192,15 +1554,14 @@ class ViewHudHost(object):
             self._hide()
             return
 
-        # theme is part of the key so a light/dark flip on an otherwise
-        # unchanged view still recolors the bar
+        dark = revit_theme_is_dark()
         key = (rect.Left, rect.Top, rect.Right, rect.Bottom,
-               revit_theme_is_dark(), tuple(item_states))
+               dark, tuple(item_states))
         if not force and self._visible and key == self._state_key:
             return
 
         try:
-            self._apply_theme()
+            self._apply_theme(dark)
             self._last_view_rect = rect
             # settle layout so ActualWidth reflects the new content before
             # anchoring; before the first Show this is a no-op and the

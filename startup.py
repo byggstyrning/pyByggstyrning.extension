@@ -52,6 +52,39 @@ def find_and_clone_mmi_panel():
     new_panel.Source = source_panel.Source.Clone()
     new_panel.IsEnabled = True
 
+
+def _maybe_start_view_hud(document=None):
+    """Start the View HUD when Settings auto-start is on."""
+    try:
+        import sys
+        import os.path as op
+        extension_dir = op.dirname(op.abspath(__file__))
+        lib_path = op.join(extension_dir, 'lib')
+        if lib_path not in sys.path:
+            sys.path.insert(0, lib_path)
+        from revit.view_hud_config import is_auto_start_enabled
+        if not is_auto_start_enabled():
+            return
+        uiapp = HOST_APP.uiapp
+        if uiapp is None:
+            return
+        doc = document
+        if doc is None:
+            uidoc = uiapp.ActiveUIDocument
+            if uidoc is None:
+                return
+            doc = uidoc.Document
+        from revit.context_switchers import (
+            is_view_hud_running,
+            start_view_hud,
+        )
+        if is_view_hud_running(doc):
+            return
+        start_view_hud(uiapp, doc)
+    except Exception as ex:
+        script_logger.debug("View HUD auto-start skipped: {}".format(ex))
+
+
 # Attempt immediate clone (works on extension reload when pyBS tab already exists)
 find_and_clone_mmi_panel()
 
@@ -86,6 +119,7 @@ def _idling_handler(sender, args):
         return
 
     find_and_clone_mmi_panel()
+    _maybe_start_view_hud()
 
     try:
         HOST_APP.uiapp.Idling -= EventHandler[UIEvents.IdlingEventArgs](_idling_handler)
@@ -105,6 +139,20 @@ HOST_APP.app.DocumentOpening += \
     EventHandler[Events.DocumentOpeningEventArgs](
         doc_opening_handler
     )
+
+
+def doc_opened_handler(sender, args):
+    find_and_clone_mmi_panel()
+    try:
+        _maybe_start_view_hud(args.Document)
+    except Exception:
+        pass
+
+try:
+    HOST_APP.app.DocumentOpened += EventHandler[Events.DocumentOpenedEventArgs](
+        doc_opened_handler)
+except Exception:
+    pass
 
 # Register IFC export handler for 3D Zone parameter mapping
 try:
