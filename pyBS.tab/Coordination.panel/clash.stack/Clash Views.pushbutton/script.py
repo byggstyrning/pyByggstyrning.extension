@@ -897,7 +897,8 @@ RefinementJob = namedtuple("RefinementJob", [
 # lists; sys persists for the AppDomain (Revit session) lifetime.
 _SYS_KEY = '_pyBS_clash_refinement_drivers'
 _SYS_GLOBALS_KEY = '_pyBS_clash_g'
-_SYS_TOOL_KEY = '_pyBS_clash_tool_window'
+_SYS_TOOL_KEY = '_pyBS_clash_tool_windows'
+_SYS_SUMMARY_KEY = '_pyBS_clash_summary_windows'
 
 # Last-run inputs so the summary Refresh button can rebuild views after Close().
 ClashRunSpec = namedtuple('ClashRunSpec', [
@@ -915,20 +916,66 @@ ClashRunSpec = namedtuple('ClashRunSpec', [
 ])
 
 
-def _snapshot_clash_globals(_sys=sys, _gkey=_SYS_GLOBALS_KEY):
-    """Keep a copy of this script's globals; pyRevit may clear the module dict."""
-    setattr(_sys, _gkey, dict(globals()))
+def _sys_retain(_sys, key, obj):
+    """Keep a Python ref on sys so pyRevit module dispose cannot GC it."""
+    held = getattr(_sys, key, None)
+    if held is None:
+        held = []
+        setattr(_sys, key, held)
+    if obj is not None and obj not in held:
+        held.append(obj)
+
+
+def _sys_release(_sys, key, obj):
+    held = getattr(_sys, key, None)
+    if not held:
+        return
+    try:
+        held.remove(obj)
+    except ValueError:
+        pass
+
+
+def _snapshot_clash_globals(owner=None, _sys=sys, _gkey=_SYS_GLOBALS_KEY):
+    """Keep a copy of this script's globals; pyRevit may clear the module dict.
+
+    Each owner (tool / summary window) stores its own snap so a later Clash
+    Views run cannot overwrite the snapshot an open summary still needs.
+    """
+    snap = dict(globals())
+    setattr(_sys, _gkey, snap)
     setattr(_sys, '_pyBS_clash_restore', _restore_clash_globals)
+    if owner is not None:
+        owner._clash_globals_snap = snap
+        if getattr(owner, '_doc', None) is None:
+            owner._doc = snap.get('doc')
+        if getattr(owner, '_uidoc', None) is None:
+            owner._uidoc = snap.get('uidoc')
+    return snap
 
 
-def _restore_clash_globals(_sys=sys, _key=_SYS_GLOBALS_KEY):
+def _restore_clash_globals(owner=None, _sys=sys, _key=_SYS_GLOBALS_KEY):
     """Put snapped names back if pyRevit disposed this pushbutton module."""
-    snap = getattr(_sys, _key, None)
+    snap = None
+    if owner is not None:
+        snap = getattr(owner, '_clash_globals_snap', None)
+    if not snap:
+        snap = getattr(_sys, _key, None)
     if not snap:
         return
     g = globals()
     if g.get('doc') is None or g.get('ClashViewsWindow') is None:
         g.update(snap)
+        return
+    # Module is live (possibly from a later run). Rebind this owner's document
+    # so Refresh / visibility toggles hit the model that created this window.
+    if owner is not None:
+        owner_doc = getattr(owner, '_doc', None) or snap.get('doc')
+        owner_uidoc = getattr(owner, '_uidoc', None) or snap.get('uidoc')
+        if owner_doc is not None:
+            g['doc'] = owner_doc
+        if owner_uidoc is not None:
+            g['uidoc'] = owner_uidoc
 
 
 def _pick_non_clash_view(document, doomed_values):
@@ -985,6 +1032,7 @@ class LinkVisibilityRefinementDriver(object):
         self._show_summary_callback = show_summary_callback
         self._progress_close_callback = progress_close_callback
         self._progress_update_callback = progress_update_callback
+        self._finished = False
         # Capture module-level names needed by _process at init-time.
         # pyRevit disposes the script module after the pushbutton returns.
         self._ElementId = ElementId
@@ -1043,39 +1091,61 @@ class LinkVisibilityRefinementDriver(object):
         except (AttributeError, ValueError):
             pass
 
+    def _finish_jobs(self, abort=False):
+        """Always close progress and invoke the summary callback.
+
+        Sheet switch is best-effort and must not skip apply_run_results;
+        otherwise Refresh stays on 'Refreshing...' bound to a deleted sheet.
+        """
+        if self._finished:
+            return
+        self._finished = True
+        try:
+            self.stop()
+        except Exception:
+            pass
+        if self._progress_close_callback is not None:
+            try:
+                self._progress_close_callback()
+            except Exception as ex:
+                self._logger.debug("Failed to close progress window: {}".format(ex))
+        if not abort and self._return_to_sheet_id is not None:
+            try:
+                uidoc = self._uiapp.ActiveUIDocument
+                if uidoc is not None:
+                    sheet = self._doc.GetElement(self._return_to_sheet_id)
+                    if sheet is not None:
+                        uidoc.RequestViewChange(sheet)
+            except Exception as ex:
+                self._logger.debug("Failed to return to clash sheet: {}".format(ex))
+        if self._show_summary_callback is not None and self._summary_data is not None:
+            try:
+                self._show_summary_callback(self._summary_data)
+            except Exception as ex:
+                self._logger.debug("Failed to show summary dialog: {}".format(ex))
+
     def _on_idling(self, sender, e):
         try:
             self._on_idling_body(sender, e)
         except Exception as ex:
             self._logger.debug("Link refinement idle failed: {}".format(ex))
+            if self._idx >= len(self._jobs):
+                try:
+                    self._finish_jobs(abort=True)
+                except Exception:
+                    try:
+                        self.stop()
+                    except Exception:
+                        pass
 
     def _on_idling_body(self, sender, e):
         if self._idx >= len(self._jobs):
-            if self._progress_close_callback is not None:
-                try:
-                    self._progress_close_callback()
-                except Exception as ex:
-                    self._logger.debug("Failed to close progress window: {}".format(ex))
-            if self._return_to_sheet_id is not None:
-                try:
-                    uidoc = self._uiapp.ActiveUIDocument
-                    if uidoc is not None:
-                        sheet = self._doc.GetElement(self._return_to_sheet_id)
-                        if sheet is not None:
-                            uidoc.RequestViewChange(sheet)
-                            if self._show_summary_callback is not None and self._summary_data is not None:
-                                try:
-                                    self._show_summary_callback(self._summary_data)
-                                except Exception as ex:
-                                    self._logger.debug("Failed to show summary dialog: {}".format(ex))
-                except Exception:
-                    pass
-            self.stop()
+            self._finish_jobs(abort=False)
             return
         job = self._jobs[self._idx]
         uidoc = self._uiapp.ActiveUIDocument
         if uidoc is None:
-            self.stop()
+            self._finish_jobs(abort=True)
             return
         current = uidoc.ActiveView
         if current is None or not self._view_ids_equal(current.Id, job.view_id):
@@ -1958,6 +2028,9 @@ class ClashViewsWindow(forms.WPFWindow):
         self._refinement_driver = None
         self._run_spec = None
         self._marker_points_by_view = {}
+        self._doc = doc
+        self._uidoc = uidoc
+        self._clash_globals_snap = None
 
         self._populate_category_filters(host_categories)
         self._sync_category_list_display()
@@ -2174,8 +2247,8 @@ class ClashViewsWindow(forms.WPFWindow):
             link_categories=list(link_cats),
             combine_link_views=combine_link_views,
         )
-        _snapshot_clash_globals()
-        setattr(sys, _SYS_TOOL_KEY, self)
+        _snapshot_clash_globals(self)
+        _sys_retain(sys, _SYS_TOOL_KEY, self)
 
         try:
             if against_link:
@@ -2239,37 +2312,59 @@ class ClashViewsWindow(forms.WPFWindow):
         if not doomed:
             return
         try:
-            active = uidoc.ActiveView
+            active_ui = getattr(self, '_uidoc', None) or uidoc
+            active = active_ui.ActiveView
             if active is None:
                 return
             if int(get_element_id_value(active.Id)) not in doomed_values:
                 return
-            fallback = _pick_non_clash_view(doc, doomed_values)
+            fallback = _pick_non_clash_view(
+                getattr(self, '_doc', None) or doc, doomed_values)
             if fallback is not None:
-                uidoc.ActiveView = fallback
+                active_ui.ActiveView = fallback
         except Exception as ex:
             logger.debug("Could not leave clash view before delete: {}".format(ex))
 
     def _delete_clash_output_ids(self, doomed):
-        """Delete previous clash views/sheet. Must run inside an open transaction."""
+        """Delete previous clash views/sheet. Must run inside an open transaction.
+
+        Raises if any doomed element still exists so replacements are not
+        created with colliding '(1)' names while old views pile up.
+        """
+        document = getattr(self, '_doc', None) or doc
         if not doomed:
             return
         id_list = List[ElementId]()
         for eid in doomed:
             id_list.Add(eid)
         try:
-            doc.Delete(id_list)
+            document.Delete(id_list)
         except Exception as ex:
             logger.warning("Bulk delete of clash views failed: {}".format(ex))
             for eid in doomed:
                 try:
-                    doc.Delete(eid)
-                except Exception:
-                    pass
+                    if document.GetElement(eid) is not None:
+                        document.Delete(eid)
+                except Exception as item_ex:
+                    logger.warning("Could not delete clash output {}: {}".format(
+                        eid, item_ex))
+        leftover = []
+        for eid in doomed:
+            try:
+                el = document.GetElement(eid)
+            except Exception:
+                continue
+            if el is not None:
+                leftover.append(eid)
+        if leftover:
+            raise Exception(
+                "Could not delete {} previous clash view(s) or sheet. "
+                "They may still be the active view. Switch away, then Refresh.".format(
+                    len(leftover)))
 
     def refresh_clash_views(self, summary, _restore=_restore_clash_globals):
         """Re-run the last spec: detect, replace views/sheet, update summary."""
-        _restore()
+        _restore(self)
         spec = getattr(self, '_run_spec', None)
         if spec is None:
             forms.alert("No previous clash run to refresh.", title="Refresh")
@@ -2678,6 +2773,14 @@ class ClashViewsWindow(forms.WPFWindow):
         finally:
             tg.Dispose()
 
+        # Old sheet is gone for good after assimilate. Unbind Visibility Options
+        # so they cannot target the deleted sheet during the refinement pass.
+        if replace_existing and existing_summary is not None:
+            try:
+                existing_summary.detach_replaced_run()
+            except Exception as ex:
+                logger.debug("Could not detach summary from replaced sheet: {}".format(ex))
+
         # Show progress window immediately if link refinement is needed
         # This gives user feedback during the summary data building and before idling
         progress_window = None
@@ -2716,8 +2819,11 @@ class ClashViewsWindow(forms.WPFWindow):
 
         # Callback to show or refresh the summary dialog (after refinement)
         def _show_summary(data, _Summary=ClashViewsSummaryWindow, _logger=logger,
-                          _existing=existing_summary, _tool=self):
+                          _existing=existing_summary, _tool=self,
+                          _restore=_restore_clash_globals, _retain=_sys_retain,
+                          _skey=_SYS_SUMMARY_KEY):
             try:
+                _restore(_tool)
                 import sys as _sys
                 if _existing is not None:
                     _existing.apply_run_results(data)
@@ -2726,7 +2832,7 @@ class ClashViewsWindow(forms.WPFWindow):
                     data['sheet'], data['view_names'], data['total_clashes'],
                     data['clash_pairs'], data.get('marker_data'),
                     tool_window=_tool)
-                _sys._pyBS_clash_summary_window = summary_window
+                _retain(_sys, _skey, summary_window)
                 summary_window.Show()
             except Exception as ex:
                 _logger.debug("Failed to show summary window: {}".format(ex))
@@ -3335,10 +3441,27 @@ class ClashViewsSummaryWindow(forms.WPFWindow):
         self._refresh_busy = False
         self._marker_driver = None
         self._annotations_visible = False
+        self._doc = None
+        self._uidoc = None
+        self._clash_globals_snap = None
+        if tool_window is not None:
+            self._doc = getattr(tool_window, '_doc', None)
+            self._uidoc = getattr(tool_window, '_uidoc', None)
+            self._clash_globals_snap = getattr(tool_window, '_clash_globals_snap', None)
+        if self._doc is None:
+            self._doc = doc
+        if self._uidoc is None:
+            self._uidoc = uidoc
+        if self._clash_globals_snap is None:
+            self._clash_globals_snap = dict(globals())
+        _sys_retain(sys, _SYS_SUMMARY_KEY, self)
         self.Closing += self._on_window_closing
         self._bind_summary_data(
             sheet, view_names, total_clashes, clash_pairs, marker_data or {},
             start_markers=True)
+
+    def _summary_doc(self):
+        return getattr(self, '_doc', None) or doc
 
     def _bind_summary_data(self, sheet, view_names, total_clashes, clash_pairs,
                            marker_data, start_markers=True):
@@ -3379,11 +3502,22 @@ class ClashViewsSummaryWindow(forms.WPFWindow):
 
         self._annotations_visible = False
         if hasattr(self, "annotationsToggle") and self.annotationsToggle:
+            self.annotationsToggle.IsEnabled = True
             self.annotationsToggle.IsChecked = False
+
+    def detach_replaced_run(self):
+        """Stop Visibility Options from targeting a sheet that Refresh deleted."""
+        self._sheet = None
+        self._marker_view_points = {}
+        if hasattr(self, "annotationsToggle") and self.annotationsToggle:
+            self.annotationsToggle.IsEnabled = False
+        if hasattr(self, "markersToggle") and self.markersToggle:
+            self.markersToggle.IsEnabled = False
 
     def _setup_markers_toggle(self, start_markers=True):
         if not (hasattr(self, "markersToggle") and self.markersToggle):
             return
+        document = self._summary_doc()
         if not self._markers_available:
             self.markersToggle.IsChecked = False
             self.markersToggle.IsEnabled = False
@@ -3396,7 +3530,7 @@ class ClashViewsSummaryWindow(forms.WPFWindow):
             self.markersToggle.IsEnabled = True
             toggle_on = True
             if is_marker_toggle_active is not None:
-                toggle_on = is_marker_toggle_active(doc)
+                toggle_on = is_marker_toggle_active(document)
             self.markersToggle.IsChecked = toggle_on
             if start_markers and toggle_on:
                 self._start_marker_driver()
@@ -3406,7 +3540,7 @@ class ClashViewsSummaryWindow(forms.WPFWindow):
 
     def apply_run_results(self, data, _restore=_restore_clash_globals):
         """Replace summary contents after a Refresh rebuild."""
-        _restore()
+        _restore(self)
         data = data or {}
         self._stop_marker_driver()
         self._bind_summary_data(
@@ -3424,17 +3558,17 @@ class ClashViewsSummaryWindow(forms.WPFWindow):
             self.refreshButton.IsEnabled = True
             self.refreshButton.Content = "Refresh clashes"
 
-    def refreshButton_Click(self, sender, args):
+    def refreshButton_Click(self, sender, args, _restore=_restore_clash_globals):
         """Re-run clash detection with the same categories and settings."""
         import sys as _sys
-        _fn = getattr(_sys, '_pyBS_clash_restore', None)
-        if _fn is not None:
-            _fn()
+        _restore(self)
         if getattr(self, '_refresh_busy', False):
             return
         tool = getattr(self, '_tool_window', None)
         if tool is None:
-            tool = getattr(_sys, '_pyBS_clash_tool_window', None)
+            held = getattr(_sys, _SYS_TOOL_KEY, None) or []
+            if held:
+                tool = held[-1]
         if tool is None or not hasattr(tool, 'refresh_clash_views'):
             forms.alert(
                 "Cannot refresh: original clash run is no longer available.",
@@ -3455,6 +3589,8 @@ class ClashViewsSummaryWindow(forms.WPFWindow):
             forms.alert("Refresh failed: {}".format(ex), title="Error")
             self._refresh_busy = False
             self._reset_refresh_button()
+            if hasattr(self, "annotationsToggle") and self.annotationsToggle:
+                self.annotationsToggle.IsEnabled = True
             if hasattr(self, "markersToggle") and self.markersToggle \
                     and bool(self.markersToggle.IsChecked):
                 self._start_marker_driver()
@@ -3466,6 +3602,8 @@ class ClashViewsSummaryWindow(forms.WPFWindow):
         if status != 'ok':
             self._refresh_busy = False
             self._reset_refresh_button()
+            if hasattr(self, "annotationsToggle") and self.annotationsToggle:
+                self.annotationsToggle.IsEnabled = True
             if hasattr(self, "markersToggle") and self.markersToggle \
                     and bool(self.markersToggle.IsChecked):
                 self._start_marker_driver()
@@ -3498,12 +3636,12 @@ class ClashViewsSummaryWindow(forms.WPFWindow):
                 sep.Margin = Thickness(0, 4, 0, 4)
                 self.viewsListPanel.Children.Add(sep)
 
-    def AnnotationsToggle_Changed(self, sender, args):
+    def AnnotationsToggle_Changed(self, sender, args, _restore=_restore_clash_globals):
         """Handle annotation visibility toggle."""
-        import sys as _sys
-        _fn = getattr(_sys, '_pyBS_clash_restore', None)
-        if _fn is not None:
-            _fn()
+        _restore(self)
+        if not (hasattr(self, "annotationsToggle") and self.annotationsToggle
+                and self.annotationsToggle.IsEnabled):
+            return
         is_checked = bool(self.annotationsToggle.IsChecked)
         if is_checked == self._annotations_visible:
             return
@@ -3512,17 +3650,18 @@ class ClashViewsSummaryWindow(forms.WPFWindow):
         if self._sheet is None:
             return
 
+        document = self._summary_doc()
         # Update all created views
-        with Transaction(doc, "Toggle Annotations Visibility") as t:
+        with Transaction(document, "Toggle Annotations Visibility") as t:
             t.Start()
             try:
                 viewport_ids = self._sheet.GetAllViewports()
                 for vp_id in viewport_ids:
                     try:
-                        viewport = doc.GetElement(vp_id)
+                        viewport = document.GetElement(vp_id)
                         if viewport is not None:
                             view_id = viewport.ViewId
-                            view_obj = doc.GetElement(view_id)
+                            view_obj = document.GetElement(view_id)
                             if view_obj is not None:
                                 _set_annotation_categories_visible(view_obj, is_checked)
                                 _hide_scope_boxes(view_obj)
@@ -3536,14 +3675,15 @@ class ClashViewsSummaryWindow(forms.WPFWindow):
         logger.debug("Annotations {} in all clash views".format(status))
 
     def _start_marker_driver(self, _restore=_restore_clash_globals):
-        _restore()
+        _restore(self)
         if not _CLASH_MARKERS_AVAILABLE or start_or_get_driver is None:
             return
         if not self._marker_view_points:
             return
+        document = self._summary_doc()
         try:
             driver = start_or_get_driver(
-                __revit__, doc, self._marker_view_points,
+                __revit__, document, self._marker_view_points,
                 get_element_id_value, logger=None)
             if driver is None:
                 return
@@ -3553,15 +3693,16 @@ class ClashViewsSummaryWindow(forms.WPFWindow):
             driver.set_enabled(enabled)
             self._marker_driver = driver
             if set_marker_toggle_active is not None and hasattr(self, "markersToggle"):
-                set_marker_toggle_active(doc, enabled)
+                set_marker_toggle_active(document, enabled)
         except Exception as ex:
             logger.warning("Failed to start clash marker driver: {}".format(ex))
 
     def _stop_marker_driver(self, _restore=_restore_clash_globals):
         """Stop global clash marker session (ribbon OFF / explicit cleanup)."""
-        _restore()
+        _restore(self)
+        document = self._summary_doc()
         if clean_marker_session is not None:
-            clean_marker_session(doc)
+            clean_marker_session(document)
         else:
             if self._marker_driver is not None:
                 try:
@@ -3574,21 +3715,22 @@ class ClashViewsSummaryWindow(forms.WPFWindow):
         """Drop summary-window ref without stopping the shared session driver."""
         self._marker_driver = None
 
-    def MarkersToggle_Changed(self, sender, args):
-        import sys as _sys
-        _fn = getattr(_sys, '_pyBS_clash_restore', None)
-        if _fn is not None:
-            _fn()
+    def MarkersToggle_Changed(self, sender, args, _restore=_restore_clash_globals):
+        _restore(self)
+        if not (hasattr(self, "markersToggle") and self.markersToggle
+                and self.markersToggle.IsEnabled):
+            return
         if not self._markers_available:
             return
+        document = self._summary_doc()
         is_checked = bool(self.markersToggle.IsChecked)
         if set_marker_toggle_active is not None:
-            set_marker_toggle_active(doc, is_checked)
+            set_marker_toggle_active(document, is_checked)
         if not is_checked:
             self._stop_marker_driver()
         else:
             if self._marker_driver is None and find_marker_driver is not None:
-                self._marker_driver = find_marker_driver(doc)
+                self._marker_driver = find_marker_driver(document)
             if self._marker_driver is None:
                 self._start_marker_driver()
             elif self._marker_driver is not None:
@@ -3596,6 +3738,7 @@ class ClashViewsSummaryWindow(forms.WPFWindow):
 
     def _on_window_closing(self, sender, args):
         self._release_marker_driver_ref()
+        _sys_release(sys, _SYS_SUMMARY_KEY, self)
 
     def closeButton_Click(self, sender, args):
         """Close the dialog."""
