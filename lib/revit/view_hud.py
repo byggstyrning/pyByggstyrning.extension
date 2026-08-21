@@ -101,6 +101,7 @@ from System.Windows.Media import SolidColorBrush, Color, Brushes, FontFamily
 from System.Windows.Media.Animation import DoubleAnimation, FillBehavior
 from System.Windows.Threading import DispatcherTimer
 
+from Autodesk.Revit.DB import ViewType
 from Autodesk.Revit.UI import IExternalEventHandler, ExternalEvent
 
 from revit.compat import get_element_id_value
@@ -113,6 +114,14 @@ _THROTTLE_MS = 80
 _MOVE_WATCH_MS = 100
 _OFFSCREEN = -32000
 _FADE_IN_MS = 70
+
+# Overlay is for graphical model views only (plans, 3D, sections, …).
+_HUD_HIDDEN_VIEW_TYPES = (
+    ViewType.DrawingSheet,
+    ViewType.Schedule,
+    ViewType.ColumnSchedule,
+    ViewType.PanelSchedule,
+)
 
 _GWL_EXSTYLE = -20
 _WS_EX_TOOLWINDOW = 0x00000080
@@ -235,6 +244,18 @@ def revit_main_window_handle(uiapp):
         return Process.GetCurrentProcess().MainWindowHandle
     except Exception:
         return None
+
+
+def view_supports_hud(view):
+    """False for templates, sheets, and schedules (incl. panel/column)."""
+    if view is None:
+        return False
+    try:
+        if view.IsTemplate:
+            return False
+        return view.ViewType not in _HUD_HIDDEN_VIEW_TYPES
+    except Exception:
+        return False
 
 
 def get_uiview(uiapp, view_id):
@@ -1494,7 +1515,7 @@ class ViewHudHost(object):
             self._hide()
             return
         view = uidoc.ActiveView
-        if view is None or view.IsTemplate:
+        if not view_supports_hud(view):
             self._hide()
             return
 
@@ -1516,7 +1537,7 @@ class ViewHudHost(object):
             self._hide()
             return
         view = uidoc.ActiveView
-        if view is None or view.IsTemplate:
+        if not view_supports_hud(view):
             self._hide()
             return
 
