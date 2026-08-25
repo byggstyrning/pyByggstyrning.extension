@@ -21,7 +21,7 @@ pyBS tab
 | **MEP Spaces**      | Create Spaces from Link, Update Spaces, Tag All Spaces                                                                   |
 | **3D Zone**         | Edit Spatial Mappings, Create 3D Zones from Rooms / Areas / Regions, Mass from Regions, Write Mappings, Isolate 3D Zones |
 | **View**            | Color Elements, Reset                                                                                                    |
-| **Coordination**    | Clash Views                                                                                                              |
+| **Coordination**    | Clash Views, Markers, Mirror Project                                                                                     |
 
 
 # Extra Features
