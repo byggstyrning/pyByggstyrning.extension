@@ -27,8 +27,8 @@ CLASH_SESSION_ID = 'clash'
 
 CLASH_MARKER_STYLE = MarkerStyle(
     cache_subdir='pyBS_view_markers',
-    cache_version='v8',
-    marker_bmp_size=40,
+    cache_version='v9',
+    marker_bmp_size=36,
     dot_diameter=14,
 )
 

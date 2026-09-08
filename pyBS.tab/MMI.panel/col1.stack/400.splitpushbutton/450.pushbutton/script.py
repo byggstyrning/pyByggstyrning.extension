@@ -29,8 +29,13 @@ from pyrevit import revit, script
 from mmi.core import set_selection_mmi_value
 from mmi.utils import select_elements_by_mmi
 
-# Check if shift is held (alternative to config.py)
-is_shift = script.get_config().get_option('shiftclick', False)
+# Check if shift is held. pyRevit signals Shift+Click as "config mode" via
+# EXEC_PARAMS, not as a persisted config option.
+try:
+    from pyrevit import EXEC_PARAMS
+    is_shift = bool(EXEC_PARAMS.config_mode)
+except Exception:
+    is_shift = script.get_config().get_option('shiftclick', False)
 
 # Check if there's a selection
 selection = revit.get_selection()

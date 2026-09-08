@@ -42,8 +42,8 @@
 
         <!-- Arrow Separator -->
         <StackPanel Grid.Row="1" Grid.Column="1" VerticalAlignment="Center" Margin="10,0">
-            <TextBlock Text="→" FontSize="32" FontWeight="Bold" 
-                       Foreground="{DynamicResource AccentBrush}" 
+            <TextBlock Text="→" FontSize="32" FontWeight="Bold"
+                       Foreground="{DynamicResource ArrowBrush}"
                        HorizontalAlignment="Center"
                        Style="{DynamicResource DefaultTextBlockStyle}"/>
             <TextBlock Text="maps to" FontSize="11" 

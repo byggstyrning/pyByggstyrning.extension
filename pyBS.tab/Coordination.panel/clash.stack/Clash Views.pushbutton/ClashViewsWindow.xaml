@@ -166,16 +166,30 @@
                          IsEnabled="{Binding IsChecked, ElementName=againstLinkToggle}"
                          TextChanged="linkCategorySearchTextBox_TextChanged"/>
 
-                <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8">
-                    <Button x:Name="linkSelectAllButton" Content="Select all" Width="88" Height="26" Margin="0,0,8,0"
-                            Style="{DynamicResource StandardButtonStyle}"
-                            IsEnabled="{Binding IsChecked, ElementName=againstLinkToggle}"
-                            Click="linkSelectAllButton_Click"/>
-                    <Button x:Name="linkDeselectAllButton" Content="Deselect all" Width="88" Height="26"
-                            Style="{DynamicResource SecondaryButtonStyle}"
-                            IsEnabled="{Binding IsChecked, ElementName=againstLinkToggle}"
-                            Click="linkDeselectAllButton_Click"/>
-                </StackPanel>
+                <Grid Grid.Row="2" Margin="0,0,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Orientation="Horizontal">
+                        <Button x:Name="linkSelectAllButton" Content="Select all" Width="88" Height="26" Margin="0,0,8,0"
+                                Style="{DynamicResource StandardButtonStyle}"
+                                IsEnabled="{Binding IsChecked, ElementName=againstLinkToggle}"
+                                Click="linkSelectAllButton_Click"/>
+                        <Button x:Name="linkDeselectAllButton" Content="Deselect all" Width="88" Height="26"
+                                Style="{DynamicResource SecondaryButtonStyle}"
+                                IsEnabled="{Binding IsChecked, ElementName=againstLinkToggle}"
+                                Click="linkDeselectAllButton_Click"/>
+                    </StackPanel>
+                    <CheckBox Grid.Column="2" x:Name="combineLinkViewsToggle"
+                              Content="Combined"
+                              IsChecked="False"
+                              Style="{DynamicResource ToggleSwitchStyle}"
+                              VerticalAlignment="Center"
+                              IsEnabled="{Binding IsChecked, ElementName=againstLinkToggle}"
+                              ToolTip="Off: one view per host × link category pair. On: one view per host category, all selected link categories combined."/>
+                </Grid>
 
                 <!-- Link category list -->
                 <Border Grid.Row="3" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="3"

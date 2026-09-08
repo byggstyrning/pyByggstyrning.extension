@@ -181,7 +181,13 @@ if __name__ == '__main__':
                 title="Clash Markers")
     else:
         view_points = _session_view_points()
-        is_shift = script.get_config().get_option('shiftclick', False)
+        # pyRevit signals Shift+Click as "config mode" via EXEC_PARAMS,
+        # not as a persisted config option
+        try:
+            from pyrevit import EXEC_PARAMS
+            is_shift = bool(EXEC_PARAMS.config_mode)
+        except Exception:
+            is_shift = script.get_config().get_option('shiftclick', False)
         if is_shift:
             _markers_refresh(view_points)
         else:
