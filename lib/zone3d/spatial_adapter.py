@@ -928,8 +928,11 @@ class RegionAdapter(SpatialElementAdapter):
                 bindings are extended; type bindings are reported instead.
             material_source: where the zone's material name comes from. None leaves the
                 material alone; MATERIAL_FROM_TYPE_NAME uses the filled region's type
-                name (e.g. "OOMB 800"); any other string is a region parameter whose
-                value is the material name (e.g. "OP_Kalkylgrupp" -> "OOMB").
+                name (e.g. "OOMB 800"); a string with {Param} tags is a name template;
+                any other string is a region parameter whose value is the material name
+                (e.g. "OP_Kalkylgrupp" -> "OOMB"); a dict {"keys": [...], "map": {...}}
+                is an explicit mapping from a "|"-joined combination of region parameter
+                values to a material name (e.g. "300|KOMB" -> "3Dzone(350)-KOMB").
             material_param: name of the zone family's material parameter.
             create_missing_materials: create a material with that name (deterministic
                 colour from the name) when the project has none, instead of skipping.
@@ -953,6 +956,7 @@ class RegionAdapter(SpatialElementAdapter):
             "materials_created": set(),
             "materials_missing": set(),  # names with no material and creation off/failed
             "material_param_missing": False,
+            "unmapped_combos": set(),    # explicit mapping: combinations with no material chosen
         }
 
     # ------------------------------------------------------------------
@@ -990,6 +994,17 @@ class RegionAdapter(SpatialElementAdapter):
         src = self.material_source
         if not src:
             return []
+        if isinstance(src, dict):
+            # Explicit mapping: {"keys": [param names], "map": {"300|KOMB": "3Dzone(350)-KOMB"}}
+            values = [self._region_param_text(source_element, k) for k in src.get("keys", [])]
+            if not values or any(not v for v in values):
+                return []
+            combo = "|".join(values)
+            name = (src.get("map", {}).get(combo) or "").strip()
+            if not name:
+                self.copy_report.setdefault("unmapped_combos", set()).add(combo)
+                return []
+            return [name]
         if src == self.MATERIAL_FROM_TYPE_NAME:
             try:
                 rtype = doc.GetElement(source_element.GetTypeId())

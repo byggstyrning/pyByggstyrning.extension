@@ -14,8 +14,11 @@ still cannot be written is listed in a summary afterwards.
 A second question sets the zones' Material: none, a material named like the
 region type (e.g. "OOMB 800"), named after a region parameter's value (e.g.
 OP_Kalkylgrupp -> "OOMB"), or built from a template with {Parameter} tags such
-as "3Dzone({OP_Husdel})-{OP_Kalkylgrupp}". Names are matched ignoring case and
-spaces, so an existing "3DZone(800)" or "3Dzone (800)" is reused; when the full
+as "3Dzone({OP_Husdel})-{OP_Kalkylgrupp}", or picked explicitly per combination
+of region values (e.g. OP_Husdel=300 + OP_Kalkylgrupp=KOMB -> "3Dzone(350)-KOMB")
+when the project's material names follow no derivable rule. Explicit picks are
+remembered and only new combinations are asked for. Names are matched ignoring
+case and spaces, so an existing "3DZone(800)" or "3Dzone (800)" is reused; when a
 templated name has no match, trailing "-part" segments are dropped one at a time
 before a new material is created with a colour derived from its name.
 """
@@ -28,6 +31,7 @@ __doc__ = ("Create Generic Model family instances from FilledRegion boundaries u
 
 # Import standard libraries
 import sys
+import json
 import os.path as op
 
 # Import Revit API
@@ -187,24 +191,138 @@ def choose_parameters_to_copy(filled_regions, candidates):
 MATERIAL_NONE = "No material (leave as is)"
 MATERIAL_TYPE_NAME = "Region type name  (e.g. 'OOMB 800')"
 MATERIAL_TEMPLATE = "Name template with {Parameter} tags  (e.g. '3Dzone({OP_Husdel})-{OP_Kalkylgrupp}')"
+MATERIAL_MAP = "Pick per husdel/kalkylgrupp combination  (asks only for new combinations, remembered)"
+MATERIAL_MAP_REVIEW = "Pick per combination, review all remembered choices"
+MATERIAL_MAP_MARKER = "__map__"
+MAP_CONFIG_KEY = "region_material_map"       # JSON: {"keys": [...], "map": {"300|KOMB": "..."}}
 DEFAULT_TEMPLATE = "3Dzone({OP_Husdel})-{OP_Kalkylgrupp}"
+PREFERRED_KEY_PARAMS = ["OP_Husdel", "OP_Kalkylgrupp"]
 
 
-def choose_material_source(candidates):
+def _load_material_map(cfg):
+    raw = cfg.get_option(MAP_CONFIG_KEY, "")
+    try:
+        data = json.loads(raw) if raw else {}
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    data.setdefault("keys", [])
+    data.setdefault("map", {})
+    return data
+
+
+def _project_material_names(doc):
+    names = []
+    for mat in FilteredElementCollector(doc).OfClass(Material):
+        try:
+            names.append(mat.Name)
+        except Exception:
+            continue
+    # zone materials first, then the rest, both alphabetical
+    zone = sorted(n for n in names if "zone" in n.lower())
+    rest = sorted(n for n in names if "zone" not in n.lower())
+    return zone + rest
+
+
+def _suggest_material(material_names, combo_values):
+    """Best guess for a combination, only used to pre-select in the picker.
+
+    First a name containing every value (shortest wins), then one containing just the
+    first value (e.g. the husdel). With names like "3Dzone(350)-KOMB" for husdel 300
+    there is often no guess at all, which is exactly why the user picks explicitly.
+    """
+    lookup = lambda s: "".join(s.split()).lower()
+    for wanted in (combo_values, combo_values[:1]):
+        best = None
+        for name in material_names:
+            key = lookup(name)
+            if all(lookup(v) in key for v in wanted):
+                if best is None or len(name) < len(best):
+                    best = name
+        if best:
+            return best
+    return None
+
+
+def build_material_map(filled_regions, candidates, doc, review_all):
+    """Explicit combination -> material mapping, chosen by the user and remembered.
+
+    Returns {"keys": [...], "map": {...}} or None if cancelled.
+    """
+    cfg = script.get_config()
+    data = _load_material_map(cfg)
+
+    usable = [n for n in sorted(candidates) if candidates[n]["storage"] in (StorageType.String, StorageType.Integer)]
+    keys = [k for k in data["keys"] if k in usable]
+    if not keys:
+        keys = [k for k in PREFERRED_KEY_PARAMS if k in usable]
+    if not keys or review_all:
+        picked = forms.SelectFromList.show(
+            [forms.TemplateListItem(n, checked=(n in keys)) for n in usable],
+            title="Which region parameters identify the material?",
+            button_name="Continue", multiselect=True, width=500, height=350)
+        if not picked:
+            return None
+        keys = list(picked)
+    if keys != data["keys"]:
+        data["keys"] = keys
+        data["map"] = {}   # a different key set invalidates old combinations
+
+    combos = {}
+    for region in filled_regions:
+        values = []
+        for k in keys:
+            p = region.LookupParameter(k)
+            values.append(_param_value_text(p) if p is not None and p.HasValue else "")
+        if all(values):
+            combos["|".join(values)] = values
+
+    material_names = _project_material_names(doc)
+    if not material_names:
+        forms.alert("The project has no materials to choose from.", title="Material per combination")
+        return None
+
+    to_ask = sorted(c for c in combos if review_all or c not in data["map"])
+    for i, combo in enumerate(to_ask):
+        values = combos[combo]
+        current = data["map"].get(combo) or _suggest_material(material_names, values)
+        ordered = list(material_names)
+        if current in ordered:
+            ordered.remove(current)
+            ordered.insert(0, current)
+        label = ", ".join("{}={}".format(k, v) for k, v in zip(keys, values))
+        items = [forms.TemplateListItem(n, checked=(n == current)) for n in ordered]
+        chosen = forms.SelectFromList.show(
+            items,
+            title="Material for {}   ({} of {})".format(label, i + 1, len(to_ask)),
+            button_name="Use this material", multiselect=False, width=600, height=550)
+        if chosen is None:
+            return None
+        data["map"][combo] = chosen
+
+    cfg.set_option(MAP_CONFIG_KEY, json.dumps(data))
+    script.save_config()
+    return data
+
+
+def choose_material_source(candidates, filled_regions, doc):
     """Ask where the zone material name should come from.
 
     Returns None if cancelled, "" for no material, RegionAdapter.MATERIAL_FROM_TYPE_NAME
-    for the region type name, a region parameter name, or a name template containing
-    {Parameter} tags. Remembered in user config.
+    for the region type name, a region parameter name, a name template containing
+    {Parameter} tags, or a {"keys", "map"} dict for an explicit mapping. Remembered.
     """
     string_params = sorted(n for n, e in candidates.items() if e["storage"] == StorageType.String)
-    options = [MATERIAL_NONE, MATERIAL_TYPE_NAME, MATERIAL_TEMPLATE] + \
+    options = [MATERIAL_NONE, MATERIAL_MAP, MATERIAL_MAP_REVIEW, MATERIAL_TYPE_NAME, MATERIAL_TEMPLATE] + \
               ["Parameter {}".format(n) for n in string_params]
 
     cfg = script.get_config()
     previous = cfg.get_option(MATERIAL_CONFIG_KEY, "")
     default = MATERIAL_NONE
-    if previous == RegionAdapter.MATERIAL_FROM_TYPE_NAME:
+    if previous == MATERIAL_MAP_MARKER:
+        default = MATERIAL_MAP
+    elif previous == RegionAdapter.MATERIAL_FROM_TYPE_NAME:
         default = MATERIAL_TYPE_NAME
     elif previous and "{" in previous:
         default = MATERIAL_TEMPLATE
@@ -224,6 +342,13 @@ def choose_material_source(candidates):
         return None
     if picked == MATERIAL_NONE:
         source = ""
+    elif picked in (MATERIAL_MAP, MATERIAL_MAP_REVIEW):
+        mapping = build_material_map(filled_regions, candidates, doc, review_all=(picked == MATERIAL_MAP_REVIEW))
+        if mapping is None:
+            return None
+        cfg.set_option(MATERIAL_CONFIG_KEY, MATERIAL_MAP_MARKER)
+        script.save_config()
+        return mapping
     elif picked == MATERIAL_TYPE_NAME:
         source = RegionAdapter.MATERIAL_FROM_TYPE_NAME
     elif picked == MATERIAL_TEMPLATE:
@@ -274,6 +399,9 @@ def report_parameter_copy(adapter, parameters_to_copy):
         problems.append("The zone family has no writable '{}' parameter; material not set".format(adapter.material_param))
     if rep["materials_missing"]:
         problems.append("No material found or created for: " + ", ".join(sorted(rep["materials_missing"])))
+    if rep.get("unmapped_combos"):
+        problems.append("No material chosen for combination(s): " + ", ".join(sorted(rep["unmapped_combos"])) +
+                        "  (run again and pick 'review all')")
     if rep["missing"]:
         problems.append("Not found on the 3D zone and could not be bound: " + ", ".join(sorted(rep["missing"])))
     if rep["type_mismatch"]:
@@ -351,7 +479,7 @@ if __name__ == '__main__':
     parameters_to_copy = choose_parameters_to_copy(filled_regions, candidates)
     if parameters_to_copy is None:
         script.exit()
-    material_source = choose_material_source(candidates)
+    material_source = choose_material_source(candidates, filled_regions, doc)
     if material_source is None:
         script.exit()
 
