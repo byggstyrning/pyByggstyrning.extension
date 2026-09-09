@@ -958,36 +958,82 @@ class RegionAdapter(SpatialElementAdapter):
     # ------------------------------------------------------------------
     # Material from region type name or a region parameter value
     # ------------------------------------------------------------------
-    def _material_key(self, source_element, doc):
-        if not self.material_source:
-            return None
-        if self.material_source == self.MATERIAL_FROM_TYPE_NAME:
-            try:
-                rtype = doc.GetElement(source_element.GetTypeId())
-                return (rtype.Name or "").strip() if rtype is not None else None
-            except Exception:
-                return None
-        param = source_element.LookupParameter(self.material_source)
+    @staticmethod
+    def _material_lookup_key(name):
+        # "3DZone(100)", "3Dzone(100)" and "3Dzone (100)" all exist in real projects and
+        # mean the same thing: compare without case and without spaces.
+        return "".join(name.split()).lower()
+
+    def _region_param_text(self, source_element, param_name):
+        param = source_element.LookupParameter(param_name)
         if param is None or not param.HasValue:
-            return None
+            return ""
         if param.StorageType == StorageType.String:
             return (param.AsString() or "").strip()
         try:
             return (param.AsValueString() or "").strip()
         except Exception:
-            return None
+            return ""
 
-    def _find_or_create_material(self, doc, name):
+    def _material_keys(self, source_element, doc):
+        """Return candidate material names, most specific first, or [] for none.
+
+        material_source may be:
+          MATERIAL_FROM_TYPE_NAME      -> [region type name]
+          a parameter name             -> [that parameter's value]
+          a template with {Param} tags -> the rendered name, then the same name with
+                                          trailing "-part" segments dropped one at a
+                                          time, e.g. "3Dzone(800)-OOMB" -> "3Dzone(800)".
+                                          A tag whose parameter is empty makes the
+                                          template yield nothing.
+        """
+        src = self.material_source
+        if not src:
+            return []
+        if src == self.MATERIAL_FROM_TYPE_NAME:
+            try:
+                rtype = doc.GetElement(source_element.GetTypeId())
+                name = (rtype.Name or "").strip() if rtype is not None else ""
+            except Exception:
+                name = ""
+            return [name] if name else []
+        if "{" not in src:
+            name = self._region_param_text(source_element, src)
+            return [name] if name else []
+        # template
+        import re
+        missing = []
+        def sub(match):
+            value = self._region_param_text(source_element, match.group(1).strip())
+            if not value:
+                missing.append(match.group(1))
+            return value
+        rendered = re.sub(r"\{([^}]+)\}", sub, src).strip()
+        if missing or not rendered:
+            return []
+        names = [rendered]
+        head = rendered
+        while "-" in head:
+            head = head.rsplit("-", 1)[0].strip()
+            if head:
+                names.append(head)
+        return names
+
+    def _find_or_create_material(self, doc, names):
+        """names: candidate names, most specific first. Reuse the first that exists;
+        otherwise create the most specific one (if enabled)."""
         if self._material_cache is None:
             self._material_cache = {}
             for mat in FilteredElementCollector(doc).OfClass(Material):
                 try:
-                    self._material_cache[mat.Name.strip().lower()] = mat
+                    self._material_cache.setdefault(self._material_lookup_key(mat.Name), mat)
                 except Exception:
                     continue
-        mat = self._material_cache.get(name.lower())
-        if mat is not None:
-            return mat
+        for candidate in names:
+            mat = self._material_cache.get(self._material_lookup_key(candidate))
+            if mat is not None:
+                return mat
+        name = names[0]
         if not self.create_missing_materials:
             return None
         try:
@@ -1000,7 +1046,7 @@ class RegionAdapter(SpatialElementAdapter):
             r, g, b = 80 + (h & 0x7F), 80 + ((h >> 8) & 0x7F), 80 + ((h >> 16) & 0x7F)
             mat.Color = Color(r, g, b)
             mat.UseRenderAppearanceForShading = False
-            self._material_cache[name.lower()] = mat
+            self._material_cache[self._material_lookup_key(name)] = mat
             self.copy_report["materials_created"].add(name)
             logger.info("Created material '{}'".format(name))
             return mat
@@ -1010,24 +1056,25 @@ class RegionAdapter(SpatialElementAdapter):
 
     def _assign_material(self, source_element, target_instance, doc):
         rep = self.copy_report
-        name = self._material_key(source_element, doc)
-        if not name:
+        names = self._material_keys(source_element, doc)
+        if not names:
             return
         tgt = self._find_target_param(target_instance, self.material_param)
         if tgt is None or tgt.IsReadOnly or tgt.StorageType != StorageType.ElementId:
             rep["material_param_missing"] = True
             return
-        mat = self._find_or_create_material(doc, name)
+        mat = self._find_or_create_material(doc, names)
         if mat is None:
-            rep["materials_missing"].add(name)
+            rep["materials_missing"].add(names[0])
             return
         try:
             if not tgt.HasValue or tgt.AsElementId() != mat.Id:
                 tgt.Set(mat.Id)
-            rep["materials"][name] = rep["materials"].get(name, 0) + 1
+            used = mat.Name
+            rep["materials"][used] = rep["materials"].get(used, 0) + 1
         except Exception as e:
-            logger.debug("Could not set material '{}' on {}: {}".format(name, target_instance.Id, e))
-            rep["materials_missing"].add(name)
+            logger.debug("Could not set material '{}' on {}: {}".format(mat.Name, target_instance.Id, e))
+            rep["materials_missing"].add(mat.Name)
 
     def set_active_view(self, view):
         """Set the active view for phase handling.

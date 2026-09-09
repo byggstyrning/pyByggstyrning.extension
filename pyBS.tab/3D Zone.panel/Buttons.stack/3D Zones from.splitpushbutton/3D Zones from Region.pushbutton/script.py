@@ -12,9 +12,12 @@ project binding extended to Generic Models so the value can land; anything that
 still cannot be written is listed in a summary afterwards.
 
 A second question sets the zones' Material: none, a material named like the
-region type (e.g. "OOMB 800"), or named after a region parameter's value (e.g.
-OP_Kalkylgrupp -> "OOMB"). A missing material is created with a colour derived
-from its name, so every zone gets a material without editing them one by one.
+region type (e.g. "OOMB 800"), named after a region parameter's value (e.g.
+OP_Kalkylgrupp -> "OOMB"), or built from a template with {Parameter} tags such
+as "3Dzone({OP_Husdel})-{OP_Kalkylgrupp}". Names are matched ignoring case and
+spaces, so an existing "3DZone(800)" or "3Dzone (800)" is reused; when the full
+templated name has no match, trailing "-part" segments are dropped one at a time
+before a new material is created with a colour derived from its name.
 """
 
 __title__ = "Create 3D Zones from Regions"
@@ -183,22 +186,28 @@ def choose_parameters_to_copy(filled_regions, candidates):
 
 MATERIAL_NONE = "No material (leave as is)"
 MATERIAL_TYPE_NAME = "Region type name  (e.g. 'OOMB 800')"
+MATERIAL_TEMPLATE = "Name template with {Parameter} tags  (e.g. '3Dzone({OP_Husdel})-{OP_Kalkylgrupp}')"
+DEFAULT_TEMPLATE = "3Dzone({OP_Husdel})-{OP_Kalkylgrupp}"
 
 
 def choose_material_source(candidates):
     """Ask where the zone material name should come from.
 
     Returns None if cancelled, "" for no material, RegionAdapter.MATERIAL_FROM_TYPE_NAME
-    for the region type name, or a region parameter name. Remembered in user config.
+    for the region type name, a region parameter name, or a name template containing
+    {Parameter} tags. Remembered in user config.
     """
     string_params = sorted(n for n, e in candidates.items() if e["storage"] == StorageType.String)
-    options = [MATERIAL_NONE, MATERIAL_TYPE_NAME] + ["Parameter {}".format(n) for n in string_params]
+    options = [MATERIAL_NONE, MATERIAL_TYPE_NAME, MATERIAL_TEMPLATE] + \
+              ["Parameter {}".format(n) for n in string_params]
 
     cfg = script.get_config()
     previous = cfg.get_option(MATERIAL_CONFIG_KEY, "")
     default = MATERIAL_NONE
     if previous == RegionAdapter.MATERIAL_FROM_TYPE_NAME:
         default = MATERIAL_TYPE_NAME
+    elif previous and "{" in previous:
+        default = MATERIAL_TEMPLATE
     elif previous and previous in string_params:
         default = "Parameter {}".format(previous)
 
@@ -210,13 +219,29 @@ def choose_material_source(candidates):
     picked = forms.CommandSwitchWindow.show(
         options,
         message="Material on the 3D zones: take the material name from ... "
-                "(a material with that name is created if the project has none)")
+                "(matched ignoring case and spaces; created if the project has none)")
     if picked is None:
         return None
     if picked == MATERIAL_NONE:
         source = ""
     elif picked == MATERIAL_TYPE_NAME:
         source = RegionAdapter.MATERIAL_FROM_TYPE_NAME
+    elif picked == MATERIAL_TEMPLATE:
+        template_default = previous if (previous and "{" in previous) else DEFAULT_TEMPLATE
+        source = forms.ask_for_string(
+            default=template_default,
+            prompt="Material name template. Tags in braces are region parameters.\n"
+                   "If no material matches the full name, trailing '-part' segments are\n"
+                   "dropped one at a time: '3Dzone(800)-OOMB' falls back to '3Dzone(800)'.\n\n"
+                   "Available: " + ", ".join("{" + n + "}" for n in string_params),
+            title="Material name template")
+        if source is None:
+            return None
+        source = source.strip()
+        if "{" not in source:
+            forms.alert("The template has no {Parameter} tag; no material will be set.",
+                        title="Material name template")
+            source = ""
     else:
         source = picked[len("Parameter "):]
     cfg.set_option(MATERIAL_CONFIG_KEY, source)
