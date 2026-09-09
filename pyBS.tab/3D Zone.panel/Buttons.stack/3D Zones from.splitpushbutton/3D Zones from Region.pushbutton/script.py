@@ -4,11 +4,18 @@
 Creates Generic Model family instances using the 3DZone.rfa template,
 replacing the extrusion profile with each filled region's boundary loops.
 Instances are placed in the active view respecting the view's phase.
+
+Before creating, a checklist asks which of the regions' own instance parameters
+(e.g. OP_Husdel, OP_Kalkylgrupp) should be copied onto the zones. The choice is
+remembered between runs. A chosen parameter that the zone family lacks gets its
+project binding extended to Generic Models so the value can land; anything that
+still cannot be written is listed in a summary afterwards.
 """
 
 __title__ = "Create 3D Zones from Regions"
 __author__ = "Byggstyrning AB"
-__doc__ = "Create Generic Model family instances from FilledRegion boundaries using 3DZone.rfa template"
+__doc__ = ("Create Generic Model family instances from FilledRegion boundaries using the 3DZone.rfa "
+           "template. Asks which region parameters (e.g. OP_Husdel) to copy onto the zones.")
 
 
 # Import standard libraries
@@ -68,6 +75,134 @@ def show_region_filter_dialog(regions, doc):
     return regions
 
 
+CONFIG_KEY = "region_copy_params"
+
+
+def _is_user_parameter(param):
+    """True for shared/project parameters; False for Revit built-ins."""
+    try:
+        defn = param.Definition
+        if defn is None:
+            return False
+        bip = getattr(defn, "BuiltInParameter", None)
+        if bip is not None and bip != BuiltInParameter.INVALID:
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def _param_value_text(param):
+    try:
+        st = param.StorageType
+        if st == StorageType.String:
+            return param.AsString() or ""
+        if st == StorageType.Integer:
+            return str(param.AsInteger())
+        if st == StorageType.Double:
+            return param.AsValueString() or str(param.AsDouble())
+        if st == StorageType.ElementId:
+            return param.AsValueString() or ""
+    except Exception:
+        pass
+    return ""
+
+
+def choose_parameters_to_copy(filled_regions):
+    """Show a checklist of the regions' own instance parameters; return chosen names.
+
+    Returns a list (possibly empty = copy nothing), or None if the user cancelled.
+    The previous choice is remembered in the pyRevit user config.
+    """
+    candidates = {}  # name -> {"with_value": n, "sample": text}
+    for region in filled_regions:
+        for param in region.Parameters:
+            try:
+                if param.IsReadOnly or not _is_user_parameter(param):
+                    continue
+                if param.StorageType not in (StorageType.String, StorageType.Integer, StorageType.Double):
+                    continue
+                name = param.Definition.Name
+                entry = candidates.setdefault(name, {"with_value": 0, "sample": ""})
+                if param.HasValue:
+                    text = _param_value_text(param)
+                    if text:
+                        entry["with_value"] += 1
+                        if not entry["sample"]:
+                            entry["sample"] = text
+            except Exception:
+                continue
+
+    if not candidates:
+        forms.alert("The selected filled regions have no instance parameters of their own to copy.\n\n"
+                    "Add a shared parameter (e.g. OP_Husdel) as an Instance parameter on the "
+                    "Detail Items category, fill it on the regions, and run again.\n\n"
+                    "The zones will be created without copied parameters.",
+                    title="No parameters to copy")
+        return []
+
+    cfg = script.get_config()
+    previous = cfg.get_option(CONFIG_KEY, [])
+    if not isinstance(previous, list):
+        previous = []
+
+    class ParamItem(forms.TemplateListItem):
+        @property
+        def name(self):
+            entry = candidates[self.item]
+            label = "{}   ({}/{} regions have a value".format(self.item, entry["with_value"], len(filled_regions))
+            if entry["sample"]:
+                label += ", e.g. '{}'".format(entry["sample"])
+            return label + ")"
+
+    items = [ParamItem(n, checked=(n in previous)) for n in sorted(candidates)]
+    chosen = forms.SelectFromList.show(
+        items,
+        title="Parameters to copy from region to 3D zone",
+        button_name="Create 3D Zones",
+        multiselect=True,
+        width=650, height=450)
+    if chosen is None:
+        return None
+    chosen = list(chosen)
+    cfg.set_option(CONFIG_KEY, chosen)
+    script.save_config()
+    return chosen
+
+
+def report_parameter_copy(adapter, parameters_to_copy):
+    """Summarise what landed on the zones, and warn about what did not."""
+    rep = getattr(adapter, "copy_report", None)
+    if rep is None or not parameters_to_copy:
+        return
+    lines = []
+    for name in parameters_to_copy:
+        n = rep["copied"].get(name, 0)
+        lines.append("{}: written on {} zone(s)".format(name, n))
+    if rep["bound"]:
+        lines.append("")
+        lines.append("Binding extended to Generic Models (project parameter changed): " + ", ".join(sorted(rep["bound"])))
+    problems = []
+    if rep["missing"]:
+        problems.append("Not found on the 3D zone and could not be bound: " + ", ".join(sorted(rep["missing"])))
+    if rep["type_mismatch"]:
+        problems.append("Different data type on the 3D zone, not copied: " + ", ".join(sorted(rep["type_mismatch"])))
+    if rep["no_value"]:
+        problems.append("Empty on some regions, nothing written there: " + ", ".join(sorted(rep["no_value"])))
+    if problems:
+        lines.append("")
+        lines.extend(problems)
+    message = "\n".join(lines)
+    logger.info(message)
+    if problems:
+        forms.alert(message, title="Parameters copied to 3D zones")
+    else:
+        try:
+            script.get_output().print_md("**Parameters copied to 3D zones**\n\n" + "\n\n".join(lines))
+        except Exception:
+            pass
+
+
 # --- Main Execution ---
 
 if __name__ == '__main__':
@@ -119,9 +254,14 @@ if __name__ == '__main__':
             active_view.Name if hasattr(active_view, 'Name') else 'Unknown',
             active_view.Id if active_view else 'None'))
     
-    # Create adapter with view for phase handling
-    adapter = RegionAdapter(active_view=active_view)
-    
+    # Let the user pick which region parameters travel to the zones
+    parameters_to_copy = choose_parameters_to_copy(filled_regions)
+    if parameters_to_copy is None:
+        script.exit()
+
+    # Create adapter with view for phase handling and the chosen parameter list
+    adapter = RegionAdapter(active_view=active_view, parameters_to_copy=parameters_to_copy)
+
     # Create zones using shared orchestration function
     # Note: We bypass the dialog by providing a simple filter function
     success_count, fail_count, failed_elements, created_instance_ids = create_zones_from_spatial_elements(
@@ -133,7 +273,9 @@ if __name__ == '__main__':
         show_region_filter_dialog,
         "Regions"
     )
-    
+
+    report_parameter_copy(adapter, parameters_to_copy)
+
     # Select newly created instances
     if created_instance_ids:
         try:

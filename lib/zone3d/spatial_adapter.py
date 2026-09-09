@@ -910,15 +910,33 @@ class CurveSegmentWrapper(object):
 class RegionAdapter(SpatialElementAdapter):
     """Adapter for FilledRegion elements."""
     
-    def __init__(self, active_view=None):
+    def __init__(self, active_view=None, parameters_to_copy=None, auto_bind_missing=True):
         """Initialize adapter with active view for phase handling.
-        
+
         Args:
             active_view: View object (optional, will be retrieved from doc if needed)
+            parameters_to_copy: list of parameter names to copy from each FilledRegion
+                to its 3D zone instance. None keeps the legacy behaviour (copy every
+                writable instance parameter that matches by name). An empty list
+                copies nothing.
+            auto_bind_missing: when a chosen parameter exists on the region but not on
+                the zone instance, extend that parameter's project binding to the
+                Generic Models category so the value can land. Only instance
+                bindings are extended; type bindings are reported instead.
         """
         self._active_view = active_view
         self._view_phase_id = None
-    
+        self.parameters_to_copy = parameters_to_copy
+        self.auto_bind_missing = auto_bind_missing
+        # Filled in during copy_properties_to_instance; read by the button for its summary.
+        self.copy_report = {
+            "copied": {},          # param name -> number of instances written
+            "bound": set(),        # params whose binding was extended to Generic Models
+            "missing": set(),      # chosen params that could not be found or bound on the zone
+            "type_mismatch": set(),# chosen params whose storage type differs on the zone
+            "no_value": set(),     # chosen params that were empty on at least one region
+        }
+
     def set_active_view(self, view):
         """Set the active view for phase handling.
         
@@ -1112,14 +1130,125 @@ class RegionAdapter(SpatialElementAdapter):
         """Return element ID string as-is (already sanitized)."""
         return number
     
+    # ------------------------------------------------------------------
+    # Selective copy: only the parameters the user picked in the button
+    # ------------------------------------------------------------------
+    def _find_target_param(self, target_instance, param_name):
+        param = target_instance.LookupParameter(param_name)
+        if param is None and hasattr(target_instance, "Symbol") and target_instance.Symbol:
+            param = target_instance.Symbol.LookupParameter(param_name)
+        return param
+
+    def _ensure_bound_to_generic_models(self, doc, param_name):
+        """Extend the project binding of `param_name` to Generic Models.
+
+        Works for shared and project parameters alike: the existing binding is found in
+        the document's BindingMap by definition name and re-inserted with the category
+        added. Returns True if the binding now covers Generic Models.
+        """
+        try:
+            gm_cat = Category.GetCategory(doc, BuiltInCategory.OST_GenericModel)
+            bindings = doc.ParameterBindings
+            it = bindings.ForwardIterator()
+            it.Reset()
+            while it.MoveNext():
+                defn = it.Key
+                if defn is None or defn.Name != param_name:
+                    continue
+                binding = it.Current
+                if binding is None or not hasattr(binding, "Categories"):
+                    return False
+                if type(binding).__name__ != "InstanceBinding":
+                    logger.warning("Parameter '{}' is a type binding; not extended to Generic Models".format(param_name))
+                    return False
+                cats = binding.Categories
+                if cats.Contains(gm_cat):
+                    return True
+                cats.Insert(gm_cat)
+                ok = False
+                try:
+                    ok = bindings.ReInsert(defn, binding)
+                except Exception:
+                    ok = False
+                if not ok:
+                    try:
+                        ok = bindings.ReInsert(defn, binding, defn.GetGroupTypeId())
+                    except Exception as e2:
+                        logger.debug("ReInsert with group failed for '{}': {}".format(param_name, e2))
+                if ok:
+                    doc.Regenerate()
+                    logger.info("Extended binding of '{}' to Generic Models".format(param_name))
+                return bool(ok)
+            return False
+        except Exception as e:
+            logger.debug("Could not extend binding of '{}': {}".format(param_name, e))
+            return False
+
+    def _copy_one_value(self, source_param, target_param):
+        st = source_param.StorageType
+        if st == StorageType.String:
+            value = source_param.AsString()
+            if not value:
+                return False
+            target_param.Set(value)
+        elif st == StorageType.Integer:
+            target_param.Set(source_param.AsInteger())
+        elif st == StorageType.Double:
+            target_param.Set(source_param.AsDouble())
+        elif st == StorageType.ElementId:
+            value = source_param.AsElementId()
+            if not value or value == ElementId.InvalidElementId:
+                return False
+            target_param.Set(value)
+        else:
+            return False
+        return True
+
+    def _copy_selected_parameters(self, source_element, target_instance, doc):
+        rep = self.copy_report
+        for name in self.parameters_to_copy:
+            try:
+                src = source_element.LookupParameter(name)
+                if src is None or not src.HasValue:
+                    rep["no_value"].add(name)
+                    continue
+                tgt = self._find_target_param(target_instance, name)
+                if tgt is None and self.auto_bind_missing:
+                    if self._ensure_bound_to_generic_models(doc, name):
+                        rep["bound"].add(name)
+                        tgt = self._find_target_param(target_instance, name)
+                if tgt is None:
+                    rep["missing"].add(name)
+                    continue
+                if tgt.IsReadOnly:
+                    rep["missing"].add(name)
+                    continue
+                if tgt.StorageType != src.StorageType:
+                    rep["type_mismatch"].add(name)
+                    continue
+                if self._copy_one_value(src, tgt):
+                    rep["copied"][name] = rep["copied"].get(name, 0) + 1
+                else:
+                    rep["no_value"].add(name)
+            except Exception as e:
+                logger.debug("Error copying '{}' from FilledRegion {}: {}".format(name, source_element.Id, e))
+                rep["missing"].add(name)
+
     def copy_properties_to_instance(self, source_element, target_instance, doc):
-        """Copy matching parameters from FilledRegion to target instance.
-        
+        """Copy parameters from FilledRegion to target instance.
+
+        With `parameters_to_copy` set (the button always sets it), only those names are
+        copied and the outcome is collected in `copy_report`. Without it, every writable
+        instance parameter that matches by name is copied (legacy behaviour).
+
         Args:
             source_element: FilledRegion element
             target_instance: FamilyInstance to copy properties to
             doc: Revit document
         """
+        if self.parameters_to_copy is not None:
+            self._copy_selected_parameters(source_element, target_instance, doc)
+            return
         try:
             # Parameters to skip (system/built-in parameters)
             skip_params = set()
