@@ -4,7 +4,7 @@
 from Autodesk.Revit.DB import (
     FilteredElementCollector, BuiltInParameter, BuiltInCategory,
     Category, ElementId, Level, SpatialElementBoundaryOptions, StorageType,
-    FamilyInstance, FilledRegion, View, Options, GeometryElement
+    FamilyInstance, FilledRegion, View, Options, GeometryElement, Material, Color
 )
 from pyrevit import script
 
@@ -910,7 +910,10 @@ class CurveSegmentWrapper(object):
 class RegionAdapter(SpatialElementAdapter):
     """Adapter for FilledRegion elements."""
     
-    def __init__(self, active_view=None, parameters_to_copy=None, auto_bind_missing=True):
+    MATERIAL_FROM_TYPE_NAME = "__region_type_name__"
+
+    def __init__(self, active_view=None, parameters_to_copy=None, auto_bind_missing=True,
+                 material_source=None, material_param="Material", create_missing_materials=True):
         """Initialize adapter with active view for phase handling.
 
         Args:
@@ -923,11 +926,22 @@ class RegionAdapter(SpatialElementAdapter):
                 the zone instance, extend that parameter's project binding to the
                 Generic Models category so the value can land. Only instance
                 bindings are extended; type bindings are reported instead.
+            material_source: where the zone's material name comes from. None leaves the
+                material alone; MATERIAL_FROM_TYPE_NAME uses the filled region's type
+                name (e.g. "OOMB 800"); any other string is a region parameter whose
+                value is the material name (e.g. "OP_Kalkylgrupp" -> "OOMB").
+            material_param: name of the zone family's material parameter.
+            create_missing_materials: create a material with that name (deterministic
+                colour from the name) when the project has none, instead of skipping.
         """
         self._active_view = active_view
         self._view_phase_id = None
         self.parameters_to_copy = parameters_to_copy
         self.auto_bind_missing = auto_bind_missing
+        self.material_source = material_source
+        self.material_param = material_param
+        self.create_missing_materials = create_missing_materials
+        self._material_cache = None  # lower-case name -> Material, built on first use
         # Filled in during copy_properties_to_instance; read by the button for its summary.
         self.copy_report = {
             "copied": {},          # param name -> number of instances written
@@ -935,7 +949,85 @@ class RegionAdapter(SpatialElementAdapter):
             "missing": set(),      # chosen params that could not be found or bound on the zone
             "type_mismatch": set(),# chosen params whose storage type differs on the zone
             "no_value": set(),     # chosen params that were empty on at least one region
+            "materials": {},       # material name -> number of zones it was set on
+            "materials_created": set(),
+            "materials_missing": set(),  # names with no material and creation off/failed
+            "material_param_missing": False,
         }
+
+    # ------------------------------------------------------------------
+    # Material from region type name or a region parameter value
+    # ------------------------------------------------------------------
+    def _material_key(self, source_element, doc):
+        if not self.material_source:
+            return None
+        if self.material_source == self.MATERIAL_FROM_TYPE_NAME:
+            try:
+                rtype = doc.GetElement(source_element.GetTypeId())
+                return (rtype.Name or "").strip() if rtype is not None else None
+            except Exception:
+                return None
+        param = source_element.LookupParameter(self.material_source)
+        if param is None or not param.HasValue:
+            return None
+        if param.StorageType == StorageType.String:
+            return (param.AsString() or "").strip()
+        try:
+            return (param.AsValueString() or "").strip()
+        except Exception:
+            return None
+
+    def _find_or_create_material(self, doc, name):
+        if self._material_cache is None:
+            self._material_cache = {}
+            for mat in FilteredElementCollector(doc).OfClass(Material):
+                try:
+                    self._material_cache[mat.Name.strip().lower()] = mat
+                except Exception:
+                    continue
+        mat = self._material_cache.get(name.lower())
+        if mat is not None:
+            return mat
+        if not self.create_missing_materials:
+            return None
+        try:
+            mat_id = Material.Create(doc, name)
+            mat = doc.GetElement(mat_id)
+            # Deterministic colour from the name so each husdel/kalkylgrupp looks distinct
+            h = 0
+            for ch in name:
+                h = (h * 31 + ord(ch)) & 0xFFFFFF
+            r, g, b = 80 + (h & 0x7F), 80 + ((h >> 8) & 0x7F), 80 + ((h >> 16) & 0x7F)
+            mat.Color = Color(r, g, b)
+            mat.UseRenderAppearanceForShading = False
+            self._material_cache[name.lower()] = mat
+            self.copy_report["materials_created"].add(name)
+            logger.info("Created material '{}'".format(name))
+            return mat
+        except Exception as e:
+            logger.debug("Could not create material '{}': {}".format(name, e))
+            return None
+
+    def _assign_material(self, source_element, target_instance, doc):
+        rep = self.copy_report
+        name = self._material_key(source_element, doc)
+        if not name:
+            return
+        tgt = self._find_target_param(target_instance, self.material_param)
+        if tgt is None or tgt.IsReadOnly or tgt.StorageType != StorageType.ElementId:
+            rep["material_param_missing"] = True
+            return
+        mat = self._find_or_create_material(doc, name)
+        if mat is None:
+            rep["materials_missing"].add(name)
+            return
+        try:
+            if not tgt.HasValue or tgt.AsElementId() != mat.Id:
+                tgt.Set(mat.Id)
+            rep["materials"][name] = rep["materials"].get(name, 0) + 1
+        except Exception as e:
+            logger.debug("Could not set material '{}' on {}: {}".format(name, target_instance.Id, e))
+            rep["materials_missing"].add(name)
 
     def set_active_view(self, view):
         """Set the active view for phase handling.
@@ -1248,6 +1340,7 @@ class RegionAdapter(SpatialElementAdapter):
         """
         if self.parameters_to_copy is not None:
             self._copy_selected_parameters(source_element, target_instance, doc)
+            self._assign_material(source_element, target_instance, doc)
             return
         try:
             # Parameters to skip (system/built-in parameters)

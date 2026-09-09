@@ -10,6 +10,11 @@ Before creating, a checklist asks which of the regions' own instance parameters
 remembered between runs. A chosen parameter that the zone family lacks gets its
 project binding extended to Generic Models so the value can land; anything that
 still cannot be written is listed in a summary afterwards.
+
+A second question sets the zones' Material: none, a material named like the
+region type (e.g. "OOMB 800"), or named after a region parameter's value (e.g.
+OP_Kalkylgrupp -> "OOMB"). A missing material is created with a colour derived
+from its name, so every zone gets a material without editing them one by one.
 """
 
 __title__ = "Create 3D Zones from Regions"
@@ -76,6 +81,7 @@ def show_region_filter_dialog(regions, doc):
 
 
 CONFIG_KEY = "region_copy_params"
+MATERIAL_CONFIG_KEY = "region_material_source"
 
 
 def _is_user_parameter(param):
@@ -108,13 +114,10 @@ def _param_value_text(param):
     return ""
 
 
-def choose_parameters_to_copy(filled_regions):
-    """Show a checklist of the regions' own instance parameters; return chosen names.
-
-    Returns a list (possibly empty = copy nothing), or None if the user cancelled.
-    The previous choice is remembered in the pyRevit user config.
-    """
-    candidates = {}  # name -> {"with_value": n, "sample": text}
+def collect_region_parameters(filled_regions):
+    """Return {name: {"with_value": n, "sample": text, "storage": StorageType}} for the
+    regions' own writable instance parameters (built-ins excluded)."""
+    candidates = {}
     for region in filled_regions:
         for param in region.Parameters:
             try:
@@ -123,7 +126,7 @@ def choose_parameters_to_copy(filled_regions):
                 if param.StorageType not in (StorageType.String, StorageType.Integer, StorageType.Double):
                     continue
                 name = param.Definition.Name
-                entry = candidates.setdefault(name, {"with_value": 0, "sample": ""})
+                entry = candidates.setdefault(name, {"with_value": 0, "sample": "", "storage": param.StorageType})
                 if param.HasValue:
                     text = _param_value_text(param)
                     if text:
@@ -132,7 +135,15 @@ def choose_parameters_to_copy(filled_regions):
                             entry["sample"] = text
             except Exception:
                 continue
+    return candidates
 
+
+def choose_parameters_to_copy(filled_regions, candidates):
+    """Show a checklist of the regions' own instance parameters; return chosen names.
+
+    Returns a list (possibly empty = copy nothing), or None if the user cancelled.
+    The previous choice is remembered in the pyRevit user config.
+    """
     if not candidates:
         forms.alert("The selected filled regions have no instance parameters of their own to copy.\n\n"
                     "Add a shared parameter (e.g. OP_Husdel) as an Instance parameter on the "
@@ -170,10 +181,55 @@ def choose_parameters_to_copy(filled_regions):
     return chosen
 
 
+MATERIAL_NONE = "No material (leave as is)"
+MATERIAL_TYPE_NAME = "Region type name  (e.g. 'OOMB 800')"
+
+
+def choose_material_source(candidates):
+    """Ask where the zone material name should come from.
+
+    Returns None if cancelled, "" for no material, RegionAdapter.MATERIAL_FROM_TYPE_NAME
+    for the region type name, or a region parameter name. Remembered in user config.
+    """
+    string_params = sorted(n for n, e in candidates.items() if e["storage"] == StorageType.String)
+    options = [MATERIAL_NONE, MATERIAL_TYPE_NAME] + ["Parameter {}".format(n) for n in string_params]
+
+    cfg = script.get_config()
+    previous = cfg.get_option(MATERIAL_CONFIG_KEY, "")
+    default = MATERIAL_NONE
+    if previous == RegionAdapter.MATERIAL_FROM_TYPE_NAME:
+        default = MATERIAL_TYPE_NAME
+    elif previous and previous in string_params:
+        default = "Parameter {}".format(previous)
+
+    # Put the remembered choice first so Enter repeats the last run
+    if default in options:
+        options.remove(default)
+        options.insert(0, default)
+
+    picked = forms.CommandSwitchWindow.show(
+        options,
+        message="Material on the 3D zones: take the material name from ... "
+                "(a material with that name is created if the project has none)")
+    if picked is None:
+        return None
+    if picked == MATERIAL_NONE:
+        source = ""
+    elif picked == MATERIAL_TYPE_NAME:
+        source = RegionAdapter.MATERIAL_FROM_TYPE_NAME
+    else:
+        source = picked[len("Parameter "):]
+    cfg.set_option(MATERIAL_CONFIG_KEY, source)
+    script.save_config()
+    return source
+
+
 def report_parameter_copy(adapter, parameters_to_copy):
     """Summarise what landed on the zones, and warn about what did not."""
     rep = getattr(adapter, "copy_report", None)
-    if rep is None or not parameters_to_copy:
+    if rep is None:
+        return
+    if not parameters_to_copy and not adapter.material_source:
         return
     lines = []
     for name in parameters_to_copy:
@@ -182,7 +238,17 @@ def report_parameter_copy(adapter, parameters_to_copy):
     if rep["bound"]:
         lines.append("")
         lines.append("Binding extended to Generic Models (project parameter changed): " + ", ".join(sorted(rep["bound"])))
+    if rep["materials"]:
+        lines.append("")
+        lines.append("Material set: " + ", ".join(
+            "{} on {} zone(s)".format(k, v) for k, v in sorted(rep["materials"].items())))
+    if rep["materials_created"]:
+        lines.append("Materials created (adjust colour under Manage > Materials): " + ", ".join(sorted(rep["materials_created"])))
     problems = []
+    if rep["material_param_missing"]:
+        problems.append("The zone family has no writable '{}' parameter; material not set".format(adapter.material_param))
+    if rep["materials_missing"]:
+        problems.append("No material found or created for: " + ", ".join(sorted(rep["materials_missing"])))
     if rep["missing"]:
         problems.append("Not found on the 3D zone and could not be bound: " + ", ".join(sorted(rep["missing"])))
     if rep["type_mismatch"]:
@@ -254,13 +320,19 @@ if __name__ == '__main__':
             active_view.Name if hasattr(active_view, 'Name') else 'Unknown',
             active_view.Id if active_view else 'None'))
     
-    # Let the user pick which region parameters travel to the zones
-    parameters_to_copy = choose_parameters_to_copy(filled_regions)
+    # Let the user pick which region parameters travel to the zones, and where the
+    # zone material name comes from
+    candidates = collect_region_parameters(filled_regions)
+    parameters_to_copy = choose_parameters_to_copy(filled_regions, candidates)
     if parameters_to_copy is None:
+        script.exit()
+    material_source = choose_material_source(candidates)
+    if material_source is None:
         script.exit()
 
     # Create adapter with view for phase handling and the chosen parameter list
-    adapter = RegionAdapter(active_view=active_view, parameters_to_copy=parameters_to_copy)
+    adapter = RegionAdapter(active_view=active_view, parameters_to_copy=parameters_to_copy,
+                            material_source=material_source or None)
 
     # Create zones using shared orchestration function
     # Note: We bypass the dialog by providing a simple filter function
