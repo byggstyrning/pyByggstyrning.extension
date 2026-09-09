@@ -1039,13 +1039,19 @@ class RegionAdapter(SpatialElementAdapter):
         otherwise create the most specific one (if enabled)."""
         if self._material_cache is None:
             self._material_cache = {}
+            self._material_exact = {}
             for mat in FilteredElementCollector(doc).OfClass(Material):
                 try:
+                    self._material_exact.setdefault(mat.Name.strip(), mat)
                     self._material_cache.setdefault(self._material_lookup_key(mat.Name), mat)
                 except Exception:
                     continue
         for candidate in names:
-            mat = self._material_cache.get(self._material_lookup_key(candidate))
+            # Exact name first: "3DZone(100)" and "3Dzone (100)" can both exist, and an
+            # explicit pick must land on the one that was picked.
+            mat = self._material_exact.get(candidate.strip())
+            if mat is None:
+                mat = self._material_cache.get(self._material_lookup_key(candidate))
             if mat is not None:
                 return mat
         name = names[0]
