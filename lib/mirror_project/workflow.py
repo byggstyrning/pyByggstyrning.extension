@@ -212,8 +212,15 @@ def run_prepare_and_mirror(doc, uiapp):
         return
     output.print_md('---')
     output.print_md('**Mirror Project** starts when this script finishes.')
-    output.print_md('1. Pick the mirror **axis** on the model or a level/grid line.')
-    output.print_md('2. Choose the mirror **direction** when Revit asks.')
+    output.print_md(
+        '1. In the Mirror Project dialog, choose a direction: '
+        '**North-South**, **East-West**, **Northeast-Southwest**, '
+        'or **Northwest-Southeast**.'
+    )
+    output.print_md(
+        'Those axes pass through the internal origin and follow True North. '
+        'You do not pick a line on the model.'
+    )
     output.print_md('If you cancel, unlocked constraints stay unlocked.')
     output.print_md('Manifest: `{}`'.format(manifest_path))
 
