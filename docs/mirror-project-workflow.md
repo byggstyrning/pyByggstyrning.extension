@@ -65,7 +65,7 @@ Use Revit’s built-in **Rotate Project North** and **Rotate True North** manual
 | --- | --- |
 | **Run Preflight** | Collects identity, warnings, counts, coordinates, links, rooms/spaces, wall attachments, constraints, groups, family orientation, and MEP unused connectors. Prints a Markdown summary. Does not modify the model. |
 | **Capture Baseline** | Runs the same collectors and writes a versioned JSON file you choose. Keep this file next to the detached copy so the original and the mirrored file can share it. |
-| **Prepare + Launch Mirror Project** | Requires a baseline. Classifies `OST_Constraints` dimensions, writes an immutable mutation manifest, unlocks API-eligible locked constraints in one transaction, then schedules native `Mirror Project` on the next Revit idle tick (so pyRevit dialogs do not skip the axis step). Revit prompts for axis, then direction. |
+| **Prepare + Launch Mirror Project** | Requires a baseline. Classifies `OST_Constraints` dimensions, writes an immutable mutation manifest, unlocks API-eligible locked constraints in one transaction, then schedules native `Mirror Project` on the next Revit idle tick (so pyRevit dialogs do not skip the native dialog). Revit opens the Mirror Project dialog with direction options (North-South, East-West, Northeast-Southwest, Northwest-Southeast) about the internal origin. |
 | **Compare With Baseline** | Recaptures the current model, infers a named transform (mirror X/Y or 90° Z rotations), compares UniqueIds, and prints blocking/review/info findings. Optional review-package JSON and CSV exports. |
 | **Create Review Views From JSON** | Run in the non-mirrored source model. Select the review-package JSON (not the baseline). Resolves failed elements by UniqueId and creates persistent isolated 3D views grouped as Blocking, Missing, Geometry, Relationships, and Review. |
 
@@ -88,7 +88,7 @@ Count-only findings remain in the package but cannot create an element view.
 
 ## What the API cannot do
 
-- Supply the Mirror Project axis or rotation angle. `PostCommand` only launches the built-in UI.
+- Choose the Mirror Project direction or rotation angle. `PostCommand` only launches the built-in dialog.
 - Capture Revit’s modal Mirror Project error dialog as structured data. Export those errors from Revit after the command, then run **Compare With Baseline**.
 - Mirror or rotate the whole model with `ElementTransformUtils`. That path is out of scope because it does not match native Mirror Project behaviour.
 - Detach/reattach walls, repair MEP, or certify door handing / egress / slope design intent. Those remain review findings.
