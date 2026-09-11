@@ -905,7 +905,26 @@ def show_results(results):
     if results.get('tagged', 0) > 0:
         balloon_lines.append("{} tagged".format(results['tagged']))
     
+    if results['skipped_no_level'] > 0:
+        balloon_lines.append("{} skipped (no matching level)".format(
+            results['skipped_no_level']))
+    
+    if results['skipped_no_phase'] > 0:
+        balloon_lines.append("{} skipped (no matching phase)".format(
+            results['skipped_no_phase']))
+    
+    if results['skipped_failed'] > 0:
+        balloon_lines.append("{} failed".format(results['skipped_failed']))
+    
     balloon_text = ", ".join(balloon_lines) + "."
+    
+    if results['phase_warnings']:
+        missing_phases = ", ".join(
+            "'{}'".format(name) for name, _count in results['phase_warnings'])
+        balloon_text += (
+            " Host is missing phase(s): {}. "
+            "Phase names in the host must match the linked model."
+        ).format(missing_phases)
     
     forms.show_balloon(
         header="Spaces",
