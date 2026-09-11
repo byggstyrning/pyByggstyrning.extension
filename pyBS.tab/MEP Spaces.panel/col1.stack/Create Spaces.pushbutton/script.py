@@ -112,6 +112,105 @@ class LinkedModelItem(object):
         return self.display_name
 
 
+def _room_label(room):
+    """Short name/number label for debug logs."""
+    try:
+        number_param = room.get_Parameter(BuiltInParameter.ROOM_NUMBER)
+        name_param = room.get_Parameter(BuiltInParameter.ROOM_NAME)
+        number = number_param.AsString() if number_param else None
+        name = name_param.AsString() if name_param else None
+        if number and name:
+            return "{} {}".format(number, name)
+        return number or name or "?"
+    except Exception:
+        return "?"
+
+
+def _collect_linked_rooms(link_doc):
+    """Collect rooms from a linked document and classify placed vs skipped.
+
+    Returns:
+        tuple: (all_spatial, room_elements, placed_rooms, stats)
+        stats keys: spatial, rooms, placed, zero_area, no_location
+    """
+    all_spatial = FilteredElementCollector(link_doc).OfClass(SpatialElement).ToElements()
+    room_elements = [r for r in all_spatial if isinstance(r, Room)]
+    placed_rooms = []
+    zero_area = 0
+    no_location = 0
+    for room in room_elements:
+        if not room.Location:
+            no_location += 1
+        if room.Area > 0:
+            placed_rooms.append(room)
+        else:
+            zero_area += 1
+    stats = {
+        'spatial': len(all_spatial),
+        'rooms': len(room_elements),
+        'placed': len(placed_rooms),
+        'zero_area': zero_area,
+        'no_location': no_location,
+    }
+    return all_spatial, room_elements, placed_rooms, stats
+
+
+def _log_found_rooms(link_name, link_doc, placed_rooms, stats, sample_limit=8):
+    """Log room inventory for a linked model (counts + a small sample)."""
+    logger.debug(
+        "Found rooms in '{}': spatial={}, rooms={}, placed(area>0)={}, "
+        "zero_area={}, no_location={}".format(
+            link_name,
+            stats['spatial'],
+            stats['rooms'],
+            stats['placed'],
+            stats['zero_area'],
+            stats['no_location']))
+
+    phase_counts = {}
+    level_counts = {}
+    for room in placed_rooms:
+        try:
+            phase_param = room.get_Parameter(BuiltInParameter.ROOM_PHASE)
+            phase_id = phase_param.AsElementId() if phase_param else None
+            phase = link_doc.GetElement(phase_id) if phase_id else None
+            phase_name = phase.Name if phase else "(no phase)"
+            phase_counts[phase_name] = phase_counts.get(phase_name, 0) + 1
+        except Exception:
+            phase_counts['(phase error)'] = phase_counts.get('(phase error)', 0) + 1
+        try:
+            level_name = room.Level.Name if room.Level else "(no level)"
+            level_counts[level_name] = level_counts.get(level_name, 0) + 1
+        except Exception:
+            level_counts['(level error)'] = level_counts.get('(level error)', 0) + 1
+
+    if phase_counts:
+        logger.debug("  placed rooms by phase: {}".format(phase_counts))
+    if level_counts:
+        logger.debug("  placed rooms by level: {}".format(level_counts))
+
+    for room in placed_rooms[:sample_limit]:
+        try:
+            level_name = room.Level.Name if room.Level else None
+            level_elev = room.Level.Elevation if room.Level else None
+            phase_param = room.get_Parameter(BuiltInParameter.ROOM_PHASE)
+            phase_id = phase_param.AsElementId() if phase_param else None
+            phase = link_doc.GetElement(phase_id) if phase_id else None
+            loc = room.Location.Point if room.Location else None
+            logger.debug(
+                "  sample room '{}' area={} level={} elev={} phase={} loc=({}, {}, {})".format(
+                    _room_label(room),
+                    room.Area,
+                    level_name,
+                    level_elev,
+                    phase.Name if phase else None,
+                    loc.X if loc else None,
+                    loc.Y if loc else None,
+                    loc.Z if loc else None))
+        except Exception as e:
+            logger.debug("  sample room log failed: {}".format(str(e)))
+
+
 def get_linked_documents_with_rooms(doc):
     """Get all linked Revit documents that contain placed rooms.
     
@@ -125,16 +224,17 @@ def get_linked_documents_with_rooms(doc):
     
     try:
         link_instances = FilteredElementCollector(doc).OfClass(RevitLinkInstance).ToElements()
+        logger.debug("Scanning {} Revit link instance(s) for rooms".format(len(link_instances)))
         
         for link in link_instances:
             try:
                 link_doc = link.GetLinkDocument()
                 if not link_doc:
+                    logger.debug("Skipping unloaded link: {}".format(link.Name))
                     continue
                 
-                # Get all rooms in linked document
-                rooms = FilteredElementCollector(link_doc).OfClass(SpatialElement).ToElements()
-                placed_rooms = [r for r in rooms if isinstance(r, Room) and r.Area > 0]
+                _, _, placed_rooms, stats = _collect_linked_rooms(link_doc)
+                _log_found_rooms(link.Name, link_doc, placed_rooms, stats)
                 
                 if len(placed_rooms) > 0:
                     # Count rooms per phase
@@ -159,6 +259,8 @@ def get_linked_documents_with_rooms(doc):
         
         # Sort by name
         linked_models.sort(key=lambda x: x.display_name)
+        logger.debug("Linked models with placed rooms: {}".format(
+            [item.display_name for item in linked_models]))
         
     except Exception as e:
         logger.error("Error getting linked documents: {}".format(str(e)))
@@ -330,8 +432,9 @@ def create_spaces_from_linked_rooms(doc, linked_item, write_params=True,
     host_levels = get_host_levels_by_elevation(doc)
     
     # Get all rooms from linked document (placed rooms only)
-    all_rooms = FilteredElementCollector(link_doc).OfClass(SpatialElement).ToElements()
-    placed_rooms = [r for r in all_rooms if isinstance(r, Room) and r.Area > 0]
+    _, _, placed_rooms, room_stats = _collect_linked_rooms(link_doc)
+    logger.debug("Creating spaces from selected link '{}'".format(linked_item.display_name))
+    _log_found_rooms(linked_item.display_name, link_doc, placed_rooms, room_stats)
     
     total_rooms = len(placed_rooms)
     
@@ -476,6 +579,19 @@ def create_spaces_from_linked_rooms(doc, linked_item, write_params=True,
         except Exception as e:
             results['skipped_failed'] += 1
             results['errors'].append("Error preprocessing room: {}".format(str(e)))
+    
+    logger.debug(
+        "Selected link rooms after filters: ready={} skipped_no_phase={} "
+        "skipped_no_level={} skipped_failed={} by_phase={}".format(
+            sum(len(v) for v in rooms_by_phase.values()),
+            results['skipped_no_phase'],
+            results['skipped_no_level'],
+            results['skipped_failed'],
+            dict((name, len(items)) for name, items in rooms_by_phase.items())))
+    if phase_warnings_dict:
+        logger.debug("  rooms skipped, host missing phase: {}".format(phase_warnings_dict))
+    if level_warnings_dict:
+        logger.debug("  rooms skipped, no host level match: {}".format(level_warnings_dict))
     
     # Create temporary views for each phase we need
     # We need to ACTIVATE a view with the correct phase before creating spaces
@@ -693,6 +809,16 @@ def create_spaces_from_linked_rooms(doc, linked_item, write_params=True,
     results['level_warnings'] = [(k, v) for k, v in level_warnings_dict.items()]
     results['phase_warnings'] = [(k, v) for k, v in phase_warnings_dict.items()]
     
+    logger.debug(
+        "Create Spaces finished for '{}': found_placed={} created={} "
+        "skipped_no_phase={} skipped_no_level={} skipped_failed={}".format(
+            linked_item.display_name,
+            total_rooms,
+            results['created'],
+            results['skipped_no_phase'],
+            results['skipped_no_level'],
+            results['skipped_failed']))
+    
     return results
 
 
@@ -901,6 +1027,13 @@ class CreateSpacesWindow(WPFWindow):
             remove_existing = self.removeExistingCheckBox.IsChecked
             retag_spaces = self.retagSpacesCheckBox.IsChecked
             selected_tag_type = self.tagTypeComboBox.SelectedItem
+            logger.debug(
+                "Create Spaces clicked: link='{}' ui_room_count={} "
+                "write_params={} remove_existing={}".format(
+                    selected.display_name,
+                    selected.room_count,
+                    bool(write_params),
+                    bool(remove_existing)))
             
             # Validate tag type selection if re-tagging is enabled
             if retag_spaces and not selected_tag_type:
