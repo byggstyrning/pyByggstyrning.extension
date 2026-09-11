@@ -112,6 +112,122 @@ def _serialize_value(source_param):
     return None
 
 
+def _snapshot_space(space):
+    """Return writable parameter snapshot for one space."""
+    snapshot = {}
+    for source_param in space.Parameters:
+        try:
+            if _should_skip_parameter(source_param):
+                continue
+            defn = source_param.Definition
+            if not defn:
+                continue
+            param_name = defn.Name
+            if not param_name:
+                continue
+            packed = _serialize_value(source_param)
+            if packed is None:
+                continue
+            snapshot[param_name] = packed
+        except Exception as ex:
+            logger.debug("capture param skip: {}".format(str(ex)))
+    return snapshot
+
+
+def _space_phase_name(space):
+    """Best-effort phase name for a host space."""
+    try:
+        phase_param = space.get_Parameter(BuiltInParameter.ROOM_PHASE)
+        if phase_param:
+            phase = space.Document.GetElement(phase_param.AsElementId())
+            if phase:
+                return phase.Name
+    except Exception:
+        pass
+    return None
+
+
+def rematch_unlinked_spaces_to_rooms(
+        spaces, unlinked_ids, param_cache, rooms_by_key, rooms_by_location,
+        xy_tolerance=1.5, z_tolerance=1.0):
+    """Match spaces that have no Space.Room to source rooms by number/level/phase or location.
+
+    Spaces matched this way are removed from unlinked_ids and snapshotted into param_cache
+    so recreate can delete them. Truly unmatched spaces stay excluded.
+
+    Args:
+        spaces: Existing host Space elements
+        unlinked_ids: set of int space ids (mutated)
+        param_cache: dict room UniqueId -> snapshot (mutated)
+        rooms_by_key: dict (number, level_name, phase_name) -> room
+        rooms_by_location: list of (x, y, z, room)
+        xy_tolerance: max XY distance in feet to accept a location match
+        z_tolerance: max Z distance in feet to accept a location match
+
+    Returns:
+        int: number of spaces rematched
+    """
+    rematched = 0
+    still_unlinked = set()
+
+    for space in spaces:
+        if not isinstance(space, Space):
+            continue
+        try:
+            sid = get_element_id_value(space.Id)
+        except Exception:
+            continue
+        if sid not in unlinked_ids:
+            continue
+
+        room = None
+        try:
+            snum_param = space.get_Parameter(BuiltInParameter.ROOM_NUMBER)
+            snum = snum_param.AsString() if snum_param else None
+            slevel = space.Level.Name if space.Level else None
+            sphase = _space_phase_name(space)
+            if snum and slevel:
+                room = rooms_by_key.get((snum, slevel, sphase))
+                if room is None:
+                    room = rooms_by_key.get((snum, slevel, None))
+        except Exception:
+            room = None
+
+        if room is None and rooms_by_location:
+            try:
+                loc = space.Location
+                pt = loc.Point if loc else None
+            except Exception:
+                pt = None
+            if pt is not None:
+                best_d = xy_tolerance
+                for rx, ry, rz, candidate in rooms_by_location:
+                    dx = pt.X - rx
+                    dy = pt.Y - ry
+                    dist = (dx * dx + dy * dy) ** 0.5
+                    if dist <= best_d and abs(pt.Z - rz) <= z_tolerance:
+                        best_d = dist
+                        room = candidate
+
+        if room is None:
+            still_unlinked.add(sid)
+            continue
+
+        try:
+            room_uid = room.UniqueId
+        except Exception:
+            still_unlinked.add(sid)
+            continue
+
+        if room_uid not in param_cache:
+            param_cache[room_uid] = _snapshot_space(space)
+        rematched += 1
+
+    unlinked_ids.clear()
+    unlinked_ids.update(still_unlinked)
+    return rematched
+
+
 def capture_space_parameters(spaces):
     """Capture writable parameter values from spaces, keyed by linked Room UniqueId.
 
@@ -148,23 +264,7 @@ def capture_space_parameters(spaces):
             unlinked_space_ids.add(get_element_id_value(space.Id))
             continue
 
-        snapshot = {}
-        for source_param in space.Parameters:
-            try:
-                if _should_skip_parameter(source_param):
-                    continue
-                defn = source_param.Definition
-                if not defn:
-                    continue
-                param_name = defn.Name
-                if not param_name:
-                    continue
-                packed = _serialize_value(source_param)
-                if packed is None:
-                    continue
-                snapshot[param_name] = packed
-            except Exception as ex:
-                logger.debug("capture param skip: {}".format(str(ex)))
+        snapshot = _snapshot_space(space)
 
         if room_uid in param_cache:
             logger.debug(
