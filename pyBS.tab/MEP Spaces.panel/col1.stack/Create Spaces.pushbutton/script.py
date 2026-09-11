@@ -349,7 +349,11 @@ def create_spaces_from_linked_rooms(doc, linked_item, write_params=True,
     
     # Delete existing spaces if requested (in its own transaction)
     if remove_existing:
-        from spaces.params import capture_space_parameters, restore_space_parameters
+        from spaces.params import (
+            capture_space_parameters,
+            restore_space_parameters,
+            rematch_unlinked_spaces_to_rooms,
+        )
         if progress_bar:
             progress_bar.update_progress(0, total_rooms)
         # Capture parameters from spaces linked to Rooms; preserve spaces without Space.Room
@@ -374,6 +378,33 @@ def create_spaces_from_linked_rooms(doc, linked_item, write_params=True,
                         unlinked_exclude.add(get_element_id_value(s.Id))
             except Exception:
                 pass
+        # Space.Room is often None when rooms live only in the link. Rematch
+        # those spaces to source rooms by number/level/phase or location so
+        # recreate can delete them instead of stacking unenclosed copies.
+        try:
+            rooms_by_key = {}
+            rooms_by_loc = []
+            for room in placed_rooms:
+                nparam = room.get_Parameter(BuiltInParameter.ROOM_NUMBER)
+                nval = nparam.AsString() if nparam else None
+                lname = room.Level.Name if room.Level else None
+                pparam = room.get_Parameter(BuiltInParameter.ROOM_PHASE)
+                pname = None
+                if pparam:
+                    ph = link_doc.GetElement(pparam.AsElementId())
+                    pname = ph.Name if ph else None
+                if nval and lname:
+                    rooms_by_key[(nval, lname, pname)] = room
+                    if (nval, lname, None) not in rooms_by_key:
+                        rooms_by_key[(nval, lname, None)] = room
+                if room.Location:
+                    hp = link_transform.OfPoint(room.Location.Point)
+                    rooms_by_loc.append((hp.X, hp.Y, hp.Z, room))
+            rematch_unlinked_spaces_to_rooms(
+                existing_spaces, unlinked_exclude, param_cache,
+                rooms_by_key, rooms_by_loc)
+        except Exception as e:
+            logger.error("Error rematching unlinked spaces: {}".format(str(e)))
         t = Transaction(doc, "Delete Existing Spaces")
         start_transaction_with_warning_suppression(t)
         delete_results = delete_existing_spaces(doc, exclude_ids=unlinked_exclude)
@@ -462,31 +493,80 @@ def create_spaces_from_linked_rooms(doc, linked_item, write_params=True,
     # Get first level for creating views (host_levels is list of tuples: (elevation, Level))
     first_level = host_levels[0][1] if host_levels else None
     
-    # Create a temporary view for each phase
+    # Resolve a floor plan per phase so NewSpace() picks up the view phase.
+    # Prefer existing plans (avoids ViewPlan.Create "Sequence contains no elements").
+    # Only create a temp view for phases that have no existing plan.
     phase_to_view = {}
     temp_views_created = []
-    
-    if floor_plan_type and first_level:
-        t_views = Transaction(doc, "Create Temp Views for Phases")
-        start_transaction_with_warning_suppression(t_views)
-        
-        for phase_name, host_phase in host_phases_dict.items():
+    phases_needed = dict((name, host_phases_dict[name]) for name in rooms_by_phase)
+
+    def _phase_id_value(phase_or_id):
+        try:
+            if hasattr(phase_or_id, "Id"):
+                return get_element_id_value(phase_or_id.Id)
+            return get_element_id_value(phase_or_id)
+        except Exception:
+            return None
+
+    plans_by_phase_id = {}
+    try:
+        active_id = uidoc.ActiveView.Id if uidoc.ActiveView else None
+        for view in FilteredElementCollector(doc).OfClass(ViewPlan).ToElements():
             try:
-                # Create a new floor plan view
-                new_view = ViewPlan.Create(doc, floor_plan_type.Id, first_level.Id)
-                new_view.Name = "_TempSpaceCreation_{}".format(phase_name)
-                
-                # Set the view's phase
-                view_phase_param = new_view.get_Parameter(BuiltInParameter.VIEW_PHASE)
-                if view_phase_param and not view_phase_param.IsReadOnly:
-                    view_phase_param.Set(host_phase.Id)
-                
-                phase_to_view[phase_name] = new_view
-                temp_views_created.append(new_view.Id)
+                if getattr(view, "IsTemplate", False):
+                    continue
+                view_phase_param = view.get_Parameter(BuiltInParameter.VIEW_PHASE)
+                if not view_phase_param:
+                    continue
+                pid = _phase_id_value(view_phase_param.AsElementId())
+                if pid is None:
+                    continue
+                if pid not in plans_by_phase_id:
+                    plans_by_phase_id[pid] = view
+                elif active_id and view.Id == active_id:
+                    plans_by_phase_id[pid] = view
             except Exception:
-                pass  # Skip phases where we can't create a view
-        
-        t_views.Commit()
+                continue
+    except Exception as e:
+        logger.debug("Error collecting phase views: {}".format(str(e)))
+
+    for phase_name, host_phase in phases_needed.items():
+        pid = _phase_id_value(host_phase)
+        if pid in plans_by_phase_id:
+            phase_to_view[phase_name] = plans_by_phase_id[pid]
+
+    missing = [n for n in phases_needed if n not in phase_to_view]
+    if missing and floor_plan_type and first_level:
+        t_views = Transaction(doc, "Create Temp Views for Phases")
+        try:
+            start_transaction_with_warning_suppression(t_views)
+            for phase_name in missing:
+                host_phase = phases_needed[phase_name]
+                try:
+                    new_view = ViewPlan.Create(doc, floor_plan_type.Id, first_level.Id)
+                    try:
+                        new_view.Name = "_TempSpaceCreation_{}".format(phase_name)
+                    except Exception as e:
+                        logger.debug("Could not rename temp view for {}: {}".format(
+                            phase_name, str(e)))
+                    view_phase_param = new_view.get_Parameter(BuiltInParameter.VIEW_PHASE)
+                    if view_phase_param and not view_phase_param.IsReadOnly:
+                        view_phase_param.Set(host_phase.Id)
+                    set_id = _phase_id_value(view_phase_param.AsElementId()) if view_phase_param else None
+                    if set_id == _phase_id_value(host_phase):
+                        phase_to_view[phase_name] = new_view
+                        temp_views_created.append(new_view.Id)
+                except Exception as e:
+                    logger.debug("Could not create temp view for {}: {}".format(
+                        phase_name, str(e)))
+            t_views.Commit()
+        except Exception as e:
+            logger.debug("Temp view transaction failed: {}".format(str(e)))
+            try:
+                if t_views.HasStarted() and not t_views.HasEnded():
+                    t_views.RollBack()
+            except Exception:
+                pass
     
     # Store original active view to restore later
     original_active_view = uidoc.ActiveView
