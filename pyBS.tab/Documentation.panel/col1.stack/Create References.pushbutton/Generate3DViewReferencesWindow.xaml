@@ -110,7 +110,16 @@
             <DataGrid x:Name="viewsDataGrid" Grid.Row="2" Style="{DynamicResource StandardDataGridStyle}"
                       SelectionMode="Extended" IsReadOnly="False"
                       PreviewMouseLeftButtonDown="ViewsDataGrid_PreviewMouseLeftButtonDown"
+                      PreviewMouseRightButtonDown="ViewsDataGrid_PreviewMouseRightButtonDown"
                       Sorting="ViewsDataGrid_Sorting">
+                <DataGrid.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem x:Name="goToViewMenuItem" Header="Go to view" Click="GoToView_Click"
+                                  ToolTip="Closes this window and opens the view. Start the tool again to come back to the same list."/>
+                        <MenuItem x:Name="goToSheetMenuItem" Header="Go to sheet" Click="GoToSheet_Click"
+                                  ToolTip="Closes this window and opens the sheet the view is placed on."/>
+                    </ContextMenu>
+                </DataGrid.ContextMenu>
                 <DataGrid.Columns>
                     <DataGridTemplateColumn Header="Select" Width="Auto">
                         <DataGridTemplateColumn.CellTemplate>

@@ -42,6 +42,10 @@ Creates or updates references for many views at once.
   works on the ticked rows that are shown.
 * Highlight several rows (Shift or Ctrl click) and tick one of their checkboxes: all highlighted
   rows get the same state
+* Right-click a row: **Go to view** or **Go to sheet**. Revit is blocked while the window is
+  open, so the window closes and the view opens. Start the tool again and the window comes
+  back as it was: search, filters, sort and ticks. A view can only be on one sheet, so there is
+  never more than one sheet to go to.
 * **Show view depth** (off by default): off gives a thin plate on the cut plane; on gives a box
   from the cut plane to the far clip (sections, elevations, details) or to the view depth
   plane (floor plans). Views without a far limit, and ceiling plans, stay plates.

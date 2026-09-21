@@ -15,7 +15,7 @@ from System.Collections.Generic import List
 from System.Collections.ObjectModel import ObservableCollection
 from System.Windows import Thickness, Visibility
 from System.ComponentModel import ListSortDirection, SortDescription
-from System.Windows.Controls import CheckBox
+from System.Windows.Controls import CheckBox, DataGridRow
 from System.Windows.Data import CollectionViewSource
 from System.Windows.Media import VisualTreeHelper
 
@@ -23,6 +23,7 @@ from System.Windows.Media import VisualTreeHelper
 from Autodesk.Revit.DB import ElementId
 
 # Import pyRevit libraries
+import json
 import os
 import sys
 import os.path as op
@@ -161,13 +162,21 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         if not self.family_symbol:
             self._alert_family_missing()
 
+        # Set by "Go to view/sheet": the view to open once this dialog has closed
+        self.go_to_element = None
+        self.context_item = None
+
         self._setup_view_categories()
         self._setup_filters()
+        resume_state = self._take_resume_state()
+        self._restore_filters(resume_state)
         self._load_views()
 
         # Bind views to DataGrid
         self.viewsDataGrid.ItemsSource = self.views_data
         self.selectAllCheckbox.IsChecked = True
+        # after Select All, which ticks every row
+        self._restore_rows(resume_state)
         logger.debug("UI setup complete. Found {} views.".format(self.views_data.Count))
 
     def _alert_family_missing(self):
@@ -391,14 +400,98 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
             args.Handled = True
 
     def _find_checkbox(self, element):
+        return self._find_ancestor(element, CheckBox)
+
+    def _find_ancestor(self, element, element_type):
         while element is not None:
-            if isinstance(element, CheckBox):
+            if isinstance(element, element_type):
                 return element
             try:
                 element = VisualTreeHelper.GetParent(element)
             except Exception:
                 return None  # not a visual, e.g. a text run
         return None
+
+    def ViewsDataGrid_PreviewMouseRightButtonDown(self, sender, args):
+        """Remember which row the context menu is opened on."""
+        row = self._find_ancestor(args.OriginalSource, DataGridRow)
+        self.context_item = row.Item if row is not None else None
+        self.goToViewMenuItem.IsEnabled = self.context_item is not None
+        self.goToSheetMenuItem.IsEnabled = (
+            self.context_item is not None and self.context_item.sheet is not None)
+
+    def GoToView_Click(self, sender, args):
+        if self.context_item is not None:
+            self._go_to(self.context_item.view)
+
+    def GoToSheet_Click(self, sender, args):
+        if self.context_item is not None and self.context_item.sheet is not None:
+            self._go_to(self.context_item.sheet)
+
+    def _go_to(self, view):
+        """Close the dialog and have the view opened.
+
+        Revit's UI is blocked while this modal dialog is open, so the view can
+        only be looked at once it has closed. The state of the window is kept
+        and restored the next time the tool is started.
+        """
+        self.go_to_element = view
+        self._save_resume_state()
+        self.Close()
+
+    def _save_resume_state(self):
+        state = {
+            "search": self.searchTextBox.Text or "",
+            "sheet_filter": self.sheetFilterComboBox.SelectedIndex,
+            "reference_filter": self.referenceFilterComboBox.SelectedIndex,
+            "kinds_off": [kind for kind, cb in self.view_kinds.items() if cb.IsChecked != True],
+            "unticked": [item.view.UniqueId for item in self.all_items if not item.IsSelected],
+            "sort": [[d.PropertyName, d.Direction == ListSortDirection.Ascending]
+                     for d in self._sort_descriptions()],
+            "show_depth": self.showDepthCheckbox.IsChecked == True,
+        }
+        script.get_config().set_option("resume_state", json.dumps(state))
+        script.save_config()
+
+    def _take_resume_state(self):
+        """The state left by Go to view, if any. It is used once."""
+        config = script.get_config()
+        text = config.get_option("resume_state", "")
+        if not text:
+            return None
+        config.set_option("resume_state", "")
+        script.save_config()
+        try:
+            return json.loads(text)
+        except ValueError:
+            return None
+
+    def _restore_filters(self, state):
+        if not state:
+            return
+        self.searchTextBox.Text = state.get("search", "")
+        self.sheetFilterComboBox.SelectedIndex = state.get("sheet_filter", 0)
+        self.referenceFilterComboBox.SelectedIndex = state.get("reference_filter", 0)
+        self.showDepthCheckbox.IsChecked = bool(state.get("show_depth", False))
+        for kind in state.get("kinds_off", []):
+            if kind in self.view_kinds:
+                self.view_kinds[kind].IsChecked = False
+
+    def _restore_rows(self, state):
+        if not state:
+            return
+        unticked = set(state.get("unticked", []))
+        for item in self.all_items:
+            item.IsSelected = item.view.UniqueId not in unticked
+        columns = dict((c.SortMemberPath, c) for c in self.viewsDataGrid.Columns)
+        descriptions = self._sort_descriptions()
+        for path, ascending in state.get("sort", []):
+            if path not in columns:
+                continue
+            direction = ListSortDirection.Ascending if ascending else ListSortDirection.Descending
+            descriptions.Add(SortDescription(path, direction))
+            columns[path].SortDirection = direction
+        self._update_status()
 
     def _toggle_selected_rows(self, clicked_item):
         """Give all highlighted rows the clicked row's new state. False if not applicable."""
@@ -471,3 +564,5 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
 if __name__ == '__main__':
     window = Generate3DViewReferencesWindow()
     window.ShowDialog()
+    if window.go_to_element is not None:
+        __revit__.ActiveUIDocument.ActiveView = window.go_to_element
