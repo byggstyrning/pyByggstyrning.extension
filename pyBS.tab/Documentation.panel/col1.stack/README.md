@@ -26,6 +26,8 @@ Creates or updates references for many views at once.
   area plans), filtered by category
 * Shows view type, scale, sheet placement and whether a reference is already placed
 * Select/deselect all, and the selection survives changing the category filter
+* Highlight several rows (Shift or Ctrl click) and tick one of their checkboxes: all highlighted
+  rows get the same state
 * **Show view depth** (off by default): off gives a thin plate on the cut plane; on gives a box
   from the cut plane to the far clip (sections, elevations, details) or to the view depth
   plane (floor plans). Views without a far limit, and ceiling plans, stay plates.

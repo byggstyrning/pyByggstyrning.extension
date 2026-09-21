@@ -69,7 +69,8 @@
             
             <!-- DataGrid with Views -->
             <DataGrid x:Name="viewsDataGrid" Grid.Row="1" Style="{DynamicResource StandardDataGridStyle}"
-                      SelectionMode="Extended" IsReadOnly="False">
+                      SelectionMode="Extended" IsReadOnly="False"
+                      PreviewMouseLeftButtonDown="ViewsDataGrid_PreviewMouseLeftButtonDown">
                 <DataGrid.Columns>
                     <DataGridTemplateColumn Header="Select" Width="Auto">
                         <DataGridTemplateColumn.CellTemplate>

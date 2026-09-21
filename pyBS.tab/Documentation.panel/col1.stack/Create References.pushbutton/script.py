@@ -12,8 +12,9 @@ clr.AddReference("PresentationCore")
 clr.AddReference("PresentationFramework")
 from System.Collections.Generic import List
 from System.Collections.ObjectModel import ObservableCollection
-from System.Windows import Thickness, Visibility
+from System.Windows import DependencyObject, Thickness, Visibility
 from System.Windows.Controls import CheckBox
+from System.Windows.Media import VisualTreeHelper
 
 # Import Revit API
 from Autodesk.Revit.DB import ElementId
@@ -189,6 +190,38 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         """Handle select all checkbox unchecked."""
         for view_data in self.views_data:
             view_data.IsSelected = False
+
+    def ViewsDataGrid_PreviewMouseLeftButtonDown(self, sender, args):
+        """Ticking one checkbox inside a multi-row selection ticks every selected row.
+
+        Handled on mouse down: a plain click inside a multi-selection collapses the
+        selection to the clicked row before the checkbox gets its Click.
+        """
+        checkbox = self._find_checkbox(args.OriginalSource)
+        if checkbox is None:
+            return
+        if self._toggle_selected_rows(checkbox.DataContext):
+            args.Handled = True
+
+    def _find_checkbox(self, element):
+        while isinstance(element, DependencyObject):
+            if isinstance(element, CheckBox):
+                return element
+            try:
+                element = VisualTreeHelper.GetParent(element)
+            except Exception:
+                return None  # not a visual, e.g. a text run
+        return None
+
+    def _toggle_selected_rows(self, clicked_item):
+        """Give all highlighted rows the clicked row's new state. False if not applicable."""
+        highlighted = list(self.viewsDataGrid.SelectedItems)
+        if len(highlighted) < 2 or not any(item is clicked_item for item in highlighted):
+            return False
+        new_state = not clicked_item.IsSelected
+        for item in highlighted:
+            item.IsSelected = new_state
+        return True
 
     def CreateViewReferences_Click(self, sender, args):
         """Handle create button click."""
