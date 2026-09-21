@@ -20,7 +20,7 @@
         </Grid.RowDefinitions>
         
         <!-- Busy Indicator Overlay -->
-        <Border x:Name="busyOverlay" Style="{DynamicResource BusyOverlayStyle}">
+        <Border x:Name="busyOverlay" Grid.RowSpan="4" Panel.ZIndex="10" Style="{DynamicResource BusyOverlayStyle}">
             <StackPanel Style="{DynamicResource BusyContentStyle}">
                 <ProgressBar x:Name="busyProgressBar" Style="{DynamicResource BusyProgressBarStyle}"/>
                 <TextBlock x:Name="busyTextBlock" Style="{DynamicResource BusyTextBlockStyle}" Text="Loading..."/>
@@ -61,6 +61,10 @@
                 <CheckBox x:Name="selectAllCheckbox" Grid.Column="0" Content="Select All" 
                           Checked="SelectAll_Checked" Unchecked="SelectAll_Unchecked"
                           Foreground="{DynamicResource TextBrush}" Style="{DynamicResource StandardCheckBoxStyle}"/>
+                <CheckBox x:Name="showDepthCheckbox" Grid.Column="4" Content="Show view depth (box to far clip)"
+                          HorizontalAlignment="Right"
+                          ToolTip="Off: a thin plate on the cut plane. On: a box from the cut plane to the view's far clip or view depth."
+                          Foreground="{DynamicResource TextBrush}" Style="{DynamicResource StandardCheckBoxStyle}"/>
             </Grid>
             
             <!-- DataGrid with Views -->
@@ -80,14 +84,15 @@
                     <DataGridTextColumn Header="View Category" Binding="{Binding ViewCategory}" Width="*" />
                     <DataGridTextColumn Header="View Scale" Binding="{Binding ViewScale}" Width="*" />
                     <DataGridTextColumn Header="Sheet Reference" Binding="{Binding SheetReference}" Width="*" />
+                    <DataGridTextColumn Header="Reference" Binding="{Binding ReferenceStatus}" Width="Auto" />
                 </DataGrid.Columns>
             </DataGrid>
         </Grid>
         
         <!-- Action Buttons -->
         <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
-            <Button x:Name="createButton" Content="Create 3D View References" Click="CreateViewReferences_Click" Style="{DynamicResource StandardButtonStyle}"/>
-            <Button x:Name="isolateButton" Content="Isolate x created elements" Click="IsolateElements_Click" 
+            <Button x:Name="createButton" Content="Create / Update References" Click="CreateViewReferences_Click" Style="{DynamicResource StandardButtonStyle}"/>
+            <Button x:Name="isolateButton" Content="Isolate references" Click="IsolateElements_Click" 
                     IsEnabled="False" Style="{DynamicResource StandardButtonStyle}"/>
             <Button x:Name="cancelButton" Content="Cancel" Click="Cancel_Click" Style="{DynamicResource SecondaryButtonStyle}"/>
         </StackPanel>
