@@ -194,11 +194,23 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         self.referenceFilterComboBox.ItemsSource = List[str](REFERENCE_FILTERS)
         self.referenceFilterComboBox.SelectedIndex = 0
 
+        self.manualDepthTextBox.Text = script.get_config().get_option("manual_depth_mm", "")
+
         names = [NO_SHEET_PARAMETER] + view_references.get_sheet_parameter_names(doc)
         self.sheetParameterComboBox.ItemsSource = List[str](names)
         remembered = script.get_config().get_option("sheet_parameter", NO_SHEET_PARAMETER)
         self.sheetParameterComboBox.SelectedItem = (
             remembered if remembered in names else NO_SHEET_PARAMETER)
+
+    def _manual_depth(self):
+        """The typed depth in feet, None if the box is empty. ValueError if not a number."""
+        text = (self.manualDepthTextBox.Text or "").strip().replace(",", ".")
+        if not text:
+            return None
+        millimetres = float(text)
+        if millimetres <= 0:
+            raise ValueError(text)
+        return millimetres / 304.8
 
     def _sheet_parameter_name(self):
         name = self.sheetParameterComboBox.SelectedItem
@@ -328,9 +340,17 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
                 return
 
         show_depth = self.showDepthCheckbox.IsChecked == True
+        try:
+            manual_depth = self._manual_depth()
+        except ValueError:
+            forms.alert("'{}' is not a depth. Type a number of millimetres, or leave the "
+                        "box empty.".format(self.manualDepthTextBox.Text), title="Depth")
+            return
+        script.get_config().set_option("manual_depth_mm", self.manualDepthTextBox.Text.strip())
+        script.save_config()
         with revit.Transaction("Create 3D View References"):
             result = view_references.sync_view_references(
-                doc, selected_views, self.family_symbol, show_depth)
+                doc, selected_views, self.family_symbol, show_depth, manual_depth)
 
         self.created_elements = result.element_ids
         self.isolateButton.Content = "Isolate {} references".format(len(self.created_elements))

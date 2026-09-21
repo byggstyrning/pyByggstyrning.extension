@@ -88,10 +88,17 @@
                 <CheckBox x:Name="selectAllCheckbox" Grid.Column="0" Content="Select All" 
                           Checked="SelectAll_Checked" Unchecked="SelectAll_Unchecked"
                           Foreground="{DynamicResource TextBrush}" Style="{DynamicResource StandardCheckBoxStyle}"/>
-                <CheckBox x:Name="showDepthCheckbox" Grid.Column="1" Grid.ColumnSpan="4" Content="Show view depth (box to far clip)"
-                          HorizontalAlignment="Right"
-                          ToolTip="Off: a thin plate on the cut plane. On: a box from the cut plane to the view's far clip or view depth."
-                          Foreground="{DynamicResource TextBrush}" Style="{DynamicResource StandardCheckBoxStyle}"/>
+                <StackPanel Grid.Column="1" Grid.ColumnSpan="4" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <CheckBox x:Name="showDepthCheckbox" Content="Show view depth (box to far clip)"
+                              VerticalAlignment="Center"
+                              ToolTip="Off: a thin plate on the cut plane. On: a box from the cut plane to the view's far clip or view depth."
+                              Foreground="{DynamicResource TextBrush}" Style="{DynamicResource StandardCheckBoxStyle}"/>
+                    <TextBlock Text="or depth (mm):" VerticalAlignment="Center" Margin="16,0,6,0"
+                               Style="{DynamicResource BodyTextBlockStyle}"/>
+                    <TextBox x:Name="manualDepthTextBox" Width="80" Height="26" VerticalAlignment="Center"
+                             Style="{DynamicResource PlaceholderTextBoxStyle}" Tag="10"
+                             ToolTip="Draw every reference this deep, measured from the cut plane away from the viewer. Empty: 10 mm plate, or the view depth if ticked. A typed value wins over the checkbox."/>
+                </StackPanel>
             </Grid>
             
             <!-- DataGrid with Views -->

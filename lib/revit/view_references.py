@@ -105,25 +105,39 @@ class ViewReferenceSchema(BaseSchema):
 class ViewFrame(object):
     """Where a view sits in model space: cut-plane centre, axes and size."""
 
-    def __init__(self, origin, right, up, width, height, depth):
+    def __init__(self, origin, right, up, width, height, depth, looks_up=False):
         self.origin = origin
         self.right = right
         self.up = up
         self.width = width
         self.height = height
         self.depth = depth  # None when the view has no usable far limit
+        self.looks_up = looks_up  # a ceiling plan looks along +view direction
+        self.box_depth = None  # how deep the reference is drawn, None = plate
 
-    def placement_origin(self, show_depth):
-        """Work plane origin: the cut plane, or the far clip when showing depth."""
-        if show_depth and self.depth is not None:
-            view_direction = self.right.CrossProduct(self.up)
-            return self.origin - view_direction.Multiply(self.depth)
-        return self.origin
+    def set_box_depth(self, show_depth, manual_depth):
+        """Pick the drawn depth: a typed value wins, then the view's own depth."""
+        if manual_depth is not None:
+            self.box_depth = manual_depth
+        elif show_depth and self.depth is not None:
+            self.box_depth = self.depth
+        else:
+            self.box_depth = None
 
-    def thickness(self, show_depth):
-        if show_depth and self.depth is not None:
-            return self.depth
-        return PLATE_THICKNESS
+    def placement_origin(self):
+        """Work plane origin: the cut plane, or the far end of the box.
+
+        The family extrudes towards the viewer, so a box that should reach away
+        from the viewer starts at its far end. A ceiling plan looks the other
+        way and its box starts on the cut plane.
+        """
+        if self.box_depth is None or self.looks_up:
+            return self.origin
+        view_direction = self.right.CrossProduct(self.up)
+        return self.origin - view_direction.Multiply(self.box_depth)
+
+    def thickness(self):
+        return PLATE_THICKNESS if self.box_depth is None else self.box_depth
 
 
 class SyncResult(object):
@@ -290,7 +304,8 @@ def get_view_frame(view):
         if cut_z is not None:
             origin = XYZ(origin.X, origin.Y, cut_z)
     depth = _get_view_depth(view, crop, origin)
-    return ViewFrame(origin, transform.BasisX, transform.BasisY, width, height, depth)
+    return ViewFrame(origin, transform.BasisX, transform.BasisY, width, height, depth,
+                     looks_up=view.ViewType == ViewType.CeilingPlan)
 
 
 def _get_plane_elevation(view, plane):
@@ -344,9 +359,9 @@ def find_existing_references(doc):
     return existing
 
 
-def _is_on_frame(instance, frame, show_depth):
+def _is_on_frame(instance, frame):
     transform = instance.GetTransform()
-    return (transform.Origin.IsAlmostEqualTo(frame.placement_origin(show_depth))
+    return (transform.Origin.IsAlmostEqualTo(frame.placement_origin())
             and transform.BasisX.IsAlmostEqualTo(frame.right)
             and transform.BasisY.IsAlmostEqualTo(frame.up))
 
@@ -362,10 +377,10 @@ def _set_parameter(instance, name, value):
     param.Set(value)
 
 
-def _apply_frame(instance, frame, view, show_depth, sheet):
+def _apply_frame(instance, frame, view, sheet):
     _set_parameter(instance, PARAM_WIDTH, frame.width)
     _set_parameter(instance, PARAM_HEIGHT, frame.height)
-    _set_parameter(instance, PARAM_DEPTH, frame.thickness(show_depth))
+    _set_parameter(instance, PARAM_DEPTH, frame.thickness())
 
     sheet_number = sheet.SheetNumber if sheet is not None else ""
     label = view.Name
@@ -377,8 +392,8 @@ def _apply_frame(instance, frame, view, show_depth, sheet):
     _set_parameter(instance, PARAM_NAME, label)
 
 
-def _place(doc, symbol, frame, view, show_depth):
-    origin = frame.placement_origin(show_depth)
+def _place(doc, symbol, frame, view):
+    origin = frame.placement_origin()
     plane = Plane.CreateByOriginAndBasis(origin, frame.right, frame.up)
     sketch_plane = SketchPlane.Create(doc, plane)
     instance = doc.Create.NewFamilyInstance(
@@ -390,11 +405,13 @@ def _place(doc, symbol, frame, view, show_depth):
     return instance
 
 
-def sync_view_references(doc, views, symbol, show_depth=False):
+def sync_view_references(doc, views, symbol, show_depth=False, manual_depth=None):
     """Create or update one reference per view. Call inside an open transaction.
 
     With show_depth the reference becomes a box from the cut plane to the
     view's far limit; otherwise it is a thin plate on the cut plane.
+    manual_depth (feet) draws every reference that deep instead, whatever the
+    view's own depth is.
 
     An instance that already sits on the right plane only gets its parameters
     refreshed; one that does not is replaced, because a work plane based
@@ -416,21 +433,22 @@ def sync_view_references(doc, views, symbol, show_depth=False):
             if frame is None:
                 result.skipped.append((view_name, "no crop box"))
                 continue
+            frame.set_box_depth(show_depth, manual_depth)
 
             instances = existing.get(view.UniqueId, [])
             keep = None
             for instance in instances:
-                if keep is None and _is_on_frame(instance, frame, show_depth):
+                if keep is None and _is_on_frame(instance, frame):
                     keep = instance
                 else:
                     doc.Delete(instance.Id)
 
             if keep is not None:
-                _apply_frame(keep, frame, view, show_depth, sheet)
+                _apply_frame(keep, frame, view, sheet)
                 result.updated.append(keep.Id)
             else:
-                instance = _place(doc, symbol, frame, view, show_depth)
-                _apply_frame(instance, frame, view, show_depth, sheet)
+                instance = _place(doc, symbol, frame, view)
+                _apply_frame(instance, frame, view, sheet)
                 if instances:
                     result.updated.append(instance.Id)
                 else:

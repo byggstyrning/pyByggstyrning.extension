@@ -37,6 +37,10 @@ Creates or updates references for many views at once.
 * **Show view depth** (off by default): off gives a thin plate on the cut plane; on gives a box
   from the cut plane to the far clip (sections, elevations, details) or to the view depth
   plane (floor plans). Views without a far limit, and ceiling plans, stay plates.
+* **Depth (mm)**: type a depth and every reference is drawn that deep, measured from the cut
+  plane in the direction the view looks (upwards for a ceiling plan). A typed value wins over
+  the checkbox; empty means the 10 mm plate, or the view depth if ticked. The value is
+  remembered.
 * Reports how many references were created, updated and skipped, with the reason for each skip
 * Can isolate the references it just created or updated in the active view
 
