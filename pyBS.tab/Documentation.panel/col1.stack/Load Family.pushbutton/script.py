@@ -2,41 +2,45 @@
 __title__ = "Load Family"
 __author__ = "Jonatan Jacobsson"
 __doc__ = """Loads the 3D View Reference family into the current project.
-No prompts - just click and load.
+If the project already has an older version of the family it is upgraded;
+the references already placed keep their values.
 """
 
 # Import libraries
-import os
-from pyrevit import revit, script
+import sys
+import os.path as op
+from pyrevit import revit, script, forms
+
+# Add the extension directory to the path
+pushbutton_dir = op.dirname(__file__)
+stack_dir = op.dirname(pushbutton_dir)
+panel_dir = op.dirname(stack_dir)
+tab_dir = op.dirname(panel_dir)
+extension_dir = op.dirname(tab_dir)
+lib_path = op.join(extension_dir, 'lib')
+
+if lib_path not in sys.path:
+    sys.path.insert(0, lib_path)
+
+from revit import view_references
 
 # Get the current Revit document
 doc = revit.doc
 
 logger = script.get_logger()
 
-# Get the script directory
-script_dir = script.get_script_path()
-family_name = "3D View Reference.rfa"
-family_path = os.path.join(script_dir, family_name)
-
-# Check if the family file exists in the script directory
-if not os.path.exists(family_path):
-    # If not in the script directory, provide a default path or use a predefined one
-    # You may need to adjust this path to where your family file is actually located
-    default_path = os.path.join(os.path.dirname(script_dir), "families", family_name)
-    
-    if os.path.exists(default_path):
-        family_path = default_path
-    else:
-        script.exit()
-
-# Load the family into the project
 try:
     with revit.Transaction("Load 3D View Reference Family"):
-        family_loaded = doc.LoadFamily(family_path)
-        
-        if not family_loaded:
-            logger.error("Failed to load family: {}".format(family_name))
+        changed = view_references.load_reference_family(doc, pushbutton_dir)
 except Exception as e:
     logger.error("Error loading family: {}".format(str(e)))
+    script.exit()
 
+if view_references.find_family_symbol(doc) is None:
+    forms.alert("The '{}' family could not be loaded.".format(view_references.FAMILY_NAME),
+                title="Load Family")
+elif changed:
+    forms.show_balloon("Load Family", "'{}' loaded.".format(view_references.FAMILY_NAME))
+else:
+    forms.show_balloon("Load Family", "'{}' is already loaded and up to date.".format(
+        view_references.FAMILY_NAME))

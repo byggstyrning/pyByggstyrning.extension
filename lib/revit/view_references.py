@@ -18,20 +18,23 @@ faces, which is the viewer's side. To show the view depth the work plane is
 therefore put on the far clip plane, so the box ends at the cut plane and the
 text still faces the viewer.
 
-The sheet number is shown as a second line of the "View Name" text. A model
-text of its own cannot be added through the API: the family holds that text to
-the frame's left edge by grouping it with an invisible model line locked to the
-left reference plane, and FamilyCreate.NewGroup refuses model lines. The
-bundled .rfa is in Revit 2024 format and must be edited in Revit 2024 to stay
-loadable everywhere; if it ever gets a "Sheet Number" text parameter, that is
-used instead and the view name stays on its own.
+Two family files are bundled with the Load Family button. The original is in
+Revit 2024 format so every supported Revit can load it. "2026/" holds a copy
+with a "Sheet Number" text of its own, built by build_2026_family.py, which
+also explains why that text is a nested label family. load_reference_family
+picks the newest file the running Revit can open. With a family that has the
+Sheet Number parameter the sheet number goes there; with one that does not,
+it becomes a second line of the "View Name" text.
 """
+import os
+
 from Autodesk.Revit.DB import (
     BuiltInParameter,
     Element,
     FamilyInstance,
     FamilySymbol,
     FilteredElementCollector,
+    IFamilyLoadOptions,
     Level,
     Plane,
     PlanViewPlane,
@@ -59,7 +62,10 @@ PARAM_WIDTH = "View Width"
 PARAM_HEIGHT = "View Height"
 PARAM_DEPTH = "View Depth"
 PARAM_NAME = "View Name"
-PARAM_SHEET = "Sheet Number"  # optional, see the module docstring
+PARAM_SHEET = "Sheet Number"  # only in the 2026 family, see the module docstring
+
+# Shown by the Sheet Number text of a view that is not on a sheet
+NO_SHEET_TEXT = "-"
 
 # Thickness of the plate when the view depth is not shown (the family default)
 PLATE_THICKNESS = 10 / 304.8
@@ -199,6 +205,47 @@ def find_family_symbol(doc):
     return first
 
 
+class _KeepValuesLoadOptions(IFamilyLoadOptions):
+    """Load over an already loaded family without touching instance values."""
+
+    def OnFamilyFound(self, familyInUse, overwriteParameterValues):
+        overwriteParameterValues.Value = False
+        return True
+
+    def OnSharedFamilyFound(self, sharedFamily, familyInUse, source, overwriteParameterValues):
+        overwriteParameterValues.Value = False
+        return True
+
+
+def get_family_file(family_dir, revit_version):
+    """The newest bundled family file that Revit version can open.
+
+    family_dir holds the original file; subfolders named after a Revit version
+    hold copies saved in that version.
+    """
+    file_name = FAMILY_NAME + ".rfa"
+    best_version, best_path = 0, os.path.join(family_dir, file_name)
+    for name in os.listdir(family_dir):
+        path = os.path.join(family_dir, name, file_name)
+        if name.isdigit() and best_version < int(name) <= revit_version and os.path.isfile(path):
+            best_version, best_path = int(name), path
+    return best_path
+
+
+def load_reference_family(doc, family_dir):
+    """Load the family, or upgrade the loaded one. Call inside an open transaction.
+
+    Existing instances keep their values. Returns True if the project changed.
+    """
+    path = get_family_file(family_dir, int(doc.Application.VersionNumber))
+    loaded = doc.LoadFamily(path, _KeepValuesLoadOptions())
+    # IronPython returns (bool, Family) for the overload with an out parameter
+    if isinstance(loaded, tuple):
+        loaded = loaded[0]
+    logger.debug("LoadFamily('{}') -> {}".format(path, loaded))
+    return bool(loaded)
+
+
 def get_view_frame(view):
     """Return the ViewFrame of a view, or None if it has no usable crop box."""
     crop = view.CropBox
@@ -301,7 +348,7 @@ def _apply_frame(instance, frame, view, show_depth, sheet):
     sheet_number = sheet.SheetNumber if sheet is not None else ""
     label = view.Name
     if instance.LookupParameter(PARAM_SHEET) is not None:
-        _set_parameter(instance, PARAM_SHEET, sheet_number)
+        _set_parameter(instance, PARAM_SHEET, sheet_number or NO_SHEET_TEXT)
     elif sheet_number:
         # A line break in the value gives a two-line model text
         label = "{}\r\n{}".format(view.Name, sheet_number)

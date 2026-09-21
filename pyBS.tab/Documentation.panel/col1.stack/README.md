@@ -13,7 +13,10 @@ The placement logic is shared by both tools and lives in `lib/revit/view_referen
 
 ### Load Family
 
-Loads the `3D View Reference` family into the current project with a single click.
+Loads the `3D View Reference` family into the current project with a single click. If the
+project already has an older version of the family, it is upgraded and the references already
+placed keep their values. Run it once in projects that got the family before the sheet number
+text existed.
 
 ### Create References
 
@@ -43,20 +46,26 @@ selects it.
 * `View Width` and `View Height` come from the crop box, `View Name` from the view, and
   `View Depth` as described above. The family type `Standard Reference` is used when present,
   otherwise the first type of the family.
-* The sheet number of the sheet the view is placed on is shown as a second line of the
-  `View Name` text. Views that are not on a sheet show only their name. Run the tool again
-  after placing views on sheets or renumbering sheets to refresh the text.
+* The number of the sheet the view is placed on goes in `Sheet Number`, shown below the view
+  name; views that are not on a sheet show `-`. With a family that has no `Sheet Number`
+  parameter (Revit 2024/2025, or a project where Load Family has not been run since) it becomes
+  a second line of the `View Name` text instead. Run the tool again after placing views on
+  sheets or renumbering sheets to refresh the text.
 * The family's "View Name" text faces the viewer's side of the cut plane.
 
-### The family file
+### The family files
 
-`3D View Reference.rfa` is saved in Revit 2024 format so that every supported Revit version can
-load it. Saving it from a newer Revit upgrades it and locks out the older versions, so edit it
-in Revit 2024.
+* `Load Family.pushbutton/3D View Reference.rfa` is saved in Revit 2024 format so that every
+  supported Revit version can load it. Saving it from a newer Revit upgrades it and locks out
+  the older versions, so edit it in Revit 2024.
+* `Load Family.pushbutton/2026/3D View Reference.rfa` is a Revit 2026 copy with the
+  `Sheet Number` text. It is generated from the file above by `build_2026_family.py`
+  (`pyrevit run`, see the script); rebuild it when the 2024 file changes. Load Family uses the
+  newest file the running Revit can open, so a folder for a later version can be added the same
+  way.
 
-The sheet number shares the `View Name` text because a second model text cannot be added
-through the API: the family keeps that text at the frame's left edge by grouping it with an
-invisible model line that is locked to the left reference plane, and the API cannot put model
-lines in a group. To give the sheet number a text of its own, add an instance text parameter
-named `Sheet Number` and a model text driven by it to that group in the family editor. The
-tools then fill that parameter and leave `View Name` as the view name alone.
+The `Sheet Number` text is a nested label family, not a second model text. The family keeps its
+`View Name` text at the frame's left edge by grouping it with an invisible model line that is
+locked to the left reference plane, and the API can neither dimension a model text nor put model
+lines in a group. A nested family instance has references, so the build script locks its centre
+reference to the same reference plane.
