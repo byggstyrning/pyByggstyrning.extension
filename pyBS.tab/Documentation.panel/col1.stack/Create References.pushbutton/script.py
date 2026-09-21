@@ -12,7 +12,7 @@ clr.AddReference("PresentationCore")
 clr.AddReference("PresentationFramework")
 from System.Collections.Generic import List
 from System.Collections.ObjectModel import ObservableCollection
-from System.Windows import DependencyObject, Thickness, Visibility
+from System.Windows import Thickness, Visibility
 from System.Windows.Controls import CheckBox
 from System.Windows.Media import VisualTreeHelper
 
@@ -204,7 +204,7 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
             args.Handled = True
 
     def _find_checkbox(self, element):
-        while isinstance(element, DependencyObject):
+        while element is not None:
             if isinstance(element, CheckBox):
                 return element
             try:
