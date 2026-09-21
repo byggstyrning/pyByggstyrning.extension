@@ -56,7 +56,12 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
+                <TextBox x:Name="maxAreaTextBox" Grid.Column="4" Width="110" Height="30" Margin="8,0,0,0"
+                         Style="{DynamicResource PlaceholderTextBoxStyle}" Tag="Max area m&#178;"
+                         ToolTip="Hide views whose crop box (width x height) is larger than this many square metres, e.g. 6,25 to keep details and drop building sections. Nothing is deleted from the model."
+                         TextChanged="Filter_Changed"/>
                 <TextBox x:Name="searchTextBox" Grid.Column="0" Height="30"
                          Style="{DynamicResource PlaceholderTextBoxStyle}"
                          Tag="Search view name, category, scale, sheet..."
@@ -118,6 +123,7 @@
                     </DataGridTemplateColumn>
                     <DataGridTextColumn Header="View Name" Binding="{Binding ViewName}" Width="*" />
                     <DataGridTextColumn Header="View Category" Binding="{Binding ViewCategory}" Width="*" />
+                    <DataGridTextColumn Header="Area (m&#178;)" Binding="{Binding ViewArea}" SortMemberPath="ViewAreaValue" Width="Auto" />
                     <DataGridTextColumn Header="View Scale" Binding="{Binding ViewScale}" SortMemberPath="ViewScaleValue" Width="*" />
                     <DataGridTextColumn Header="Sheet Reference" Binding="{Binding SheetReference}" Width="*" />
                     <DataGridTextColumn x:Name="sheetParameterColumn" Header="Sheet Parameter"

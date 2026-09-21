@@ -74,6 +74,7 @@ class ViewItemData(forms.Reactive):
         self.view_name = view.Name
         self.view_category = view_references.get_view_kind_label(view)
         self.view_scale = "1:{}".format(view.Scale) if view.Scale else "Unknown"
+        self.area = view_references.get_view_area(view)  # m2, None without a crop box
         self.sheet_reference = view_references.get_sheet_label(sheet) if sheet else "Not on sheet"
         self.reference_status = "Placed" if has_reference else ""
 
@@ -104,6 +105,15 @@ class ViewItemData(forms.Reactive):
     @property
     def ViewScale(self):
         return self.view_scale
+
+    @property
+    def ViewArea(self):
+        return "" if self.area is None else "{:.2f}".format(self.area)
+
+    @property
+    def ViewAreaValue(self):
+        """What the Area column sorts on."""
+        return -1.0 if self.area is None else self.area
 
     @property
     def ViewScaleValue(self):
@@ -203,6 +213,9 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         self.referenceFilterComboBox.SelectedIndex = 0
 
         self.manualDepthTextBox.Text = script.get_config().get_option("manual_depth_mm", "")
+        self.area_filter_error = False
+        self.maxAreaTextBox.Text = script.get_config().get_option("max_area_m2", "")
+        self.Closed += self._save_max_area
 
         names = [NO_SHEET_PARAMETER] + view_references.get_sheet_parameter_names(doc)
         self.sheetParameterComboBox.ItemsSource = List[str](names)
@@ -219,6 +232,20 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         if millimetres <= 0:
             raise ValueError(text)
         return millimetres / 304.8
+
+    def _max_area(self):
+        """The typed area limit in m2, None if empty. ValueError if not a number."""
+        text = (self.maxAreaTextBox.Text or "").strip().replace(",", ".")
+        if not text:
+            return None
+        area = float(text)
+        if area <= 0:
+            raise ValueError(text)
+        return area
+
+    def _save_max_area(self, sender, args):
+        script.get_config().set_option("max_area_m2", (self.maxAreaTextBox.Text or "").strip())
+        script.save_config()
 
     def _sheet_parameter_name(self):
         name = self.sheetParameterComboBox.SelectedItem
@@ -254,6 +281,12 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         words = (self.searchTextBox.Text or "").lower().split()
         sheet_filter = self.sheetFilterComboBox.SelectedItem
         reference_filter = self.referenceFilterComboBox.SelectedItem
+        try:
+            max_area = self._max_area()
+            self.area_filter_error = False
+        except ValueError:
+            max_area = None
+            self.area_filter_error = True
 
         self.views_data.Clear()
         for item in self.all_items:
@@ -267,6 +300,9 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
                 continue
             if reference_filter == REFERENCE_MISSING and item.has_reference:
                 continue
+            # a view without a crop box has no area and cannot get a reference anyway
+            if max_area is not None and (item.area is None or item.area > max_area + 1e-6):
+                continue
             self.views_data.Add(item)
         self._update_status()
 
@@ -278,6 +314,8 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
                   for d in self._sort_descriptions()]
         if levels:
             text += u"  \u00b7  Sorted by " + u", then ".join(levels)
+        if self.area_filter_error:
+            text += u"  \u00b7  Max area is not a number, not applied"
         self.countTextBlock.Text = text
 
     def _sort_descriptions(self):

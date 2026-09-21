@@ -28,6 +28,10 @@ Creates or updates references for many views at once.
 * Search box: every word typed must occur somewhere in the row (view name, category, scale,
   sheet, sheet parameter); not case sensitive
 * Filters: on sheet / not on sheet, and reference placed / not placed
+* Max area (m²): hides views whose crop box (width x height) is larger, e.g. 6,25 to keep
+  details and leave out building sections that share a sheet or a sheet parameter value with
+  them. The view type cannot tell those apart. The Area column shows the value and sorts by
+  number. Nothing is deleted from the model; the limit is remembered.
 * Stacked sorting: click column headers in the order they should apply, e.g. View Scale then
   View Name sorts by scale and by name within each scale. A second click on a header flips its
   direction, a third takes it out of the sort. The order is shown bottom left. View Scale sorts

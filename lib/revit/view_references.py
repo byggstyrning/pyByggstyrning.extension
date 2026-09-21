@@ -227,6 +227,18 @@ def get_parameter_text(element, name):
     return parameter.AsValueString() or ""
 
 
+def get_view_area(view):
+    """Crop box width x height in square metres, None without a usable crop box."""
+    crop = view.CropBox
+    if crop is None:
+        return None
+    width = crop.Max.X - crop.Min.X
+    height = crop.Max.Y - crop.Min.Y
+    if width <= 0 or height <= 0:
+        return None
+    return width * height * 0.09290304
+
+
 def find_family_symbol(doc):
     """The 3D View Reference type to place, or None if the family is not loaded."""
     first = None
