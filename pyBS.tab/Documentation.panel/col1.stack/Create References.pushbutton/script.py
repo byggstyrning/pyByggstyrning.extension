@@ -166,18 +166,7 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         
         # Initialize view data
         self.views_data = ObservableCollection[ViewItemData]()
-    
-    def set_busy(self, is_busy, message="Loading..."):
-        """Show or hide the busy overlay indicator."""
-        try:
-            if is_busy:
-                self.busyOverlay.Visibility = Visibility.Visible
-                self.busyTextBlock.Text = message
-            else:
-                self.busyOverlay.Visibility = Visibility.Collapsed
-        except Exception as e:
-            logger.debug("Error setting busy indicator: {}".format(str(e)))
-        
+
         # Check for required family
         logger.debug("Checking for 3D View Reference family on initialization")
         try:
@@ -222,7 +211,18 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         # Bind views to DataGrid
         self.viewsDataGrid.ItemsSource = self.views_data
         logger.debug("UI setup complete. Found {} views.".format(self.views_data.Count))
-        
+
+    def set_busy(self, is_busy, message="Loading..."):
+        """Show or hide the busy overlay indicator."""
+        try:
+            if is_busy:
+                self.busyOverlay.Visibility = Visibility.Visible
+                self.busyTextBlock.Text = message
+            else:
+                self.busyOverlay.Visibility = Visibility.Collapsed
+        except Exception as e:
+            logger.debug("Error setting busy indicator: {}".format(str(e)))
+
     def _setup_view_categories(self):
         """Set up view category checkboxes."""
         # Define relevant view categories
