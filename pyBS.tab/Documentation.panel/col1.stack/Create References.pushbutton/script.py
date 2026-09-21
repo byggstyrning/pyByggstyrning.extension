@@ -168,7 +168,8 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
 
         views = view_references.collect_views(doc, checked_kinds)
         for view in sorted(views, key=lambda v: v.Name):
-            sheet_reference = sheet_lookup.get(get_element_id_value(view.Id), "Not on sheet")
+            sheet = sheet_lookup.get(get_element_id_value(view.Id))
+            sheet_reference = view_references.get_sheet_label(sheet) if sheet else "Not on sheet"
             item = ViewItemData(view, sheet_reference, view.UniqueId in existing)
             item.IsSelected = view.UniqueId not in deselected
             self.views_data.Add(item)

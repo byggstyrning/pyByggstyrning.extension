@@ -17,6 +17,14 @@ The family extrudes from its work plane towards the side its "View Name" text
 faces, which is the viewer's side. To show the view depth the work plane is
 therefore put on the far clip plane, so the box ends at the cut plane and the
 text still faces the viewer.
+
+The sheet number is shown as a second line of the "View Name" text. A model
+text of its own cannot be added through the API: the family holds that text to
+the frame's left edge by grouping it with an invisible model line locked to the
+left reference plane, and FamilyCreate.NewGroup refuses model lines. The
+bundled .rfa is in Revit 2024 format and must be edited in Revit 2024 to stay
+loadable everywhere; if it ever gets a "Sheet Number" text parameter, that is
+used instead and the view name stays on its own.
 """
 from Autodesk.Revit.DB import (
     BuiltInParameter,
@@ -51,6 +59,7 @@ PARAM_WIDTH = "View Width"
 PARAM_HEIGHT = "View Height"
 PARAM_DEPTH = "View Depth"
 PARAM_NAME = "View Name"
+PARAM_SHEET = "Sheet Number"  # optional, see the module docstring
 
 # Thickness of the plate when the view depth is not shown (the family default)
 PLATE_THICKNESS = 10 / 304.8
@@ -163,13 +172,17 @@ def collect_views(doc, kinds=None):
 
 
 def build_sheet_lookup(doc):
-    """Map view id value -> 'number - name' of the sheet the view is placed on."""
+    """Map view id value -> the ViewSheet the view is placed on."""
     lookup = {}
     for sheet in FilteredElementCollector(doc).OfClass(ViewSheet):
-        label = "{} - {}".format(sheet.SheetNumber, sheet.Name)
         for view_id in sheet.GetAllPlacedViews():
-            lookup[get_element_id_value(view_id)] = label
+            lookup[get_element_id_value(view_id)] = sheet
     return lookup
+
+
+def get_sheet_label(sheet):
+    """'number - name' of a sheet, for lists."""
+    return "{} - {}".format(sheet.SheetNumber, sheet.Name)
 
 
 def find_family_symbol(doc):
@@ -280,11 +293,19 @@ def _set_parameter(instance, name, value):
     param.Set(value)
 
 
-def _apply_frame(instance, frame, view, show_depth):
+def _apply_frame(instance, frame, view, show_depth, sheet):
     _set_parameter(instance, PARAM_WIDTH, frame.width)
     _set_parameter(instance, PARAM_HEIGHT, frame.height)
     _set_parameter(instance, PARAM_DEPTH, frame.thickness(show_depth))
-    _set_parameter(instance, PARAM_NAME, view.Name)
+
+    sheet_number = sheet.SheetNumber if sheet is not None else ""
+    label = view.Name
+    if instance.LookupParameter(PARAM_SHEET) is not None:
+        _set_parameter(instance, PARAM_SHEET, sheet_number)
+    elif sheet_number:
+        # A line break in the value gives a two-line model text
+        label = "{}\r\n{}".format(view.Name, sheet_number)
+    _set_parameter(instance, PARAM_NAME, label)
 
 
 def _place(doc, symbol, frame, view, show_depth):
@@ -316,9 +337,11 @@ def sync_view_references(doc, views, symbol, show_depth=False):
         doc.Regenerate()
 
     existing = find_existing_references(doc)
+    sheet_lookup = build_sheet_lookup(doc)
 
     for view in views:
         view_name = view.Name
+        sheet = sheet_lookup.get(get_element_id_value(view.Id))
         try:
             frame = get_view_frame(view)
             if frame is None:
@@ -334,11 +357,11 @@ def sync_view_references(doc, views, symbol, show_depth=False):
                     doc.Delete(instance.Id)
 
             if keep is not None:
-                _apply_frame(keep, frame, view, show_depth)
+                _apply_frame(keep, frame, view, show_depth, sheet)
                 result.updated.append(keep.Id)
             else:
                 instance = _place(doc, symbol, frame, view, show_depth)
-                _apply_frame(instance, frame, view, show_depth)
+                _apply_frame(instance, frame, view, show_depth, sheet)
                 if instances:
                     result.updated.append(instance.Id)
                 else:

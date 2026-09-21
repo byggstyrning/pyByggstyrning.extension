@@ -43,4 +43,20 @@ selects it.
 * `View Width` and `View Height` come from the crop box, `View Name` from the view, and
   `View Depth` as described above. The family type `Standard Reference` is used when present,
   otherwise the first type of the family.
+* The sheet number of the sheet the view is placed on is shown as a second line of the
+  `View Name` text. Views that are not on a sheet show only their name. Run the tool again
+  after placing views on sheets or renumbering sheets to refresh the text.
 * The family's "View Name" text faces the viewer's side of the cut plane.
+
+### The family file
+
+`3D View Reference.rfa` is saved in Revit 2024 format so that every supported Revit version can
+load it. Saving it from a newer Revit upgrades it and locks out the older versions, so edit it
+in Revit 2024.
+
+The sheet number shares the `View Name` text because a second model text cannot be added
+through the API: the family keeps that text at the frame's left edge by grouping it with an
+invisible model line that is locked to the left reference plane, and the API cannot put model
+lines in a group. To give the sheet number a text of its own, add an instance text parameter
+named `Sheet Number` and a model text driven by it to that group in the family editor. The
+tools then fill that parameter and leave `View Name` as the view name alone.
