@@ -104,7 +104,8 @@
             <!-- DataGrid with Views -->
             <DataGrid x:Name="viewsDataGrid" Grid.Row="2" Style="{DynamicResource StandardDataGridStyle}"
                       SelectionMode="Extended" IsReadOnly="False"
-                      PreviewMouseLeftButtonDown="ViewsDataGrid_PreviewMouseLeftButtonDown">
+                      PreviewMouseLeftButtonDown="ViewsDataGrid_PreviewMouseLeftButtonDown"
+                      Sorting="ViewsDataGrid_Sorting">
                 <DataGrid.Columns>
                     <DataGridTemplateColumn Header="Select" Width="Auto">
                         <DataGridTemplateColumn.CellTemplate>
@@ -117,7 +118,7 @@
                     </DataGridTemplateColumn>
                     <DataGridTextColumn Header="View Name" Binding="{Binding ViewName}" Width="*" />
                     <DataGridTextColumn Header="View Category" Binding="{Binding ViewCategory}" Width="*" />
-                    <DataGridTextColumn Header="View Scale" Binding="{Binding ViewScale}" Width="*" />
+                    <DataGridTextColumn Header="View Scale" Binding="{Binding ViewScale}" SortMemberPath="ViewScaleValue" Width="*" />
                     <DataGridTextColumn Header="Sheet Reference" Binding="{Binding SheetReference}" Width="*" />
                     <DataGridTextColumn x:Name="sheetParameterColumn" Header="Sheet Parameter"
                                         Binding="{Binding SheetParameterValue}" Width="*" Visibility="Collapsed" />

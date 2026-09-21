@@ -8,12 +8,15 @@ Views that already have a reference get it updated instead of getting a second o
 # Import .NET libraries
 import clr
 clr.AddReference("System")
+clr.AddReference("WindowsBase")
 clr.AddReference("PresentationCore")
 clr.AddReference("PresentationFramework")
 from System.Collections.Generic import List
 from System.Collections.ObjectModel import ObservableCollection
 from System.Windows import Thickness, Visibility
+from System.ComponentModel import ListSortDirection, SortDescription
 from System.Windows.Controls import CheckBox
+from System.Windows.Data import CollectionViewSource
 from System.Windows.Media import VisualTreeHelper
 
 # Import Revit API
@@ -101,6 +104,11 @@ class ViewItemData(forms.Reactive):
     @property
     def ViewScale(self):
         return self.view_scale
+
+    @property
+    def ViewScaleValue(self):
+        """What the View Scale column sorts on: 1:50 before 1:100."""
+        return self.view.Scale or 0
 
     @property
     def SheetReference(self):
@@ -260,8 +268,47 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
             if reference_filter == REFERENCE_MISSING and item.has_reference:
                 continue
             self.views_data.Add(item)
-        self.countTextBlock.Text = "Showing {} of {} views".format(
-            self.views_data.Count, len(self.all_items))
+        self._update_status()
+
+    def _update_status(self):
+        text = "Showing {} of {} views".format(self.views_data.Count, len(self.all_items))
+        headers = dict((c.SortMemberPath, c.Header) for c in self.viewsDataGrid.Columns)
+        levels = [u"{} {}".format(headers.get(d.PropertyName, d.PropertyName),
+                                  u"\u2191" if d.Direction == ListSortDirection.Ascending else u"\u2193")
+                  for d in self._sort_descriptions()]
+        if levels:
+            text += u"  \u00b7  Sorted by " + u", then ".join(levels)
+        self.countTextBlock.Text = text
+
+    def _sort_descriptions(self):
+        return CollectionViewSource.GetDefaultView(self.views_data).SortDescriptions
+
+    def ViewsDataGrid_Sorting(self, sender, args):
+        """Header clicks stack: each new column sorts within the ones clicked before it.
+
+        First click adds the column ascending, the second makes it descending,
+        the third takes it out of the sort again.
+        """
+        args.Handled = True
+        column = args.Column
+        path = column.SortMemberPath
+        descriptions = self._sort_descriptions()
+        index = -1
+        for i, description in enumerate(descriptions):
+            if description.PropertyName == path:
+                index = i
+                break
+
+        if index < 0:
+            descriptions.Add(SortDescription(path, ListSortDirection.Ascending))
+            column.SortDirection = ListSortDirection.Ascending
+        elif descriptions[index].Direction == ListSortDirection.Ascending:
+            descriptions[index] = SortDescription(path, ListSortDirection.Descending)
+            column.SortDirection = ListSortDirection.Descending
+        else:
+            descriptions.RemoveAt(index)
+            column.SortDirection = None
+        self._update_status()
 
     def ViewCategory_CheckedChanged(self, sender, args):
         """Handle view category checkbox changes."""

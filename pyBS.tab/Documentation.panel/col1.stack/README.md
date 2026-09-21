@@ -28,6 +28,10 @@ Creates or updates references for many views at once.
 * Search box: every word typed must occur somewhere in the row (view name, category, scale,
   sheet, sheet parameter); not case sensitive
 * Filters: on sheet / not on sheet, and reference placed / not placed
+* Stacked sorting: click column headers in the order they should apply, e.g. View Scale then
+  View Name sorts by scale and by name within each scale. A second click on a header flips its
+  direction, a third takes it out of the sort. The order is shown bottom left. View Scale sorts
+  by number (1:50 before 1:100).
 * Sheet parameter column: pick any parameter found on the project's sheets and it is shown
   for each view's sheet, searchable like the other columns. The choice is remembered.
 * Select/deselect all acts on the rows shown; ticks survive searching and filtering. Create
