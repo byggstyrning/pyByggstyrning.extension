@@ -70,7 +70,7 @@ class ViewItemData(forms.Reactive):
         self.sheet = sheet
         self.kind = view_references.get_view_kind(view)
         self.has_reference = has_reference
-        self._is_selected = True
+        self._is_selected = False
         self._sheet_parameter_value = ""
         self.view_name = view.Name
         self.view_category = view_references.get_view_kind_label(view)
@@ -168,15 +168,14 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
 
         self._setup_view_categories()
         self._setup_filters()
-        resume_state = self._take_resume_state()
-        self._restore_filters(resume_state)
+        saved_state = self._read_state()
+        self._restore_filters(saved_state)
         self._load_views()
 
         # Bind views to DataGrid
         self.viewsDataGrid.ItemsSource = self.views_data
-        self.selectAllCheckbox.IsChecked = True
-        # after Select All, which ticks every row
-        self._restore_rows(resume_state)
+        self._restore_rows(saved_state)
+        self.Closed += self._save_state
         logger.debug("UI setup complete. Found {} views.".format(self.views_data.Count))
 
     def _alert_family_missing(self):
@@ -262,8 +261,7 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
 
     def _load_views(self):
         """Read all views from the model, keeping which rows were unticked."""
-        deselected = set(item.view.UniqueId for item in (self.all_items or [])
-                         if not item.IsSelected)
+        ticked = set(item.view.UniqueId for item in (self.all_items or []) if item.IsSelected)
         sheet_lookup = view_references.build_sheet_lookup(doc)
         existing = view_references.find_existing_references(doc)
 
@@ -271,7 +269,7 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         for view in sorted(view_references.collect_views(doc), key=lambda v: v.Name):
             sheet = sheet_lookup.get(get_element_id_value(view.Id))
             item = ViewItemData(view, sheet, view.UniqueId in existing)
-            item.IsSelected = view.UniqueId not in deselected
+            item.IsSelected = view.UniqueId in ticked
             self.all_items.append(item)
         self._update_sheet_parameter_column()
         self._apply_filters()
@@ -432,39 +430,40 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         """Close the dialog and have the view opened.
 
         Revit's UI is blocked while this modal dialog is open, so the view can
-        only be looked at once it has closed. The state of the window is kept
-        and restored the next time the tool is started.
+        only be looked at once it has closed. The window comes back as it was
+        the next time the tool is started, see _save_state.
         """
         self.go_to_element = view
-        self._save_resume_state()
         self.Close()
 
-    def _save_resume_state(self):
+    def _state_file(self):
+        """Per-model file for the window state, in pyRevit's data folder."""
+        return script.get_document_data_file("create_references_state", "json")
+
+    def _save_state(self, sender, args):
+        """Keep ticks, search, filters and sort for the next start. Runs on every close."""
         state = {
             "search": self.searchTextBox.Text or "",
             "sheet_filter": self.sheetFilterComboBox.SelectedIndex,
             "reference_filter": self.referenceFilterComboBox.SelectedIndex,
             "kinds_off": [kind for kind, cb in self.view_kinds.items() if cb.IsChecked != True],
-            "unticked": [item.view.UniqueId for item in self.all_items if not item.IsSelected],
+            "ticked": [item.view.UniqueId for item in self.all_items if item.IsSelected],
             "sort": [[d.PropertyName, d.Direction == ListSortDirection.Ascending]
                      for d in self._sort_descriptions()],
             "show_depth": self.showDepthCheckbox.IsChecked == True,
         }
-        script.get_config().set_option("resume_state", json.dumps(state))
-        script.save_config()
-
-    def _take_resume_state(self):
-        """The state left by Go to view, if any. It is used once."""
-        config = script.get_config()
-        text = config.get_option("resume_state", "")
-        if not text:
-            return None
-        config.set_option("resume_state", "")
-        script.save_config()
         try:
-            return json.loads(text)
-        except ValueError:
-            return None
+            with open(self._state_file(), "w") as state_file:
+                json.dump(state, state_file)
+        except Exception as ex:
+            logger.debug("Could not save the window state: {}".format(ex))
+
+    def _read_state(self):
+        try:
+            with open(self._state_file(), "r") as state_file:
+                return json.load(state_file)
+        except Exception:
+            return None  # first start in this model, or an unreadable file
 
     def _restore_filters(self, state):
         if not state:
@@ -480,9 +479,9 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
     def _restore_rows(self, state):
         if not state:
             return
-        unticked = set(state.get("unticked", []))
+        ticked = set(state.get("ticked", []))
         for item in self.all_items:
-            item.IsSelected = item.view.UniqueId not in unticked
+            item.IsSelected = item.view.UniqueId in ticked
         columns = dict((c.SortMemberPath, c) for c in self.viewsDataGrid.Columns)
         descriptions = self._sort_descriptions()
         for path, ascending in state.get("sort", []):
