@@ -39,6 +39,7 @@ from Autodesk.Revit.DB import (
     Plane,
     PlanViewPlane,
     SketchPlane,
+    StorageType,
     View,
     ViewPlan,
     ViewSheet,
@@ -189,6 +190,27 @@ def build_sheet_lookup(doc):
 def get_sheet_label(sheet):
     """'number - name' of a sheet, for lists."""
     return "{} - {}".format(sheet.SheetNumber, sheet.Name)
+
+
+def get_sheet_parameter_names(doc):
+    """Names of all parameters found on the project's sheets, sorted."""
+    names = set()
+    for sheet in FilteredElementCollector(doc).OfClass(ViewSheet):
+        for parameter in sheet.Parameters:
+            names.add(parameter.Definition.Name)
+    return sorted(names, key=lambda name: name.lower())
+
+
+def get_parameter_text(element, name):
+    """The value of a parameter as the user sees it, '' if missing or empty."""
+    if element is None or not name:
+        return ""
+    parameter = element.LookupParameter(name)
+    if parameter is None or not parameter.HasValue:
+        return ""
+    if parameter.StorageType == StorageType.String:
+        return parameter.AsString() or ""
+    return parameter.AsValueString() or ""
 
 
 def find_family_symbol(doc):

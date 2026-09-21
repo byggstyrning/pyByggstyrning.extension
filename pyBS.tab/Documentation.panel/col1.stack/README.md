@@ -25,7 +25,13 @@ Creates or updates references for many views at once.
 * Lists sections, elevations, detail views and plan callouts (floor, ceiling, structural and
   area plans), filtered by category
 * Shows view type, scale, sheet placement and whether a reference is already placed
-* Select/deselect all, and the selection survives changing the category filter
+* Search box: every word typed must occur somewhere in the row (view name, category, scale,
+  sheet, sheet parameter); not case sensitive
+* Filters: on sheet / not on sheet, and reference placed / not placed
+* Sheet parameter column: pick any parameter found on the project's sheets and it is shown
+  for each view's sheet, searchable like the other columns. The choice is remembered.
+* Select/deselect all acts on the rows shown; ticks survive searching and filtering. Create
+  works on the ticked rows that are shown.
 * Highlight several rows (Shift or Ctrl click) and tick one of their checkboxes: all highlighted
   rows get the same state
 * **Show view depth** (off by default): off gives a thin plate on the cut plane; on gives a box

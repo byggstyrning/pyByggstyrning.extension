@@ -48,20 +48,47 @@ logger = script.get_logger()
 # Get Revit document
 doc = __revit__.ActiveUIDocument.Document
 
+# Filter dropdown choices
+SHEET_ALL, SHEET_ON, SHEET_OFF = "On sheet or not", "On sheet", "Not on sheet"
+SHEET_FILTERS = [SHEET_ALL, SHEET_ON, SHEET_OFF]
+REFERENCE_ALL, REFERENCE_PLACED, REFERENCE_MISSING = "Placed or not", "Placed", "Not placed"
+REFERENCE_FILTERS = [REFERENCE_ALL, REFERENCE_PLACED, REFERENCE_MISSING]
+NO_SHEET_PARAMETER = "(no sheet parameter)"
+
 
 class ViewItemData(forms.Reactive):
     """Class for view data binding with WPF UI."""
 
-    def __init__(self, view, sheet_reference, has_reference):
-        """Initialize with a Revit view."""
+    def __init__(self, view, sheet, has_reference):
+        """Initialize with a Revit view and the sheet it is placed on, if any."""
         super(ViewItemData, self).__init__()
         self.view = view
+        self.sheet = sheet
+        self.kind = view_references.get_view_kind(view)
+        self.has_reference = has_reference
         self._is_selected = True
+        self._sheet_parameter_value = ""
         self.view_name = view.Name
         self.view_category = view_references.get_view_kind_label(view)
         self.view_scale = "1:{}".format(view.Scale) if view.Scale else "Unknown"
-        self.sheet_reference = sheet_reference
+        self.sheet_reference = view_references.get_sheet_label(sheet) if sheet else "Not on sheet"
         self.reference_status = "Placed" if has_reference else ""
+
+    def matches(self, words):
+        """True if every search word occurs somewhere in the row's texts."""
+        text = u" ".join([self.view_name, self.view_category, self.view_scale,
+                          self.sheet_reference, self.reference_status,
+                          self._sheet_parameter_value]).lower()
+        return all(word in text for word in words)
+
+    @property
+    def SheetParameterValue(self):
+        return self._sheet_parameter_value
+
+    @SheetParameterValue.setter
+    def SheetParameterValue(self, value):
+        self._sheet_parameter_value = value
+        self.OnPropertyChanged("SheetParameterValue")
 
     @property
     def ViewName(self):
@@ -108,7 +135,8 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         # Store created elements for isolation
         self.created_elements = []
 
-        # Initialize view data
+        # All rows, and the rows that pass the filters (what the grid shows)
+        self.all_items = None
         self.views_data = ObservableCollection[ViewItemData]()
 
         self.family_symbol = view_references.find_family_symbol(doc)
@@ -116,7 +144,8 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
             self._alert_family_missing()
 
         self._setup_view_categories()
-        self._populate_views()
+        self._setup_filters()
+        self._load_views()
 
         # Bind views to DataGrid
         self.viewsDataGrid.ItemsSource = self.views_data
@@ -158,28 +187,89 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
             self.viewCategoriesPanel.Children.Add(checkbox)
             self.view_kinds[kind] = checkbox
 
-    def _populate_views(self):
-        """Populate the views data grid based on selected categories."""
-        deselected = set(item.view.UniqueId for item in self.views_data if not item.IsSelected)
-        self.views_data.Clear()
+    def _setup_filters(self):
+        """Fill the filter dropdowns. The sheet parameter choice is remembered."""
+        self.sheetFilterComboBox.ItemsSource = List[str](SHEET_FILTERS)
+        self.sheetFilterComboBox.SelectedIndex = 0
+        self.referenceFilterComboBox.ItemsSource = List[str](REFERENCE_FILTERS)
+        self.referenceFilterComboBox.SelectedIndex = 0
 
-        checked_kinds = [kind for kind, cb in self.view_kinds.items() if cb.IsChecked == True]
+        names = [NO_SHEET_PARAMETER] + view_references.get_sheet_parameter_names(doc)
+        self.sheetParameterComboBox.ItemsSource = List[str](names)
+        remembered = script.get_config().get_option("sheet_parameter", NO_SHEET_PARAMETER)
+        self.sheetParameterComboBox.SelectedItem = (
+            remembered if remembered in names else NO_SHEET_PARAMETER)
+
+    def _sheet_parameter_name(self):
+        name = self.sheetParameterComboBox.SelectedItem
+        return None if not name or name == NO_SHEET_PARAMETER else name
+
+    def _load_views(self):
+        """Read all views from the model, keeping which rows were unticked."""
+        deselected = set(item.view.UniqueId for item in (self.all_items or [])
+                         if not item.IsSelected)
         sheet_lookup = view_references.build_sheet_lookup(doc)
         existing = view_references.find_existing_references(doc)
 
-        views = view_references.collect_views(doc, checked_kinds)
-        for view in sorted(views, key=lambda v: v.Name):
+        self.all_items = []
+        for view in sorted(view_references.collect_views(doc), key=lambda v: v.Name):
             sheet = sheet_lookup.get(get_element_id_value(view.Id))
-            sheet_reference = view_references.get_sheet_label(sheet) if sheet else "Not on sheet"
-            item = ViewItemData(view, sheet_reference, view.UniqueId in existing)
+            item = ViewItemData(view, sheet, view.UniqueId in existing)
             item.IsSelected = view.UniqueId not in deselected
-            self.views_data.Add(item)
+            self.all_items.append(item)
+        self._update_sheet_parameter_column()
+        self._apply_filters()
 
-        logger.debug("Added {} views to data grid".format(self.views_data.Count))
+    def _update_sheet_parameter_column(self):
+        name = self._sheet_parameter_name()
+        self.sheetParameterColumn.Header = name or "Sheet Parameter"
+        self.sheetParameterColumn.Visibility = (
+            Visibility.Visible if name else Visibility.Collapsed)
+        for item in self.all_items:
+            item.SheetParameterValue = view_references.get_parameter_text(item.sheet, name)
+
+    def _apply_filters(self):
+        """Show the rows that pass the category, search, sheet and reference filters."""
+        kinds = set(kind for kind, cb in self.view_kinds.items() if cb.IsChecked == True)
+        words = (self.searchTextBox.Text or "").lower().split()
+        sheet_filter = self.sheetFilterComboBox.SelectedItem
+        reference_filter = self.referenceFilterComboBox.SelectedItem
+
+        self.views_data.Clear()
+        for item in self.all_items:
+            if item.kind not in kinds or not item.matches(words):
+                continue
+            if sheet_filter == SHEET_ON and item.sheet is None:
+                continue
+            if sheet_filter == SHEET_OFF and item.sheet is not None:
+                continue
+            if reference_filter == REFERENCE_PLACED and not item.has_reference:
+                continue
+            if reference_filter == REFERENCE_MISSING and item.has_reference:
+                continue
+            self.views_data.Add(item)
+        self.countTextBlock.Text = "Showing {} of {} views".format(
+            self.views_data.Count, len(self.all_items))
 
     def ViewCategory_CheckedChanged(self, sender, args):
         """Handle view category checkbox changes."""
-        self._populate_views()
+        if self.all_items is not None:
+            self._apply_filters()
+
+    def Filter_Changed(self, sender, args):
+        """Search text or a filter dropdown changed."""
+        if self.all_items is not None:
+            self._apply_filters()
+
+    def SheetParameter_Changed(self, sender, args):
+        """Another sheet parameter was picked for the extra column."""
+        if self.all_items is None:
+            return
+        config = script.get_config()
+        config.set_option("sheet_parameter", self._sheet_parameter_name() or NO_SHEET_PARAMETER)
+        script.save_config()
+        self._update_sheet_parameter_column()
+        self._apply_filters()
 
     def SelectAll_Checked(self, sender, args):
         """Handle select all checkbox checked."""
@@ -245,7 +335,7 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         self.created_elements = result.element_ids
         self.isolateButton.Content = "Isolate {} references".format(len(self.created_elements))
         self.isolateButton.IsEnabled = len(self.created_elements) > 0
-        self._populate_views()
+        self._load_views()
 
         lines = ["Created {} and updated {} 3D View References.".format(
             len(result.created), len(result.updated))]
