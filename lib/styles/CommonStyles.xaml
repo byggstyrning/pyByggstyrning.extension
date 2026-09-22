@@ -1716,6 +1716,7 @@
                             Padding="{TemplateBinding Padding}"
                             SnapsToDevicePixels="True">
                         <GridViewRowPresenter Content="{TemplateBinding Content}"
+                                            Columns="{TemplateBinding GridView.ColumnCollection}"
                                             HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
                                             VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
                                             SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>

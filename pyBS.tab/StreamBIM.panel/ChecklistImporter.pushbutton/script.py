@@ -76,9 +76,47 @@ from streambim.streambim_api import get_saved_project_id
 # Initialize logger
 logger = script.get_logger()
 
-# Define data classes using namedtuple for IronPython
-Project = namedtuple('Project', ['Id', 'Name', 'Description'])
-Checklist = namedtuple('Checklist', ['Id', 'Name'])
+# Project and Checklist are classes, not tuples. A tuple is IEnumerable, and the
+# list item presenter prints "(Collection)" for enumerable row objects.
+class Project(object):
+    def __init__(self, Id, Name, Description):
+        self._id = Id
+        self._name = Name
+        self._description = Description
+
+    @property
+    def Id(self):
+        return self._id
+
+    @property
+    def Name(self):
+        return self._name
+
+    @property
+    def Description(self):
+        return self._description
+
+    def __str__(self):
+        return self._name if self._name else ""
+
+
+class Checklist(object):
+    def __init__(self, Id, Name):
+        self._id = Id
+        self._name = Name
+
+    @property
+    def Id(self):
+        return self._id
+
+    @property
+    def Name(self):
+        return self._name
+
+    def __str__(self):
+        return self._name if self._name else ""
+
+
 PropertyValue = namedtuple('PropertyValue', ['Name', 'Sample'])
 Region = namedtuple('Region', ['Subdomain', 'Title', 'Url', 'IsCustom'])
 
