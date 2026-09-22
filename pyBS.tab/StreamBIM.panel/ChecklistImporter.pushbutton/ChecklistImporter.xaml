@@ -77,7 +77,7 @@
                     </Grid.RowDefinitions>
 
                     <TextBlock Text="Select a StreamBIM Project:" Grid.Row="0" Style="{DynamicResource SubheaderTextBlockStyle}"/>
-                    <ListView x:Name="projectsListView" Grid.Row="1" Style="{DynamicResource StandardListBoxStyle}" SelectionMode="Single" MouseDoubleClick="projects_list_double_click">
+                    <ListView x:Name="projectsListView" Grid.Row="1" Style="{DynamicResource StandardListViewStyle}" SelectionMode="Single" MouseDoubleClick="projects_list_double_click">
                         <ListView.View>
                             <GridView ColumnHeaderContainerStyle="{DynamicResource DefaultGridViewColumnHeaderStyle}">
                                 <GridViewColumn Header="ID" DisplayMemberBinding="{Binding Id}" Width="50"/>
@@ -112,7 +112,7 @@
                         <TextBox x:Name="checklistSearchBox" Grid.Column="1" Style="{DynamicResource PlaceholderTextBoxStyle}" Tag="Type to search checklists..."/>
                     </Grid>
                     
-                    <ListView x:Name="checklistsListView" Grid.Row="2" Style="{DynamicResource StandardListBoxStyle}" SelectionMode="Single" MouseDoubleClick="checklists_list_double_click">
+                    <ListView x:Name="checklistsListView" Grid.Row="2" Style="{DynamicResource StandardListViewStyle}" SelectionMode="Single" MouseDoubleClick="checklists_list_double_click">
                         <ListView.View>
                             <GridView ColumnHeaderContainerStyle="{DynamicResource DefaultGridViewColumnHeaderStyle}">
                                 <GridViewColumn Header="ID" DisplayMemberBinding="{Binding Id}" Width="50"/>
