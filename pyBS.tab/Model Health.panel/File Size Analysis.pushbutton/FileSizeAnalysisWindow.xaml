@@ -1,0 +1,117 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="File Size Analysis" Width="760" Height="820" MinWidth="620" MinHeight="600"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource WindowBackgroundBrush}">
+    <!-- Styles will be loaded programmatically -->
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,8">
+            <TextBlock Text="File Size Analysis" Style="{DynamicResource HeaderTextBlockStyle}"/>
+            <TextBlock x:Name="modelInfoText" Style="{DynamicResource SecondaryTextBlockStyle}"
+                       Text="Model: -"/>
+        </StackPanel>
+
+        <!-- Explanation -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,0,0,10">
+            <StackPanel>
+                <Border Style="{DynamicResource CardBorderStyle}" Margin="0,0,0,8">
+                    <StackPanel>
+                        <TextBlock Text="What this does" Style="{DynamicResource SubheaderTextBlockStyle}"/>
+                        <TextBlock Style="{DynamicResource BodyTextBlockStyle}"
+                                   Text="Finds out where the megabytes in this model live by peeling it like an onion. After every removal step the model is compacted with Save As and the file size is measured, so the size drop of each step shows how much that content costs. It follows the Autodesk article 'How to keep the size of Revit files manageable'."/>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{DynamicResource CardBorderStyle}" Margin="0,0,0,8">
+                    <StackPanel>
+                        <TextBlock Text="What happens to your model" Style="{DynamicResource SubheaderTextBlockStyle}"/>
+                        <TextBlock Style="{DynamicResource BodyTextBlockStyle}"
+                                   Text="1.  The open model is saved to the folder you pick: as a NEW central if it is workshared, otherwise as a plain copy. The original central (and its users) are never touched and nothing is synchronized."/>
+                        <TextBlock Style="{DynamicResource BodyTextBlockStyle}"
+                                   Text="2.  From then on Revit works on the copy. Content is deleted step by step and each state is saved as a numbered snapshot next to it."/>
+                        <TextBlock Style="{DynamicResource BodyTextBlockStyle}"
+                                   Text="3.  When it is done, the open document is the last, stripped snapshot. Close it without saving and reopen your normal model."/>
+                        <TextBlock Style="{DynamicResource SecondaryTextBlockStyle}"
+                                   Text="Open all worksets before you start - elements on closed worksets are not measured. Revit is busy for the whole run (minutes for small models, an hour or more for large ones)."/>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{DynamicResource CardBorderStyle}" Margin="0,0,0,8">
+                    <StackPanel>
+                        <TextBlock Text="Peel steps" Style="{DynamicResource SubheaderTextBlockStyle}"/>
+                        <TextBlock Style="{DynamicResource BodyTextBlockStyle}" FontFamily="Consolas"
+                                   Text="00  Compact Save As (baseline)&#10;01  Purge unused (repeated until nothing is left)&#10;02  Revit links&#10;03  CAD links and imports&#10;04  Unplaced group types&#10;05  Raster images, PDFs, point clouds&#10;06  Sheets&#10;07  Views (a dedicated 3D view is kept)&#10;08  Unused view templates and filters&#10;09  In-place families&#10;10  Unused project / shared parameters&#10;11  Unused loaded families + purge again&#10;12  Design options&#10;+   One step per phase (model created in that phase)&#10;+   Leftover unphased geometry&#10;+   All levels but one&#10;+   Final purge (families freed by the geometry peel)"/>
+                        <TextBlock Style="{DynamicResource SecondaryTextBlockStyle}"
+                                   Text="Before step 00 a health inventory (element counts, warnings, per-phase counts) and a loaded-family inventory with .rfa sizes are collected."/>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{DynamicResource CardBorderStyle}" Margin="0,0,0,8">
+                    <StackPanel>
+                        <TextBlock Text="Results" Style="{DynamicResource SubheaderTextBlockStyle}"/>
+                        <TextBlock Style="{DynamicResource BodyTextBlockStyle}"
+                                   Text="Progress and the size table are written to the pyRevit output window. The output folder gets report.html (open it in a browser) plus CSV, Markdown and JSON backups and a families CSV."/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Settings -->
+        <Border Grid.Row="2" Style="{DynamicResource CardBorderStyle}" Margin="0,0,0,10">
+            <StackPanel>
+                <TextBlock Text="Output folder (needs plenty of free space)" Style="{DynamicResource LabelTextBlockStyle}"/>
+                <Grid Margin="0,4,0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="folderTextBox" Grid.Column="0" Margin="0,0,8,0"
+                             Style="{DynamicResource PlaceholderTextBoxStyle}"
+                             Tag="Pick a folder on a drive with enough free space..."
+                             TextChanged="folderTextBox_TextChanged"/>
+                    <Button x:Name="browseButton" Grid.Column="1" Content="Browse..." Width="100"
+                            Style="{DynamicResource SecondaryButtonStyle}"
+                            Click="browseButton_Click"/>
+                </Grid>
+                <TextBlock x:Name="spaceText" Style="{DynamicResource SecondaryTextBlockStyle}" Text=""/>
+
+                <CheckBox x:Name="keepSnapshotsCheckBox" IsChecked="True" Margin="0,6,0,0"
+                          Style="{DynamicResource StandardCheckBoxStyle}"
+                          Checked="option_Changed" Unchecked="option_Changed"
+                          Content="Keep every snapshot (open any step later; uncheck to keep only the latest and save disk)"/>
+                <CheckBox x:Name="measureFamiliesCheckBox" IsChecked="True" Margin="0,6,0,0"
+                          Style="{DynamicResource StandardCheckBoxStyle}"
+                          Content="Measure loaded family sizes (.rfa MB per family; adds a few minutes)"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Status and Buttons -->
+        <Grid Grid.Row="3">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="statusText" Grid.Column="0" VerticalAlignment="Center"
+                       Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"
+                       Text="Pick an output folder to start"
+                       Style="{DynamicResource DefaultTextBlockStyle}"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="runButton" Content="Save copy and run" Width="150" IsDefault="True"
+                        IsEnabled="False"
+                        Style="{DynamicResource StandardButtonStyle}"
+                        Click="runButton_Click"/>
+                <Button x:Name="cancelButton" Content="Cancel" Width="100" IsCancel="True"
+                        Style="{DynamicResource SecondaryButtonStyle}"
+                        Click="cancelButton_Click"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>
