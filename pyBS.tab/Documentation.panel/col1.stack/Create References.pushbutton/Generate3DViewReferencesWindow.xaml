@@ -2,7 +2,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Generate 3D View References"
-    Width="800"
+    Width="1000"
     Height="600"
     WindowStartupLocation="CenterScreen"
     ShowInTaskbar="False"
@@ -20,7 +20,7 @@
         </Grid.RowDefinitions>
         
         <!-- Busy Indicator Overlay -->
-        <Border x:Name="busyOverlay" Style="{DynamicResource BusyOverlayStyle}">
+        <Border x:Name="busyOverlay" Grid.RowSpan="4" Panel.ZIndex="10" Style="{DynamicResource BusyOverlayStyle}">
             <StackPanel Style="{DynamicResource BusyContentStyle}">
                 <ProgressBar x:Name="busyProgressBar" Style="{DynamicResource BusyProgressBarStyle}"/>
                 <TextBlock x:Name="busyTextBlock" Style="{DynamicResource BusyTextBlockStyle}" Text="Loading..."/>
@@ -45,11 +45,43 @@
         <Grid Grid.Row="2">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
             
+            <!-- Search and filters -->
+            <Grid Grid.Row="0" Margin="0,0,0,8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="maxAreaTextBox" Grid.Column="4" Width="110" Height="30" Margin="8,0,0,0"
+                         Style="{DynamicResource PlaceholderTextBoxStyle}" Tag="Max area m&#178;"
+                         ToolTip="Hide views whose crop box (width x height) is larger than this many square metres, e.g. 6,25 to keep details and drop building sections. Nothing is deleted from the model."
+                         TextChanged="Filter_Changed"/>
+                <TextBox x:Name="searchTextBox" Grid.Column="0" Height="30"
+                         Style="{DynamicResource PlaceholderTextBoxStyle}"
+                         Tag="Search view name, category, scale, sheet..."
+                         TextChanged="Filter_Changed"/>
+                <ComboBox x:Name="sheetFilterComboBox" Grid.Column="1" Width="130" Height="30" Margin="8,0,0,0"
+                          ToolTip="Filter on whether the view is placed on a sheet"
+                          Style="{DynamicResource StandardComboBoxStyle}"
+                          SelectionChanged="Filter_Changed"/>
+                <ComboBox x:Name="referenceFilterComboBox" Grid.Column="2" Width="120" Height="30" Margin="8,0,0,0"
+                          ToolTip="Filter on whether the view already has a 3D View Reference"
+                          Style="{DynamicResource StandardComboBoxStyle}"
+                          SelectionChanged="Filter_Changed"/>
+                <ComboBox x:Name="sheetParameterComboBox" Grid.Column="3" Width="190" Height="30" Margin="8,0,0,0"
+                          ToolTip="Show a parameter of the view's sheet as an extra column"
+                          Style="{DynamicResource StandardComboBoxStyle}"
+                          SelectionChanged="SheetParameter_Changed"/>
+            </Grid>
+
             <!-- DataGrid Header -->
-            <Grid Grid.Row="0">
+            <Grid Grid.Row="1">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
@@ -61,11 +93,33 @@
                 <CheckBox x:Name="selectAllCheckbox" Grid.Column="0" Content="Select All" 
                           Checked="SelectAll_Checked" Unchecked="SelectAll_Unchecked"
                           Foreground="{DynamicResource TextBrush}" Style="{DynamicResource StandardCheckBoxStyle}"/>
+                <StackPanel Grid.Column="1" Grid.ColumnSpan="4" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <CheckBox x:Name="showDepthCheckbox" Content="Show view depth (box to far clip)"
+                              VerticalAlignment="Center"
+                              ToolTip="Off: a thin plate on the cut plane. On: a box from the cut plane to the view's far clip or view depth."
+                              Foreground="{DynamicResource TextBrush}" Style="{DynamicResource StandardCheckBoxStyle}"/>
+                    <TextBlock Text="or depth (mm):" VerticalAlignment="Center" Margin="16,0,6,0"
+                               Style="{DynamicResource BodyTextBlockStyle}"/>
+                    <TextBox x:Name="manualDepthTextBox" Width="80" Height="26" VerticalAlignment="Center"
+                             Style="{DynamicResource PlaceholderTextBoxStyle}" Tag="10"
+                             ToolTip="Draw every reference this deep, measured from the cut plane away from the viewer. Empty: 10 mm plate, or the view depth if ticked. A typed value wins over the checkbox."/>
+                </StackPanel>
             </Grid>
             
             <!-- DataGrid with Views -->
-            <DataGrid x:Name="viewsDataGrid" Grid.Row="1" Style="{DynamicResource StandardDataGridStyle}"
-                      SelectionMode="Extended" IsReadOnly="False">
+            <DataGrid x:Name="viewsDataGrid" Grid.Row="2" Style="{DynamicResource StandardDataGridStyle}"
+                      SelectionMode="Extended" IsReadOnly="False"
+                      PreviewMouseLeftButtonDown="ViewsDataGrid_PreviewMouseLeftButtonDown"
+                      PreviewMouseRightButtonDown="ViewsDataGrid_PreviewMouseRightButtonDown"
+                      Sorting="ViewsDataGrid_Sorting">
+                <DataGrid.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem x:Name="goToViewMenuItem" Header="Go to view" Click="GoToView_Click"
+                                  ToolTip="Closes this window and opens the view. Start the tool again to come back to the same list."/>
+                        <MenuItem x:Name="goToSheetMenuItem" Header="Go to sheet" Click="GoToSheet_Click"
+                                  ToolTip="Closes this window and opens the sheet the view is placed on."/>
+                    </ContextMenu>
+                </DataGrid.ContextMenu>
                 <DataGrid.Columns>
                     <DataGridTemplateColumn Header="Select" Width="Auto">
                         <DataGridTemplateColumn.CellTemplate>
@@ -78,16 +132,22 @@
                     </DataGridTemplateColumn>
                     <DataGridTextColumn Header="View Name" Binding="{Binding ViewName}" Width="*" />
                     <DataGridTextColumn Header="View Category" Binding="{Binding ViewCategory}" Width="*" />
-                    <DataGridTextColumn Header="View Scale" Binding="{Binding ViewScale}" Width="*" />
+                    <DataGridTextColumn Header="Area (m&#178;)" Binding="{Binding ViewArea}" SortMemberPath="ViewAreaValue" Width="Auto" />
+                    <DataGridTextColumn Header="View Scale" Binding="{Binding ViewScale}" SortMemberPath="ViewScaleValue" Width="*" />
                     <DataGridTextColumn Header="Sheet Reference" Binding="{Binding SheetReference}" Width="*" />
+                    <DataGridTextColumn x:Name="sheetParameterColumn" Header="Sheet Parameter"
+                                        Binding="{Binding SheetParameterValue}" Width="*" Visibility="Collapsed" />
+                    <DataGridTextColumn Header="Reference" Binding="{Binding ReferenceStatus}" Width="Auto" />
                 </DataGrid.Columns>
             </DataGrid>
         </Grid>
         
         <!-- Action Buttons -->
+        <TextBlock x:Name="countTextBlock" Grid.Row="3" HorizontalAlignment="Left" VerticalAlignment="Center"
+                   Margin="0,10,0,0" Style="{DynamicResource BodyTextBlockStyle}"/>
         <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
-            <Button x:Name="createButton" Content="Create 3D View References" Click="CreateViewReferences_Click" Style="{DynamicResource StandardButtonStyle}"/>
-            <Button x:Name="isolateButton" Content="Isolate x created elements" Click="IsolateElements_Click" 
+            <Button x:Name="createButton" Content="Create / Update References" Click="CreateViewReferences_Click" Style="{DynamicResource StandardButtonStyle}"/>
+            <Button x:Name="isolateButton" Content="Isolate references" Click="IsolateElements_Click" 
                     IsEnabled="False" Style="{DynamicResource StandardButtonStyle}"/>
             <Button x:Name="cancelButton" Content="Cancel" Click="Cancel_Click" Style="{DynamicResource SecondaryButtonStyle}"/>
         </StackPanel>
