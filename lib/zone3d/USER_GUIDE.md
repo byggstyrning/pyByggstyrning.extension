@@ -131,12 +131,23 @@ The tool automatically selects the best containment strategy based on your sourc
 
 ### Multiple Test Points
 
-For better detection of linear elements (walls, doors, windows), the tool checks multiple points:
-- **Point-based elements**: Single point (LocationPoint or bounding box center)
-- **Linear elements**: Multiple points along the curve (25%, 50%, 75%) plus perpendicular offsets
-- **Area elements**: Bounding box center
+The tool never tests an element's geometry against the zone; it tests sample points:
+- **Point-based families** (LocationPoint): body points first, the centroid of the largest solid and the bounding-box centre; then the insertion point at 25/50/75 % of the height; for families hosted on a wall, floor, roof or ceiling also two points 300 mm each way along the facing direction, one on each side of the host.
+- **Linear elements**: points along the curve (25%, 50%, 75%) plus two perpendicular offsets at the midpoint.
+- **Floors, ceilings, roofs, walls**: grid points on their faces; floors and roofs additionally use footprint samples and a plurality vote. Walls whose side faces cannot be read fall back to grid points on the largest faces of their solid geometry, and finally to points along the location curve lifted to 25/50/75 % of the wall height, because the location curve sits at the base level, below a wall that has a base offset.
+- **In-place families**: centroids of all their solids.
+- **Railings, stairs, ramps, parts and other elements without a point or curve location**: centroids of their solids as body points, largest solid first, then the bounding-box centre. The centre alone fails for a stair railing, whose centre can sit in the air just below the zone that contains its upper half.
+- **Area elements**: bounding-box centre.
 
-This ensures that walls and doors are correctly detected even if their insertion point is outside the zone.
+Why body points come first: a family's origin often sits on a wall line, which is exactly where zone boundaries are drawn, while its body is entirely inside one zone. With body points first, a shelf hanging into one zone gets that zone even though its origin touches the neighbouring zone's boundary. Use Zone Audit to see the sample points of any element.
+
+**Three tiers.** Every element's points are split into body points, regular points and last-resort points. Body points decide on their own, point by point. Regular points are decided by the configured sort order: the first zone in that order containing any of them wins. Last-resort points are only tried when nothing else is inside any zone: for walls these are points 50 mm outside each side face, for hosted families the two facing points, offset half the host wall thickness plus 50 mm. A wall sitting in the gap between two zones drawn to its faces is therefore assigned to one of its neighbours by the sort order instead of being dropped.
+
+**Exact geometry as the final step.** If no sample point at all is inside a zone, the element's own geometry is intersected with the candidate zone solids using Revit's `ElementIntersectsSolidFilter`, the same test Zone Audit uses to decide "geometry intersects". The first intersecting zone in the configured sort order wins. This step is not used for the floor and roof vote. It also means an element that merely touches a zone, such as a wall whose face coincides with the zone boundary, gets that zone.
+
+**Face grids are adaptive**: about one sample per 1.5 m in each direction, between 2 and 12 per axis, on host faces, floor footprints and body faces. Sparse grids on perforated walls are topped up from the solid geometry. The point-in-solid probe is a 6 mm vertical segment centred on the point, so a point exactly on a zone's top or bottom face counts as inside.
+
+**Nested and child geometry**: solids are collected through nested family instances, and railings whose rails live in separate top rail and handrail elements are sampled from those.
 
 ### Phase-Aware Containment (Rooms Only)
 
@@ -155,8 +166,8 @@ For Room-based strategies, the tool considers phases:
 ### Deterministic Selection
 
 When multiple zones contain an element, the tool selects deterministically:
-- **Rooms/Spaces/Areas**: First zone found (by ElementId order)
-- **Elements**: Lowest ElementId wins
+- **Rooms/Spaces/Areas**: first zone found, testing the sample points in order and the zones in ElementId order.
+- **3D Zones / Mass / Generic Model (element strategy)**: for point-based families the body points decide first, centroid before bounding-box centre, each tested against every candidate zone in the configured sort order. When no body point is inside any zone, and for all other element kinds, the first zone in the configured sort order that contains any sample point wins. Floors and roofs use a vote: the zone containing most sample points, provided it holds at least 15 % of them. The threshold is low on purpose: zone tops cut through the floor above them, so a floor's top-face samples are never inside the zone below it.
 
 This ensures consistent results across runs.
 
@@ -309,6 +320,36 @@ The tool includes several optimizations:
 - Verify room Phase parameter is set correctly
 - Tool uses latest applicable phase - ensure phases are correct
 - **If using linked documents**: If phase names don't match between documents, the tool checks all phases in the linked document and selects the room with lowest ElementId
+
+---
+
+## Zone Audit (why is this element not mapped?)
+
+Select the elements you wonder about, open **Write Mappings**, tick **Trace selected
+element(s): why (not) mapped?** and press Write. Nothing is written to the model: for each
+ticked configuration the selected elements are traced through the same gates as Write, in
+the same order, with the same `core`/`containment` functions. Library: `lib/zone3d/audit.py`.
+
+**Output**: the pyRevit output window (one block per element with a clickable id) plus two
+files in `<model folder>\zone-audit-logs\` (fallback `%APPDATA%\pyByggstyrning\logs\zone-audit\`):
+a semicolon-separated CSV with one row per element, and a TXT trace with every sample point
+(feet and mm, tagged B/R/T for body, regular and last-resort), the zones whose bounding box
+overlaps the element with their status and bbox, whether the element's solid intersects each
+of them, the real containment result and the parameter dry run.
+
+Reason codes, in gate order: `NOT_TARGET_CATEGORY`, `NOT_IN_VIEW`, `EXCLUDED_ROOM_OR_ZONE`,
+`NO_TARGET_PARAM`, `NOT_EDITABLE`, `TARGET_NOT_EMPTY`, `TARGET_NOT_EMPTY_MATCHES`,
+`NO_TEST_POINTS`, `INDEX_MISS`, `ALL_POINTS_MISS`, `VOTE_BELOW_THRESHOLD`, `PHASE_MISMATCH`,
+`NOT_CONTAINED`, `ZONE_NAME_FILTER`, `CONTAINED_OTHER_ZONE`, `SOURCE_PARAM_EMPTY`,
+`SOURCE_PARAM_MISSING`, `TARGET_PARAM_MISSING`, `TARGET_PARAM_READONLY`,
+`STORAGE_TYPE_MISMATCH`, `UNSUPPORTED_STORAGE`, `TRACE_ERROR`. The full list with
+descriptions is printed at the end of every run. A zone's own status is shown as well:
+`ZONE_OK`, `ZONE_NOT_IN_SOURCE_SET`, `ZONE_SOURCE_PARAM_EMPTY` (Write drops zones whose
+source parameter is empty), `ZONE_NO_SOLID`.
+
+**Tracer mismatch**: for the element strategy the tracer rebuilds the lookup step by step
+to get per-point detail and also calls the real containment function. If the two disagree
+the row is flagged `TRACER MISMATCH` and the verdict follows the real call.
 
 ---
 
