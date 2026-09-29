@@ -58,6 +58,12 @@ from pyrevit.script import get_logger
 import wpf
 from revit import revit_utils
 from revit.compat import is_param_yesno, make_element_id
+try:
+    from mmi.core import get_mmi_parameter_name
+    from mmi.colorizer import get_color_for_mmi
+except Exception:
+    get_mmi_parameter_name = None
+    get_color_for_mmi = None
 
 # Get logger
 logger = get_logger()
@@ -1319,10 +1325,12 @@ class RevitColorizerWindow(WPFWindow):
                 self.UpdateLayout()
                 
                 
-                # Check for matching schema file
-                schema_path = self.check_for_matching_schema(selected_param.name)
-                if schema_path:
-                    self.load_color_schema_from_file(schema_path)
+                # A saved schema file can override the generated palette.
+                # The configured MMI parameter keeps the official MMI colors.
+                if not self.is_configured_mmi_parameter(selected_param):
+                    schema_path = self.check_for_matching_schema(selected_param.name)
+                    if schema_path:
+                        self.load_color_schema_from_file(schema_path)
             
             # Update UI status
             param_source_txt = "Instance" if self.instanceRadioButton.IsChecked else "Type"
@@ -2544,8 +2552,11 @@ class RevitColorizerWindow(WPFWindow):
         if none_values and any(len(x.ele_id) > 0 for x in none_values):
             values.extend(none_values)
         
-        # Now assign colors from our color range
-        if values:
+        # The configured MMI parameter uses the official MMI color schema.
+        # Other parameters keep the generated palette.
+        if values and self.is_configured_mmi_parameter(param):
+            self.apply_mmi_colors_to_values(values)
+        elif values:
             # Generate color range for the number of values we have
             color_range = self.generate_color_range(len(values))
             
@@ -2568,6 +2579,71 @@ class RevitColorizerWindow(WPFWindow):
         
         return values
     
+    def is_configured_mmi_parameter(self, param):
+        """True when this parameter is the project's configured MMI parameter."""
+        if get_mmi_parameter_name is None or get_color_for_mmi is None or param is None:
+            return False
+        try:
+            mmi_name = get_mmi_parameter_name(self.doc)
+        except Exception as ex:
+            self.logger.debug("Could not read MMI parameter name: {}".format(ex))
+            return False
+        if not mmi_name:
+            return False
+
+        candidates = []
+        try:
+            candidates.append(param.par.Name)
+        except Exception:
+            pass
+        display_name = getattr(param, "name", None)
+        if display_name:
+            candidates.append(display_name)
+
+        target = mmi_name.strip().lower()
+        target_stripped = strip_accents(mmi_name).strip().lower()
+        for candidate in candidates:
+            if not candidate:
+                continue
+            lowered = candidate.strip().lower()
+            if lowered == target or lowered == target_stripped:
+                return True
+            if strip_accents(candidate).strip().lower() == target_stripped:
+                return True
+        return False
+
+    def apply_mmi_colors_to_values(self, values):
+        """Paint value rows with the official MMI colors.
+
+        Numeric text uses the closest defined MMI level at or below that value.
+        Blank or non-numeric values stay gray.
+        """
+        for value_item in values:
+            rgb = self.mmi_rgb_for_value(value_item.value)
+            if rgb is None:
+                r, g, b = 192, 192, 192
+            else:
+                r, g, b = rgb
+            value_item.n1 = r
+            value_item.n2 = g
+            value_item.n3 = b
+            value_item.color = self.Media.Color.FromRgb(r, g, b)
+        self.logger.debug("Applied MMI color schema")
+
+    def mmi_rgb_for_value(self, value_str):
+        """Return official MMI RGB for a parameter value, or None if it is not MMI."""
+        if get_color_for_mmi is None or not value_str or value_str == "None":
+            return None
+        digits = re.findall(r"\d+", value_str)
+        if not digits:
+            return None
+        try:
+            mmi_value = int(digits[0])
+        except Exception:
+            return None
+        color, _range_name = get_color_for_mmi(mmi_value)
+        return int(color.Red), int(color.Green), int(color.Blue)
+
     def get_selected_parameter(self):
         """Get the selected parameter."""
         if self.parameterSelector.SelectedItem:
