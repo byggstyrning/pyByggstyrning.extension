@@ -155,20 +155,17 @@ def set_selection_mmi_value(doc, value, show_results=False):
                 title='Success'
             )
         
-        # Show failure message if any
+        # Missing or read-only parameters are expected on some categories.
+        # Keep this in the debug log so it does not open a user warning.
         if failed_elements:
-            output = script.get_output()
-            output.print_md("**⚠️ Could not set MMI parameter on {} element(s):**".format(len(failed_elements)))
+            failed_ids = []
             for element_id in failed_elements:
-                element = doc.GetElement(element_id)
-                if element:
-                    element_link = output.linkify(element_id)
-                    element_name = element.Name if hasattr(element, 'Name') and element.Name else "Element"
-                    category_name = element.Category.Name if element.Category else "Unknown"
-                    output.print_md("- {} {} ({})".format(category_name, element_link, element_name))
-                else:
-                    element_link = output.linkify(element_id)
-                    output.print_md("- Element {}".format(element_link))
+                failed_ids.append(str(get_element_id_value(element_id)))
+            logger.debug(
+                "Could not set MMI parameter on {} element(s): {}".format(
+                    len(failed_elements), ", ".join(failed_ids)
+                )
+            )
         
         return success_count > 0
         
