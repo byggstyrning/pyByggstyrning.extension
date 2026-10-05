@@ -18,11 +18,8 @@ faces, which is the viewer's side. To show the view depth the work plane is
 therefore put on the far clip plane, so the box ends at the cut plane and the
 text still faces the viewer.
 
-Two family files are bundled with the Load Family button. The original is in
-Revit 2024 format so every supported Revit can load it. "2026/" holds a copy
-with a "Sheet Number" text of its own, built by build_2026_family.py, which
-also explains why that text is a nested label family. load_reference_family
-picks the newest file the running Revit can open. With a family that has the
+One family file is bundled with the Load Family button, saved in Revit 2025
+format, so Revit 2025 and newer can load it. With a family that has the
 Sheet Number parameter the sheet number goes there; with one that does not,
 it becomes a second line of the "View Name" text.
 """
@@ -63,7 +60,7 @@ PARAM_WIDTH = "View Width"
 PARAM_HEIGHT = "View Height"
 PARAM_DEPTH = "View Depth"
 PARAM_NAME = "View Name"
-PARAM_SHEET = "Sheet Number"  # only in the 2026 family, see the module docstring
+PARAM_SHEET = "Sheet Number"
 
 # Shown by the Sheet Number text of a view that is not on a sheet
 NO_SHEET_TEXT = "-"
@@ -265,19 +262,9 @@ class _KeepValuesLoadOptions(IFamilyLoadOptions):
         return True
 
 
-def get_family_file(family_dir, revit_version):
-    """The newest bundled family file that Revit version can open.
-
-    family_dir holds the original file; subfolders named after a Revit version
-    hold copies saved in that version.
-    """
-    file_name = FAMILY_NAME + ".rfa"
-    best_version, best_path = 0, os.path.join(family_dir, file_name)
-    for name in os.listdir(family_dir):
-        path = os.path.join(family_dir, name, file_name)
-        if name.isdigit() and best_version < int(name) <= revit_version and os.path.isfile(path):
-            best_version, best_path = int(name), path
-    return best_path
+def get_family_file(family_dir):
+    """The bundled family file, saved in Revit 2025 format."""
+    return os.path.join(family_dir, FAMILY_NAME + ".rfa")
 
 
 def load_reference_family(doc, family_dir):
@@ -285,7 +272,7 @@ def load_reference_family(doc, family_dir):
 
     Existing instances keep their values. Returns True if the project changed.
     """
-    path = get_family_file(family_dir, int(doc.Application.VersionNumber))
+    path = get_family_file(family_dir)
     loaded = doc.LoadFamily(path, _KeepValuesLoadOptions())
     # IronPython returns (bool, Family) for the overload with an out parameter
     if isinstance(loaded, tuple):

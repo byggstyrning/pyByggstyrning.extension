@@ -75,24 +75,12 @@ selects it.
   otherwise the first type of the family.
 * The number of the sheet the view is placed on goes in `Sheet Number`, shown below the view
   name; views that are not on a sheet show `-`. With a family that has no `Sheet Number`
-  parameter (Revit 2024/2025, or a project where Load Family has not been run since) it becomes
-  a second line of the `View Name` text instead. Run the tool again after placing views on
-  sheets or renumbering sheets to refresh the text.
+  parameter it becomes a second line of the `View Name` text instead. Run the tool again after
+  placing views on sheets or renumbering sheets to refresh the text.
 * The family's "View Name" text faces the viewer's side of the cut plane.
 
-### The family files
+### The family file
 
-* `Load Family.pushbutton/3D View Reference.rfa` is saved in Revit 2024 format so that every
-  supported Revit version can load it. Saving it from a newer Revit upgrades it and locks out
-  the older versions, so edit it in Revit 2024.
-* `Load Family.pushbutton/2026/3D View Reference.rfa` is a Revit 2026 copy with the
-  `Sheet Number` text. It is generated from the file above by `build_2026_family.py`
-  (`pyrevit run`, see the script); rebuild it when the 2024 file changes. Load Family uses the
-  newest file the running Revit can open, so a folder for a later version can be added the same
-  way.
-
-The `Sheet Number` text is a nested label family, not a second model text. The family keeps its
-`View Name` text at the frame's left edge by grouping it with an invisible model line that is
-locked to the left reference plane, and the API can neither dimension a model text nor put model
-lines in a group. A nested family instance has references, so the build script locks its centre
-reference to the same reference plane.
+`Load Family.pushbutton/3D View Reference.rfa` is the only family. It is saved in Revit 2025
+format, so edit it in Revit 2025. Revit 2026 loads the same file. Saving it from a newer Revit
+upgrades it and locks out Revit 2025.
