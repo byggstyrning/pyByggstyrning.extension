@@ -55,7 +55,7 @@
                     <StackPanel x:Name="sheetFormulaPanel" Orientation="Horizontal"/>
                 </ScrollViewer>
                 <TextBlock x:Name="sheetFormulaExample" Grid.Row="1" Margin="0,4,0,0"
-                           Style="{DynamicResource BodyTextBlockStyle}"
+                           Style="{DynamicResource BodyTextBlockStyle}" FontWeight="Bold"
                            Text="Sheet parameters and project information, left to right."/>
             </Grid>
         </GroupBox>
