@@ -22,7 +22,17 @@ One family file is bundled with the Load Family button, saved in Revit 2025
 format, so Revit 2025 and newer can load it. With a family that has the
 Sheet Number parameter the sheet number goes there; with one that does not,
 it becomes a second line of the "View Name" text.
+
+What is written there is a formula stored in the model, like the MMI parameter.
+It is read left to right. Each part is the sheet's own number, another
+parameter of that sheet, or a project information parameter, and the text
+between two parts is set on that gap. Empty parts are skipped. The default
+is the sheet number alone.
+
+Every instance, including ones placed by hand, is set to export to IFC as
+IfcVirtualElement. Those are the instance parameters, not the type ones.
 """
+import json
 import os
 
 from Autodesk.Revit.DB import (
@@ -43,10 +53,10 @@ from Autodesk.Revit.DB import (
     ViewType,
     XYZ,
 )
-from Autodesk.Revit.DB.ExtensibleStorage import ExtensibleStorageFilter
+from Autodesk.Revit.DB.ExtensibleStorage import DataStorage, ExtensibleStorageFilter
 from Autodesk.Revit.DB.Structure import StructuralType
 
-from pyrevit import script
+from pyrevit import revit, script
 
 from extensible_storage import BaseSchema, simple_field
 from revit.compat import get_element_id_value
@@ -61,6 +71,11 @@ PARAM_HEIGHT = "View Height"
 PARAM_DEPTH = "View Depth"
 PARAM_NAME = "View Name"
 PARAM_SHEET = "Sheet Number"
+
+# Instance overrides. The type has its own "Export Type to IFC" parameters.
+# 1 is IFCExportElement.Yes.
+IFC_EXPORT_YES = 1
+IFC_EXPORT_AS = "IfcVirtualElement"
 
 # Shown by the Sheet Number text of a view that is not on a sheet
 NO_SHEET_TEXT = "-"
@@ -86,6 +101,29 @@ _PLAN_TYPES = (
     ViewType.EngineeringPlan,
     ViewType.AreaPlan,
 )
+
+
+# Parts of the text written to the family's Sheet Number parameter.
+# sheet_number is the sheet's own number; the other two read a named parameter.
+SOURCE_SHEET_NUMBER = "sheet_number"
+SOURCE_SHEET = "sheet"
+SOURCE_PROJECT = "project"
+SHEET_NUMBER_LABEL = "Sheet number"
+
+DEFAULT_SHEET_FORMULA = {
+    "parts": [{"source": SOURCE_SHEET_NUMBER}],
+}
+
+
+class ViewReferenceSettingsSchema(BaseSchema):
+    """The sheet-number formula for this model, shared by everyone in the file."""
+
+    guid = "7f4c2a91-8e15-4d6b-b3a0-1c9e5f8d2a67"
+
+    @simple_field(value_type="string")
+    def sheet_number_formula():
+        """JSON object: parts in left-to-right order, with the text between them."""
+        return None
 
 
 class ViewReferenceSchema(BaseSchema):
@@ -222,6 +260,198 @@ def get_parameter_text(element, name):
     if parameter.StorageType == StorageType.String:
         return parameter.AsString() or ""
     return parameter.AsValueString() or ""
+
+
+def get_project_parameter_names(doc):
+    """Names of all parameters on Project Information, sorted."""
+    info = doc.ProjectInformation
+    if info is None:
+        return []
+    names = set()
+    for parameter in info.Parameters:
+        name = parameter.Definition.Name
+        if name:
+            names.add(name)
+    return sorted(names, key=lambda name: name.lower())
+
+
+def _as_text(value):
+    if value is None:
+        return u""
+    try:
+        return unicode(value)
+    except Exception:
+        return u"{}".format(value)
+
+
+def _formula_part(part):
+    """One formula part, or None. Keeps a per-gap separator when the part has one."""
+    if not isinstance(part, dict):
+        return None
+    source = _as_text(part.get("source"))
+    if source == SOURCE_SHEET_NUMBER:
+        item = {"source": SOURCE_SHEET_NUMBER}
+    elif source in (SOURCE_SHEET, SOURCE_PROJECT) and part.get("name"):
+        item = {"source": source, "name": _as_text(part.get("name"))}
+    else:
+        return None
+    if "separator" in part:
+        item["separator"] = _as_text(part.get("separator"))
+    return item
+
+
+def normalize_sheet_number_formula(formula):
+    """Parts in order. The text between two parts is stored on the part before the gap.
+
+    An older formula had one separator for every gap. That value is copied onto
+    each gap. An empty or broken formula is just the sheet number.
+    """
+    parts = []
+    shared = None
+    own = False
+    if isinstance(formula, dict):
+        if formula.get("separator"):
+            shared = _as_text(formula.get("separator"))
+        for part in formula.get("parts") or []:
+            item = _formula_part(part)
+            if item is None:
+                continue
+            if "separator" in item:
+                own = True
+            parts.append(item)
+    if not parts:
+        return {"parts": [{"source": SOURCE_SHEET_NUMBER}]}
+    if not own and shared:
+        for part in parts[:-1]:
+            part["separator"] = shared
+    for part in parts[:-1]:
+        part["separator"] = _as_text(part.get("separator"))
+    parts[-1].pop("separator", None)
+    return {"parts": parts}
+
+
+def sheet_number_part_label(part):
+    """What a formula part is called in the dropdown."""
+    source = part.get("source")
+    if source == SOURCE_PROJECT:
+        return u"Project: {}".format(part.get("name") or "")
+    if source == SOURCE_SHEET:
+        return u"Sheet: {}".format(part.get("name") or "")
+    return SHEET_NUMBER_LABEL
+
+
+def sheet_number_choice_list(doc, formula=None):
+    """Dropdown rows: (label, part). Sheet parameters and project information.
+
+    A part already saved in the formula is kept even if the parameter is gone,
+    so the dropdown still shows what the model is set to.
+    """
+    choices = []
+    seen = set()
+
+    def add(label, part):
+        if label in seen:
+            return
+        seen.add(label)
+        choices.append((label, part))
+
+    add(SHEET_NUMBER_LABEL, {"source": SOURCE_SHEET_NUMBER})
+    for name in get_sheet_parameter_names(doc):
+        add(u"Sheet: {}".format(name), {"source": SOURCE_SHEET, "name": name})
+    for name in get_project_parameter_names(doc):
+        add(u"Project: {}".format(name), {"source": SOURCE_PROJECT, "name": name})
+    if formula:
+        for part in normalize_sheet_number_formula(formula)["parts"]:
+            add(sheet_number_part_label(part), part)
+    return choices
+
+
+def compose_sheet_number(doc, sheet, formula):
+    """The text the formula writes. Empty parts are left out."""
+    formula = normalize_sheet_number_formula(formula)
+    project_info = doc.ProjectInformation
+    values = []
+    for part in formula["parts"]:
+        source = part["source"]
+        if source == SOURCE_SHEET_NUMBER:
+            text = sheet.SheetNumber if sheet is not None else u""
+        elif source == SOURCE_SHEET:
+            text = get_parameter_text(sheet, part.get("name"))
+        elif source == SOURCE_PROJECT:
+            text = get_parameter_text(project_info, part.get("name"))
+        else:
+            text = u""
+        text = _as_text(text).strip()
+        if text:
+            values.append((text, _as_text(part.get("separator"))))
+    if not values:
+        return u""
+    written = [values[0][0]]
+    for index in range(len(values) - 1):
+        written.append(values[index][1])
+        written.append(values[index + 1][0])
+    return u"".join(written)
+
+
+def _formula_storage(doc):
+    schema = ViewReferenceSettingsSchema.schema
+    if schema is None:
+        return None
+    for storage in FilteredElementCollector(doc).OfClass(DataStorage):
+        try:
+            entity = storage.GetEntity(schema)
+        except Exception:
+            continue
+        if entity.IsValid():
+            return storage
+    return None
+
+
+def load_sheet_number_formula(doc):
+    """The formula saved in this model, or the sheet number on its own."""
+    storage = _formula_storage(doc)
+    if storage is None:
+        return normalize_sheet_number_formula(DEFAULT_SHEET_FORMULA)
+    try:
+        raw = ViewReferenceSettingsSchema(storage, update=False).get("sheet_number_formula")
+    except Exception as ex:
+        logger.debug("Could not read the sheet number formula: {}".format(ex))
+        return normalize_sheet_number_formula(DEFAULT_SHEET_FORMULA)
+    if not raw:
+        return normalize_sheet_number_formula(DEFAULT_SHEET_FORMULA)
+    try:
+        return normalize_sheet_number_formula(json.loads(raw))
+    except Exception as ex:
+        logger.debug("Sheet number formula is not readable: {}".format(ex))
+        return normalize_sheet_number_formula(DEFAULT_SHEET_FORMULA)
+
+
+def save_sheet_number_formula(doc, formula):
+    """Store the formula in the model. No transaction is started when it is unchanged.
+
+    Returns True when the model now holds this formula.
+    """
+    formula = normalize_sheet_number_formula(formula)
+    raw = json.dumps(formula, ensure_ascii=True, sort_keys=True)
+    storage = _formula_storage(doc)
+    if storage is not None:
+        try:
+            current = ViewReferenceSettingsSchema(storage, update=False).get("sheet_number_formula")
+        except Exception:
+            current = None
+        if current == raw:
+            return True
+    try:
+        with revit.Transaction("Save sheet number formula", doc):
+            if storage is None:
+                storage = DataStorage.Create(doc)
+            entity = ViewReferenceSettingsSchema(storage, update=False)
+            entity.set("sheet_number_formula", raw)
+            storage.SetEntity(entity.unwrap())
+        return True
+    except Exception as ex:
+        logger.error("Could not save the sheet number formula: {}".format(ex))
+        return False
 
 
 def get_view_area(view):
@@ -365,6 +595,47 @@ def _is_on_frame(instance, frame):
             and transform.BasisY.IsAlmostEqualTo(frame.up))
 
 
+_ifc_warned = set()
+
+
+def _warn_ifc_once(name):
+    if name in _ifc_warned:
+        return
+    _ifc_warned.add(name)
+    logger.warning("Instance parameter '{}' could not be set".format(name))
+
+
+def _set_ifc_export(instance):
+    """Export this instance to IFC as IfcVirtualElement."""
+    export_flag = instance.get_Parameter(BuiltInParameter.IFC_EXPORT_ELEMENT)
+    if export_flag is None or export_flag.IsReadOnly:
+        _warn_ifc_once("Export to IFC")
+    elif export_flag.AsInteger() != IFC_EXPORT_YES:
+        export_flag.Set(IFC_EXPORT_YES)
+
+    export_as = instance.get_Parameter(BuiltInParameter.IFC_EXPORT_ELEMENT_AS)
+    if export_as is None or export_as.IsReadOnly:
+        _warn_ifc_once("Export to IFC As")
+    elif export_as.AsString() != IFC_EXPORT_AS:
+        export_as.Set(IFC_EXPORT_AS)
+
+
+def _set_ifc_export_on_family(doc, symbol):
+    """Set the IFC instance overrides on every instance of this family.
+
+    Instances placed by hand have no view link, so the update pass would
+    otherwise leave them alone.
+    """
+    family_id = get_element_id_value(symbol.Family.Id)
+    for instance in FilteredElementCollector(doc).OfClass(FamilyInstance):
+        try:
+            instance_family_id = get_element_id_value(instance.Symbol.Family.Id)
+        except Exception:
+            continue
+        if instance_family_id == family_id:
+            _set_ifc_export(instance)
+
+
 def _set_parameter(instance, name, value):
     param = instance.LookupParameter(name)
     if param is None:
@@ -376,12 +647,12 @@ def _set_parameter(instance, name, value):
     param.Set(value)
 
 
-def _apply_frame(instance, frame, view, sheet):
+def _apply_frame(instance, frame, view, sheet, doc, formula):
     _set_parameter(instance, PARAM_WIDTH, frame.width)
     _set_parameter(instance, PARAM_HEIGHT, frame.height)
     _set_parameter(instance, PARAM_DEPTH, frame.thickness())
 
-    sheet_number = sheet.SheetNumber if sheet is not None else ""
+    sheet_number = compose_sheet_number(doc, sheet, formula)
     label = view.Name
     if instance.LookupParameter(PARAM_SHEET) is not None:
         _set_parameter(instance, PARAM_SHEET, sheet_number or NO_SHEET_TEXT)
@@ -389,6 +660,7 @@ def _apply_frame(instance, frame, view, sheet):
         # A line break in the value gives a two-line model text
         label = "{}\r\n{}".format(view.Name, sheet_number)
     _set_parameter(instance, PARAM_NAME, label)
+    _set_ifc_export(instance)
 
 
 def _place(doc, symbol, frame, view):
@@ -404,19 +676,25 @@ def _place(doc, symbol, frame, view):
     return instance
 
 
-def sync_view_references(doc, views, symbol, show_depth=False, manual_depth=None):
+def sync_view_references(doc, views, symbol, show_depth=False, manual_depth=None,
+                         sheet_formula=None):
     """Create or update one reference per view. Call inside an open transaction.
 
     With show_depth the reference becomes a box from the cut plane to the
     view's far limit; otherwise it is a thin plate on the cut plane.
     manual_depth (feet) draws every reference that deep instead, whatever the
     view's own depth is.
+    sheet_formula overrides the formula stored in the model for this run.
 
     An instance that already sits on the right plane only gets its parameters
     refreshed; one that does not is replaced, because a work plane based
     instance cannot be moved to another plane.
     """
     result = SyncResult()
+    if sheet_formula is None:
+        sheet_formula = load_sheet_number_formula(doc)
+    else:
+        sheet_formula = normalize_sheet_number_formula(sheet_formula)
     if not symbol.IsActive:
         symbol.Activate()
         doc.Regenerate()
@@ -443,11 +721,11 @@ def sync_view_references(doc, views, symbol, show_depth=False, manual_depth=None
                     doc.Delete(instance.Id)
 
             if keep is not None:
-                _apply_frame(keep, frame, view, sheet)
+                _apply_frame(keep, frame, view, sheet, doc, sheet_formula)
                 result.updated.append(keep.Id)
             else:
                 instance = _place(doc, symbol, frame, view)
-                _apply_frame(instance, frame, view, sheet)
+                _apply_frame(instance, frame, view, sheet, doc, sheet_formula)
                 if instances:
                     result.updated.append(instance.Id)
                 else:
@@ -456,4 +734,5 @@ def sync_view_references(doc, views, symbol, show_depth=False, manual_depth=None
             logger.error("Could not place a reference for '{}': {}".format(view_name, ex))
             result.skipped.append((view_name, str(ex)))
 
+    _set_ifc_export_on_family(doc, symbol)
     return result

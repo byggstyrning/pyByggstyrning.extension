@@ -13,9 +13,12 @@ clr.AddReference("PresentationCore")
 clr.AddReference("PresentationFramework")
 from System.Collections.Generic import List
 from System.Collections.ObjectModel import ObservableCollection
-from System.Windows import Thickness, Visibility
+from System import Double
+from System.Windows import CornerRadius, HorizontalAlignment, Size, Thickness, VerticalAlignment, Visibility
 from System.ComponentModel import ListSortDirection, SortDescription
-from System.Windows.Controls import CheckBox, DataGridRow
+from System.Windows.Controls import Border, Button, CheckBox, ComboBox, DataGridRow, Grid, Panel, TextBlock, TextBox
+from System.Windows.Input import Cursors
+from System.Windows.Media import Brushes, FontFamily
 from System.Windows.Data import CollectionViewSource
 from System.Windows.Media import VisualTreeHelper
 
@@ -170,11 +173,13 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         self._setup_filters()
         saved_state = self._read_state()
         self._restore_filters(saved_state)
+        self._setup_sheet_formula()
         self._load_views()
 
         # Bind views to DataGrid
         self.viewsDataGrid.ItemsSource = self.views_data
         self._restore_rows(saved_state)
+        self._refresh_formula_example()
         self.Closed += self._save_state
         logger.debug("UI setup complete. Found {} views.".format(self.views_data.Count))
 
@@ -255,6 +260,251 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         script.get_config().set_option("max_area_m2", (self.maxAreaTextBox.Text or "").strip())
         script.save_config()
 
+    def _setup_sheet_formula(self):
+        """The text written to Sheet Number: sheet number, sheet parameters, project information."""
+        self._formula_loading = True
+        formula = view_references.load_sheet_number_formula(doc)
+        self.sheet_parts = formula["parts"]
+        self._sheet_choices = view_references.sheet_number_choice_list(doc, formula)
+        self._formula_loading = False
+        self._rebuild_sheet_formula_panel()
+
+    def _same_part(self, left, right):
+        if left.get("source") != right.get("source"):
+            return False
+        if left.get("source") == view_references.SOURCE_SHEET_NUMBER:
+            return True
+        return left.get("name") == right.get("name")
+
+    def _label_for_part(self, part):
+        for label, candidate in self._sheet_choices:
+            if self._same_part(candidate, part):
+                return label
+        return view_references.sheet_number_part_label(part)
+
+    def _part_for_label(self, label):
+        for candidate_label, part in self._sheet_choices:
+            if candidate_label == label:
+                item = {"source": part.get("source")}
+                if part.get("name"):
+                    item["name"] = part.get("name")
+                return item
+        return None
+
+    def _sheet_formula(self):
+        return {"parts": [dict(part) for part in self.sheet_parts]}
+
+    def _save_sheet_formula(self):
+        if getattr(self, "_formula_loading", False):
+            return
+        view_references.save_sheet_number_formula(doc, self._sheet_formula())
+
+    def _part_to_add(self):
+        """A project information parameter when the model has one, otherwise a sheet parameter."""
+        for _label, part in self._sheet_choices:
+            if part.get("source") == view_references.SOURCE_PROJECT:
+                return dict(part)
+        for _label, part in self._sheet_choices:
+            if part.get("source") == view_references.SOURCE_SHEET:
+                return dict(part)
+        return {"source": view_references.SOURCE_SHEET_NUMBER}
+
+    def _show_remove(self, sender, args):
+        button = sender.Tag
+        if button is not None:
+            button.Visibility = Visibility.Visible
+
+    def _hide_remove(self, sender, args):
+        button = sender.Tag
+        if button is not None:
+            button.Visibility = Visibility.Collapsed
+
+    def _remove_hover_on(self, sender, args):
+        sender.SetResourceReference(Border.BackgroundProperty, "ErrorBrush")
+        if sender.Child is not None:
+            sender.Child.Foreground = Brushes.White
+
+    def _remove_hover_off(self, sender, args):
+        sender.Background = Brushes.Transparent
+        if sender.Child is not None:
+            sender.Child.SetResourceReference(TextBlock.ForegroundProperty, "TextBrush")
+
+    def _rebuild_sheet_formula_panel(self):
+        self._formula_loading = True
+        try:
+            self.sheetFormulaPanel.Children.Clear()
+            labels = List[str]([label for label, part in self._sheet_choices])
+            last = len(self.sheet_parts) - 1
+            control_height = 30
+            for index, part in enumerate(self.sheet_parts):
+                host = Grid()
+                host.Width = 200
+                host.Height = control_height
+                host.Margin = Thickness(0, 0, 4, 0)
+                host.VerticalAlignment = VerticalAlignment.Center
+                combo = ComboBox()
+                combo.Tag = index
+                combo.Height = control_height
+                combo.Margin = Thickness(0)
+                combo.VerticalAlignment = VerticalAlignment.Center
+                combo.SetResourceReference(ComboBox.StyleProperty, "StandardComboBoxStyle")
+                combo.ItemsSource = labels
+                combo.SelectedItem = self._label_for_part(part)
+                combo.SelectionChanged += self.SheetPart_Changed
+                host.Children.Add(combo)
+                if len(self.sheet_parts) > 1:
+                    mark = TextBlock()
+                    mark.Text = u"\u00d7"
+                    mark.FontSize = 11
+                    mark.HorizontalAlignment = HorizontalAlignment.Center
+                    mark.VerticalAlignment = VerticalAlignment.Center
+                    mark.SetResourceReference(TextBlock.ForegroundProperty, "TextBrush")
+                    remove = Border()
+                    remove.Child = mark
+                    remove.Width = 16
+                    remove.Height = 16
+                    remove.Margin = Thickness(0, 1, 1, 0)
+                    remove.CornerRadius = CornerRadius(2)
+                    remove.Background = Brushes.Transparent
+                    remove.HorizontalAlignment = HorizontalAlignment.Right
+                    remove.VerticalAlignment = VerticalAlignment.Top
+                    remove.Visibility = Visibility.Collapsed
+                    remove.Cursor = Cursors.Hand
+                    remove.Tag = index
+                    remove.ToolTip = "Remove this part"
+                    remove.MouseEnter += self._remove_hover_on
+                    remove.MouseLeave += self._remove_hover_off
+                    remove.MouseLeftButtonUp += self.RemoveSheetPart_Click
+                    Panel.SetZIndex(remove, 2)
+                    host.Children.Add(remove)
+                    host.Tag = remove
+                    host.MouseEnter += self._show_remove
+                    host.MouseLeave += self._hide_remove
+                self.sheetFormulaPanel.Children.Add(host)
+                if index < last:
+                    box = TextBox()
+                    box.Height = control_height
+                    box.MinHeight = control_height
+                    box.MinWidth = 28
+                    box.Margin = Thickness(0, 0, 4, 0)
+                    box.VerticalAlignment = VerticalAlignment.Center
+                    box.VerticalContentAlignment = VerticalAlignment.Center
+                    box.Tag = index
+                    box.Text = part.get("separator") or ""
+                    box.ToolTip = "Text between this parameter and the next. Leave empty to join them."
+                    box.SetResourceReference(TextBox.StyleProperty, "PlaceholderTextBoxStyle")
+                    self._fit_separator(box)
+                    box.TextChanged += self.SheetPartSeparator_Changed
+                    box.LostFocus += self.SheetPartSeparator_LostFocus
+                    self.sheetFormulaPanel.Children.Add(box)
+            add = Button()
+            add.Content = "+"
+            add.Width = control_height
+            add.Height = control_height
+            add.MinHeight = control_height
+            add.Margin = Thickness(0)
+            add.VerticalAlignment = VerticalAlignment.Center
+            add.ToolTip = "Add a parameter in front of the sheet number"
+            add.SetResourceReference(Button.StyleProperty, "StandardButtonStyle")
+            add.Click += self.AddSheetPart_Click
+            self.sheetFormulaPanel.Children.Add(add)
+        finally:
+            self._formula_loading = False
+
+    def SheetPart_Changed(self, sender, args):
+        if self._formula_loading:
+            return
+        part = self._part_for_label(sender.SelectedItem)
+        index = sender.Tag
+        if part is None or index is None or index >= len(self.sheet_parts):
+            return
+        if "separator" in self.sheet_parts[index]:
+            part["separator"] = self.sheet_parts[index].get("separator") or ""
+        self.sheet_parts[index] = part
+        self._save_sheet_formula()
+        self._refresh_formula_example()
+
+    def _fit_separator(self, box):
+        """Grow or shrink the separator box so the whole text stays visible."""
+        text = box.Text or u""
+        size = box.FontSize
+        if Double.IsNaN(size) or size <= 0:
+            size = 12.0
+        measured = 0.0
+        try:
+            probe = TextBlock()
+            probe.Text = text if text else u" "
+            probe.FontFamily = box.FontFamily or FontFamily("Segoe UI")
+            probe.FontSize = size
+            probe.FontStyle = box.FontStyle
+            probe.FontWeight = box.FontWeight
+            probe.Measure(Size(Double.PositiveInfinity, Double.PositiveInfinity))
+            measured = probe.DesiredSize.Width
+        except Exception:
+            measured = 0.0
+        # PlaceholderTextBoxStyle pads 8 on each side; keep the caret inside too.
+        # The character count is a floor so a failed measure cannot clip the text.
+        width = max(36.0, measured + 32.0, 28.0 + len(text) * size)
+        box.MinWidth = width
+        box.Width = width
+
+    def SheetPartSeparator_Changed(self, sender, args):
+        """Refresh the example on each keystroke. The model is saved when the box is left."""
+        if self._formula_loading:
+            return
+        index = sender.Tag
+        if index is None or index >= len(self.sheet_parts):
+            return
+        self.sheet_parts[index]["separator"] = sender.Text or ""
+        self._fit_separator(sender)
+        self._refresh_formula_example()
+
+    def SheetPartSeparator_LostFocus(self, sender, args):
+        index = sender.Tag
+        if self._formula_loading or index is None or index >= len(self.sheet_parts):
+            return
+        self.sheet_parts[index]["separator"] = sender.Text or ""
+        self._save_sheet_formula()
+        self._refresh_formula_example()
+
+    def AddSheetPart_Click(self, sender, args):
+        part = self._part_to_add()
+        if (self.sheet_parts
+                and self.sheet_parts[-1].get("source") == view_references.SOURCE_SHEET_NUMBER):
+            part["separator"] = ""
+            self.sheet_parts.insert(len(self.sheet_parts) - 1, part)
+        else:
+            if self.sheet_parts:
+                self.sheet_parts[-1]["separator"] = self.sheet_parts[-1].get("separator") or ""
+            self.sheet_parts.append(part)
+        self._rebuild_sheet_formula_panel()
+        self._save_sheet_formula()
+        self._refresh_formula_example()
+
+    def RemoveSheetPart_Click(self, sender, args):
+        index = sender.Tag
+        if index is not None and 0 <= index < len(self.sheet_parts):
+            del self.sheet_parts[index]
+        if not self.sheet_parts:
+            self.sheet_parts = [{"source": view_references.SOURCE_SHEET_NUMBER}]
+        self._rebuild_sheet_formula_panel()
+        self._save_sheet_formula()
+        self._refresh_formula_example()
+
+    def _refresh_formula_example(self):
+        sheet = None
+        for item in self.all_items or []:
+            if item.sheet is not None:
+                sheet = item.sheet
+                break
+        if sheet is None:
+            self.sheetFormulaExample.Text = (
+                "Left to right. Choose sheet parameters or project information.")
+            return
+        text = view_references.compose_sheet_number(doc, sheet, self._sheet_formula())
+        self.sheetFormulaExample.Text = u"Example from sheet {}: {}".format(
+            sheet.SheetNumber, text or "-")
+
     def _sheet_parameter_name(self):
         name = self.sheetParameterComboBox.SelectedItem
         return None if not name or name == NO_SHEET_PARAMETER else name
@@ -273,6 +523,8 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
             self.all_items.append(item)
         self._update_sheet_parameter_column()
         self._apply_filters()
+        if getattr(self, "sheet_parts", None):
+            self._refresh_formula_example()
 
     def _update_sheet_parameter_column(self):
         name = self._sheet_parameter_name()
@@ -457,6 +709,7 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
                 json.dump(state, state_file)
         except Exception as ex:
             logger.debug("Could not save the window state: {}".format(ex))
+        self._save_sheet_formula()
 
     def _read_state(self):
         try:
@@ -525,9 +778,12 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
             return
         script.get_config().set_option("manual_depth_mm", self.manualDepthTextBox.Text.strip())
         script.save_config()
+        formula = self._sheet_formula()
+        self._save_sheet_formula()
         with revit.Transaction("Create 3D View References"):
             result = view_references.sync_view_references(
-                doc, selected_views, self.family_symbol, show_depth, manual_depth)
+                doc, selected_views, self.family_symbol, show_depth, manual_depth,
+                sheet_formula=formula)
 
         self.created_elements = result.element_ids
         self.isolateButton.Content = "Isolate {} references".format(len(self.created_elements))
