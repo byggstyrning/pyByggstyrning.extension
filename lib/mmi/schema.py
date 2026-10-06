@@ -3,6 +3,12 @@
 import System
 from pyrevit import script
 from extensible_storage import BaseSchema, simple_field, ES
+from mmi.config import (
+    DEFAULT_PIN_MMI_LIMIT,
+    DEFAULT_MOVE_MMI_LIMIT,
+    DEFAULT_TYPE_INSTANCE_LIMIT,
+    DEFAULT_INSTANCE_PARAM_LIMIT,
+)
 
 # Initialize logger
 logger = script.get_logger()
@@ -11,7 +17,7 @@ class MMIParameterSchema(BaseSchema):
     """Schema for storing MMI parameter mapping preferences and settings."""
     
     # Schema identification and access levels
-    guid = "8844cb2d-4234-4bf0-8361-b3da4d64234d"  # Updated GUID for new version
+    guid = "8844cb2d-4234-4bf0-8361-b3da4d64234e"  # Updated GUID for new version
     vendor = "pyByggstyrning"
     application = "MMIParameterMapping"
     read_access_level = ES.AccessLevel.Public
@@ -20,7 +26,7 @@ class MMIParameterSchema(BaseSchema):
     @simple_field(value_type="string")
     def schema_version():
         """Current schema version."""
-        return "1.3"
+        return "1.4"
     
     @simple_field(value_type="string")
     def mmi_parameter_name():
@@ -49,12 +55,12 @@ class MMIParameterSchema(BaseSchema):
         
     @simple_field(value_type="boolean")
     def pin_elements():
-        """Whether to pin elements >= 400."""
+        """Whether to pin elements at or above the pin MMI limit."""
         return False
         
     @simple_field(value_type="boolean")
     def warn_on_move():
-        """Whether to warn when moving elements >= 425."""
+        """Whether to warn when moving elements at or above the move MMI limit."""
         return False
         
     @simple_field(value_type="boolean")
@@ -71,3 +77,33 @@ class MMIParameterSchema(BaseSchema):
     def default_on_new_instances():
         """When true and default_mmi is set, apply default MMI to new added instances with blank MMI."""
         return False
+
+    @simple_field(value_type="boolean")
+    def warn_on_type_change():
+        """Warn when a type with more than type_instance_limit instances is changed."""
+        return False
+
+    @simple_field(value_type="boolean")
+    def warn_on_instance_params():
+        """Warn when one change edits instance parameters on more than instance_param_limit elements."""
+        return False
+
+    @simple_field(value_type="int32")
+    def pin_mmi_limit():
+        """MMI value at or above which elements are pinned."""
+        return DEFAULT_PIN_MMI_LIMIT
+
+    @simple_field(value_type="int32")
+    def move_mmi_limit():
+        """MMI value at or above which a move shows a warning."""
+        return DEFAULT_MOVE_MMI_LIMIT
+
+    @simple_field(value_type="int32")
+    def type_instance_limit():
+        """Instance count above which a type change shows a warning."""
+        return DEFAULT_TYPE_INSTANCE_LIMIT
+
+    @simple_field(value_type="int32")
+    def instance_param_limit():
+        """Element count above which an instance-parameter edit shows a warning."""
+        return DEFAULT_INSTANCE_PARAM_LIMIT

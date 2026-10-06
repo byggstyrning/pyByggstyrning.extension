@@ -58,17 +58,18 @@ if lib_path not in sys.path:
 logger = script.get_logger()
 
 # Import from MMI library modules
-from mmi.config import CONFIG_KEYS, STANDARD_MMI_VALUES
+from mmi.config import CONFIG_KEYS, STANDARD_MMI_VALUES, MONITOR_LIMIT_DEFAULTS
 from mmi.colorizer import get_color_for_mmi
 from mmi.core import (
     get_mmi_parameter_name,
     save_mmi_parameter,
     save_monitor_config,
     load_monitor_config,
+    load_monitor_limits,
     get_default_mmi,
     save_default_mmi,
+    save_monitor_limits,
 )
-
 # Import revit utils
 from revit.revit_utils import get_available_parameters
 
@@ -110,7 +111,10 @@ class MMISettingsWindow(forms.WPFWindow):
             # Set up ComboBox
             self.parameterComboBox.DisplayMemberPath = "display_name"
             
-            self._populate_default_mmi_combo()
+            self._populate_mmi_combos()
+            
+            # Last valid limits, used when a box contains a bad value
+            self._loaded_limits = {}
             
             # Flag to prevent saving during initialization
             self._is_initializing = True
@@ -173,32 +177,77 @@ class MMISettingsWindow(forms.WPFWindow):
         except Exception as e:
             logger.error("Error loading parameters: {}".format(str(e)))
     
-    def _populate_default_mmi_combo(self):
-        """Fill Default on new instances combo: (None) plus standard MMI values with color swatches."""
+    def _mmi_step_item(self, code):
+        """One MMI step: its color and its number, with no description."""
         try:
-            self.defaultMmiComboBox.Items.Clear()
-            self.defaultMmiComboBox.Items.Add(
-                DefaultMmiComboItem(
-                    "",
-                    "(None)",
-                    Brushes.Transparent,
-                    "No default MMI text applied to new instances.",
-                )
-            )
-            for v in STANDARD_MMI_VALUES:
-                try:
-                    n = int(v)
-                except Exception:
-                    n = 0
-                rev_col, full_name = get_color_for_mmi(n)
-                brush = SolidColorBrush(
-                    WpfMediaColor.FromRgb(rev_col.Red, rev_col.Green, rev_col.Blue)
-                )
-                self.defaultMmiComboBox.Items.Add(
-                    DefaultMmiComboItem(v, v, brush, full_name)
-                )
+            number = int(code)
+        except Exception:
+            number = 0
+        rev_col, _name = get_color_for_mmi(number)
+        brush = SolidColorBrush(
+            WpfMediaColor.FromRgb(rev_col.Red, rev_col.Green, rev_col.Blue)
+        )
+        text = str(code)
+        return DefaultMmiComboItem(text, text, brush, "")
+
+    def _fill_mmi_combo(self, combo, include_none):
+        combo.Items.Clear()
+        if include_none:
+            combo.Items.Add(DefaultMmiComboItem("", "(None)", Brushes.Transparent, ""))
+        for value in STANDARD_MMI_VALUES:
+            combo.Items.Add(self._mmi_step_item(value))
+
+    def _populate_mmi_combos(self):
+        """Every MMI picker lists one standard step, shown as its color and number."""
+        try:
+            self._fill_mmi_combo(self.defaultMmiComboBox, True)
+            for combo in (
+                self.pinLimitComboBox,
+                self.moveLimitComboBox,
+                self.typeChangeLimitComboBox,
+                self.instanceParamLimitComboBox,
+            ):
+                self._fill_mmi_combo(combo, False)
         except Exception as e:
-            logger.error("Error populating default MMI combo: {}".format(str(e)))
+            logger.error("Error populating MMI step combos: {}".format(str(e)))
+
+    def _select_mmi_step(self, combo, value, fallback):
+        """Select that step, or the nearest standard step when the stored value is not one."""
+        target = "" if value is None else str(value).strip()
+        for index in range(combo.Items.Count):
+            code = str(getattr(combo.Items[index], "mmi_code", "") or "").strip()
+            if code == target:
+                combo.SelectedIndex = index
+                return int(code) if code else fallback
+        try:
+            number = int(target)
+        except Exception:
+            number = fallback
+        best_index = None
+        best_distance = None
+        for index in range(combo.Items.Count):
+            code = str(getattr(combo.Items[index], "mmi_code", "") or "").strip()
+            if not code:
+                continue
+            distance = abs(int(code) - number)
+            if best_distance is None or distance < best_distance:
+                best_index = index
+                best_distance = distance
+        if best_index is None:
+            combo.SelectedIndex = 0
+            return fallback
+        combo.SelectedIndex = best_index
+        return int(combo.Items[best_index].mmi_code)
+
+    def _selected_mmi_step(self, combo, fallback):
+        item = combo.SelectedItem
+        code = getattr(item, "mmi_code", None) if item is not None else None
+        if not code:
+            return fallback
+        try:
+            return int(str(code).strip())
+        except Exception:
+            return fallback
     
     def load_config(self):
         """Load current MMI configuration and parameter name."""
@@ -223,17 +272,25 @@ class MMISettingsWindow(forms.WPFWindow):
             self.checkAfterSyncCheckBox.IsChecked = current_config.get("check_mmi_after_sync", False)
             self.defaultOnNewInstancesCheckBox.IsChecked = current_config.get(
                 "default_on_new_instances", False)
-            
-            stored_default = get_default_mmi(revit.doc)
-            self.defaultMmiComboBox.SelectedIndex = 0
-            if stored_default:
-                sd = str(stored_default).strip()
-                for i in range(self.defaultMmiComboBox.Items.Count):
-                    item = self.defaultMmiComboBox.Items[i]
-                    code = getattr(item, "mmi_code", None)
-                    if code is not None and str(code).strip() == sd:
-                        self.defaultMmiComboBox.SelectedIndex = i
-                        break
+            self.warnOnTypeChangeCheckBox.IsChecked = current_config.get(
+                "warn_on_type_change", False)
+            self.warnOnInstanceParamsCheckBox.IsChecked = current_config.get(
+                "warn_on_instance_params", False)
+
+            limit_boxes = (
+                ("pin_mmi_limit", self.pinLimitComboBox),
+                ("move_mmi_limit", self.moveLimitComboBox),
+                ("type_instance_limit", self.typeChangeLimitComboBox),
+                ("instance_param_limit", self.instanceParamLimitComboBox),
+            )
+            stored_limits = load_monitor_limits(revit.doc)
+            self._loaded_limits = {}
+            for key, combo in limit_boxes:
+                value = stored_limits.get(key, MONITOR_LIMIT_DEFAULTS[key])
+                self._loaded_limits[key] = self._select_mmi_step(
+                    combo, value, MONITOR_LIMIT_DEFAULTS[key])
+
+            self._select_mmi_step(self.defaultMmiComboBox, get_default_mmi(revit.doc), 0)
             
         except Exception as e:
             logger.error("Error loading MMI configuration: {}".format(str(e)))
@@ -246,9 +303,25 @@ class MMISettingsWindow(forms.WPFWindow):
         # but we don't save on selection change regardless to ensure user must click Save
         pass
     
+    def _limits_from_combos(self):
+        """The one MMI step selected on each warning row."""
+        fields = (
+            ("pin_mmi_limit", self.pinLimitComboBox),
+            ("move_mmi_limit", self.moveLimitComboBox),
+            ("type_instance_limit", self.typeChangeLimitComboBox),
+            ("instance_param_limit", self.instanceParamLimitComboBox),
+        )
+        limits = {}
+        for key, combo in fields:
+            fallback = self._loaded_limits.get(key, MONITOR_LIMIT_DEFAULTS[key])
+            limits[key] = self._selected_mmi_step(combo, fallback)
+        return limits
+
     def SaveButton_Click(self, sender, e):
         """Handle click on Save button."""
         try:
+            limits = self._limits_from_combos()
+
             # Save the selected MMI parameter first
             selected_item = self.parameterComboBox.SelectedItem
             if selected_item is not None:
@@ -267,6 +340,8 @@ class MMISettingsWindow(forms.WPFWindow):
                 "warn_on_move": self.warnOnMoveCheckBox.IsChecked or False,
                 "check_mmi_after_sync": self.checkAfterSyncCheckBox.IsChecked or False,
                 "default_on_new_instances": self.defaultOnNewInstancesCheckBox.IsChecked or False,
+                "warn_on_type_change": self.warnOnTypeChangeCheckBox.IsChecked or False,
+                "warn_on_instance_params": self.warnOnInstanceParamsCheckBox.IsChecked or False,
             }
             
             # Save the configuration
@@ -281,6 +356,14 @@ class MMISettingsWindow(forms.WPFWindow):
                 default_to_save = ""
             else:
                 default_to_save = str(code).strip()
+            
+            if not save_monitor_limits(revit.doc, limits):
+                forms.warning(
+                    "Failed to save monitor limits. See log for details.",
+                    title="MMI Settings",
+                )
+                return
+            self._loaded_limits = dict(limits)
             
             if not save_default_mmi(revit.doc, default_to_save):
                 forms.warning(

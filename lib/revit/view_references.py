@@ -23,17 +23,19 @@ format, so Revit 2025 and newer can load it. With a family that has the
 Sheet Number parameter the sheet number goes there; with one that does not,
 it becomes a second line of the "View Name" text.
 
-What is written there is a formula stored in the model, like the MMI parameter.
-It is read left to right. Each part is the sheet's own number, another
-parameter of that sheet, or a project information parameter, and the text
-between two parts is set on that gap. Empty parts are skipped. The default
-is the sheet number alone.
+What is written to Sheet Number and to View Name is a formula stored in the
+model, like the MMI parameter. It is read left to right. Each part is the
+view's own name, the sheet's own number, another parameter of that view or
+sheet, or a project information parameter, and the text between two parts is
+set on that gap. Empty parts are skipped. Sheet Number defaults to the sheet
+number alone. View Name defaults to the view's own name.
 
 Every instance, including ones placed by hand, is set to export to IFC as
 IfcVirtualElement. Those are the instance parameters, not the type ones.
 """
 import json
 import os
+import System
 
 from Autodesk.Revit.DB import (
     BuiltInParameter,
@@ -53,13 +55,28 @@ from Autodesk.Revit.DB import (
     ViewType,
     XYZ,
 )
-from Autodesk.Revit.DB.ExtensibleStorage import DataStorage, ExtensibleStorageFilter
+from Autodesk.Revit.DB.ExtensibleStorage import DataStorage, ExtensibleStorageFilter, Schema
 from Autodesk.Revit.DB.Structure import StructuralType
 
 from pyrevit import revit, script
 
 from extensible_storage import BaseSchema, simple_field
 from revit.compat import get_element_id_value
+from revit.view_reference_formula import (
+    DEFAULT_SHEET_FORMULA,
+    DEFAULT_VIEW_FORMULA,
+    SHEET_NUMBER_LABEL,
+    SOURCE_PROJECT,
+    SOURCE_SHEET,
+    SOURCE_SHEET_NUMBER,
+    SOURCE_VIEW,
+    SOURCE_VIEW_NAME,
+    VIEW_NAME_LABEL,
+    compose_parts,
+    normalize_sheet_number_formula,
+    normalize_view_name_formula,
+    part_label,
+)
 
 logger = script.get_logger()
 
@@ -103,26 +120,23 @@ _PLAN_TYPES = (
 )
 
 
-# Parts of the text written to the family's Sheet Number parameter.
-# sheet_number is the sheet's own number; the other two read a named parameter.
-SOURCE_SHEET_NUMBER = "sheet_number"
-SOURCE_SHEET = "sheet"
-SOURCE_PROJECT = "project"
-SHEET_NUMBER_LABEL = "Sheet number"
-
-DEFAULT_SHEET_FORMULA = {
-    "parts": [{"source": SOURCE_SHEET_NUMBER}],
-}
+# The settings schema cannot gain a field in place. 2a67 held the sheet formula only.
+PREVIOUS_SETTINGS_GUID = "7f4c2a91-8e15-4d6b-b3a0-1c9e5f8d2a67"
 
 
 class ViewReferenceSettingsSchema(BaseSchema):
-    """The sheet-number formula for this model, shared by everyone in the file."""
+    """Sheet-number and view-name formulas for this model, shared by everyone."""
 
-    guid = "7f4c2a91-8e15-4d6b-b3a0-1c9e5f8d2a67"
+    guid = "7f4c2a91-8e15-4d6b-b3a0-1c9e5f8d2a68"
 
     @simple_field(value_type="string")
     def sheet_number_formula():
         """JSON object: parts in left-to-right order, with the text between them."""
+        return None
+
+    @simple_field(value_type="string")
+    def view_name_formula():
+        """JSON object: parts written to View Name, left to right."""
         return None
 
 
@@ -275,77 +289,24 @@ def get_project_parameter_names(doc):
     return sorted(names, key=lambda name: name.lower())
 
 
-def _as_text(value):
-    if value is None:
-        return u""
-    try:
-        return unicode(value)
-    except Exception:
-        return u"{}".format(value)
-
-
-def _formula_part(part):
-    """One formula part, or None. Keeps a per-gap separator when the part has one."""
-    if not isinstance(part, dict):
-        return None
-    source = _as_text(part.get("source"))
-    if source == SOURCE_SHEET_NUMBER:
-        item = {"source": SOURCE_SHEET_NUMBER}
-    elif source in (SOURCE_SHEET, SOURCE_PROJECT) and part.get("name"):
-        item = {"source": source, "name": _as_text(part.get("name"))}
-    else:
-        return None
-    if "separator" in part:
-        item["separator"] = _as_text(part.get("separator"))
-    return item
-
-
-def normalize_sheet_number_formula(formula):
-    """Parts in order. The text between two parts is stored on the part before the gap.
-
-    An older formula had one separator for every gap. That value is copied onto
-    each gap. An empty or broken formula is just the sheet number.
-    """
-    parts = []
-    shared = None
-    own = False
-    if isinstance(formula, dict):
-        if formula.get("separator"):
-            shared = _as_text(formula.get("separator"))
-        for part in formula.get("parts") or []:
-            item = _formula_part(part)
-            if item is None:
-                continue
-            if "separator" in item:
-                own = True
-            parts.append(item)
-    if not parts:
-        return {"parts": [{"source": SOURCE_SHEET_NUMBER}]}
-    if not own and shared:
-        for part in parts[:-1]:
-            part["separator"] = shared
-    for part in parts[:-1]:
-        part["separator"] = _as_text(part.get("separator"))
-    parts[-1].pop("separator", None)
-    return {"parts": parts}
+def get_view_parameter_names(doc):
+    """Names of parameters found on the views these tools can reference, sorted."""
+    names = set()
+    for view in collect_views(doc):
+        for parameter in view.Parameters:
+            name = parameter.Definition.Name
+            if name:
+                names.add(name)
+    return sorted(names, key=lambda name: name.lower())
 
 
 def sheet_number_part_label(part):
     """What a formula part is called in the dropdown."""
-    source = part.get("source")
-    if source == SOURCE_PROJECT:
-        return u"Project: {}".format(part.get("name") or "")
-    if source == SOURCE_SHEET:
-        return u"Sheet: {}".format(part.get("name") or "")
-    return SHEET_NUMBER_LABEL
+    return part_label(part)
 
 
-def sheet_number_choice_list(doc, formula=None):
-    """Dropdown rows: (label, part). Sheet parameters and project information.
-
-    A part already saved in the formula is kept even if the parameter is gone,
-    so the dropdown still shows what the model is set to.
-    """
+def _choice_list(doc, formula, normalize, extra_parts):
+    """Dropdown rows: (label, part). Saved parts stay even if the parameter is gone."""
     choices = []
     seen = set()
 
@@ -355,46 +316,81 @@ def sheet_number_choice_list(doc, formula=None):
         seen.add(label)
         choices.append((label, part))
 
-    add(SHEET_NUMBER_LABEL, {"source": SOURCE_SHEET_NUMBER})
-    for name in get_sheet_parameter_names(doc):
-        add(u"Sheet: {}".format(name), {"source": SOURCE_SHEET, "name": name})
-    for name in get_project_parameter_names(doc):
-        add(u"Project: {}".format(name), {"source": SOURCE_PROJECT, "name": name})
+    for label, part in extra_parts:
+        add(label, part)
     if formula:
-        for part in normalize_sheet_number_formula(formula)["parts"]:
-            add(sheet_number_part_label(part), part)
+        for part in normalize(formula)["parts"]:
+            add(part_label(part), part)
     return choices
 
 
+def _named_parts(source, names, prefix):
+    parts = []
+    for name in names:
+        parts.append((u"{}: {}".format(prefix, name), {"source": source, "name": name}))
+    return parts
+
+
+def sheet_number_choice_list(doc, formula=None):
+    """Dropdown rows for the sheet number: sheet parameters and project information."""
+    extras = [(SHEET_NUMBER_LABEL, {"source": SOURCE_SHEET_NUMBER})]
+    extras.extend(_named_parts(SOURCE_SHEET, get_sheet_parameter_names(doc), "Sheet"))
+    extras.extend(_named_parts(SOURCE_PROJECT, get_project_parameter_names(doc), "Project"))
+    return _choice_list(doc, formula, normalize_sheet_number_formula, extras)
+
+
+def view_name_choice_list(doc, formula=None):
+    """Dropdown rows for the view name, including the same sheet and project parts."""
+    extras = [(VIEW_NAME_LABEL, {"source": SOURCE_VIEW_NAME})]
+    extras.extend(_named_parts(SOURCE_VIEW, get_view_parameter_names(doc), "View"))
+    extras.append((SHEET_NUMBER_LABEL, {"source": SOURCE_SHEET_NUMBER}))
+    extras.extend(_named_parts(SOURCE_SHEET, get_sheet_parameter_names(doc), "Sheet"))
+    extras.extend(_named_parts(SOURCE_PROJECT, get_project_parameter_names(doc), "Project"))
+    return _choice_list(doc, formula, normalize_view_name_formula, extras)
+
+
+def _part_text(doc, view, sheet, part):
+    source = part.get("source")
+    if source == SOURCE_VIEW_NAME:
+        return view.Name if view is not None else u""
+    if source == SOURCE_VIEW:
+        return get_parameter_text(view, part.get("name"))
+    if source == SOURCE_SHEET_NUMBER:
+        return sheet.SheetNumber if sheet is not None else u""
+    if source == SOURCE_SHEET:
+        return get_parameter_text(sheet, part.get("name"))
+    if source == SOURCE_PROJECT:
+        return get_parameter_text(doc.ProjectInformation, part.get("name"))
+    return u""
+
+
 def compose_sheet_number(doc, sheet, formula):
-    """The text the formula writes. Empty parts are left out."""
-    formula = normalize_sheet_number_formula(formula)
-    project_info = doc.ProjectInformation
-    values = []
-    for part in formula["parts"]:
-        source = part["source"]
-        if source == SOURCE_SHEET_NUMBER:
-            text = sheet.SheetNumber if sheet is not None else u""
-        elif source == SOURCE_SHEET:
-            text = get_parameter_text(sheet, part.get("name"))
-        elif source == SOURCE_PROJECT:
-            text = get_parameter_text(project_info, part.get("name"))
-        else:
-            text = u""
-        text = _as_text(text).strip()
-        if text:
-            values.append((text, _as_text(part.get("separator"))))
-    if not values:
+    """The sheet-number text the formula writes. Empty parts are left out."""
+    return compose_parts(
+        formula,
+        SOURCE_SHEET_NUMBER,
+        lambda part: _part_text(doc, None, sheet, part),
+    )
+
+
+def compose_view_name(doc, view, sheet, formula):
+    """The view-name text the formula writes. Empty parts are left out.
+
+    A formula that resolves to nothing falls back to the view's own name.
+    """
+    text = compose_parts(
+        formula,
+        SOURCE_VIEW_NAME,
+        lambda part: _part_text(doc, view, sheet, part),
+    )
+    if text:
+        return text
+    if view is None:
         return u""
-    written = [values[0][0]]
-    for index in range(len(values) - 1):
-        written.append(values[index][1])
-        written.append(values[index + 1][0])
-    return u"".join(written)
+    return view.Name or u""
 
 
-def _formula_storage(doc):
-    schema = ViewReferenceSettingsSchema.schema
+def _storage_with_schema(doc, schema):
     if schema is None:
         return None
     for storage in FilteredElementCollector(doc).OfClass(DataStorage):
@@ -407,51 +403,124 @@ def _formula_storage(doc):
     return None
 
 
-def load_sheet_number_formula(doc):
-    """The formula saved in this model, or the sheet number on its own."""
+def _storage_with_guid(doc, guid_text):
+    guid = System.Guid(guid_text)
+    for storage in FilteredElementCollector(doc).OfClass(DataStorage):
+        try:
+            if guid in storage.GetEntitySchemaGuids():
+                return storage
+        except Exception:
+            continue
+    return None
+
+
+def _read_schema_string(storage, field_name):
+    try:
+        value = ViewReferenceSettingsSchema(storage, update=False).get(field_name)
+    except Exception:
+        return ""
+    if value is None:
+        return ""
+    return value
+
+
+def _migrate_settings_storage(doc, old_storage):
+    """Copy the sheet formula onto the current schema and default the view name."""
+    old_guid = System.Guid(PREVIOUS_SETTINGS_GUID)
+    raw_sheet = ""
+    try:
+        old_entity = old_storage.GetEntity(old_guid)
+        if old_entity is not None and old_entity.IsValid():
+            raw_sheet = old_entity.Get[str]("sheet_number_formula") or ""
+    except Exception as ex:
+        logger.debug("Could not read the previous view reference settings: {}".format(ex))
+    view_raw = json.dumps(DEFAULT_VIEW_FORMULA, ensure_ascii=True, sort_keys=True)
+    try:
+        with revit.Transaction("Update view reference settings", doc):
+            entity = ViewReferenceSettingsSchema(old_storage, update=False)
+            if raw_sheet:
+                entity.set("sheet_number_formula", raw_sheet)
+            entity.set("view_name_formula", view_raw)
+            old_storage.SetEntity(entity.unwrap())
+            old_schema = Schema.Lookup(old_guid)
+            if old_schema is not None:
+                old_storage.DeleteEntity(old_schema)
+        return old_storage
+    except Exception as ex:
+        logger.error("Could not update view reference settings: {}".format(ex))
+        return None
+
+
+def _formula_storage(doc):
+    """The settings element, migrating the previous schema when that is all the model has."""
+    schema = ViewReferenceSettingsSchema.schema
+    storage = _storage_with_schema(doc, schema)
+    if storage is not None:
+        return storage
+    old_storage = _storage_with_guid(doc, PREVIOUS_SETTINGS_GUID)
+    if old_storage is None:
+        return None
+    return _migrate_settings_storage(doc, old_storage)
+
+
+def _load_formula(doc, field_name, normalize, default_formula):
     storage = _formula_storage(doc)
     if storage is None:
-        return normalize_sheet_number_formula(DEFAULT_SHEET_FORMULA)
-    try:
-        raw = ViewReferenceSettingsSchema(storage, update=False).get("sheet_number_formula")
-    except Exception as ex:
-        logger.debug("Could not read the sheet number formula: {}".format(ex))
-        return normalize_sheet_number_formula(DEFAULT_SHEET_FORMULA)
+        return normalize(default_formula)
+    raw = _read_schema_string(storage, field_name)
     if not raw:
-        return normalize_sheet_number_formula(DEFAULT_SHEET_FORMULA)
+        return normalize(default_formula)
     try:
-        return normalize_sheet_number_formula(json.loads(raw))
+        return normalize(json.loads(raw))
     except Exception as ex:
-        logger.debug("Sheet number formula is not readable: {}".format(ex))
-        return normalize_sheet_number_formula(DEFAULT_SHEET_FORMULA)
+        logger.debug("Formula '{}' is not readable: {}".format(field_name, ex))
+        return normalize(default_formula)
 
 
-def save_sheet_number_formula(doc, formula):
-    """Store the formula in the model. No transaction is started when it is unchanged.
-
-    Returns True when the model now holds this formula.
-    """
-    formula = normalize_sheet_number_formula(formula)
+def _save_formula(doc, field_name, formula, normalize, transaction_name):
+    """Store one formula. No transaction is started when it is unchanged."""
+    formula = normalize(formula)
     raw = json.dumps(formula, ensure_ascii=True, sort_keys=True)
     storage = _formula_storage(doc)
-    if storage is not None:
-        try:
-            current = ViewReferenceSettingsSchema(storage, update=False).get("sheet_number_formula")
-        except Exception:
-            current = None
-        if current == raw:
-            return True
+    if storage is not None and _read_schema_string(storage, field_name) == raw:
+        return True
     try:
-        with revit.Transaction("Save sheet number formula", doc):
+        with revit.Transaction(transaction_name, doc):
             if storage is None:
                 storage = DataStorage.Create(doc)
             entity = ViewReferenceSettingsSchema(storage, update=False)
-            entity.set("sheet_number_formula", raw)
+            entity.set(field_name, raw)
             storage.SetEntity(entity.unwrap())
         return True
     except Exception as ex:
-        logger.error("Could not save the sheet number formula: {}".format(ex))
+        logger.error("Could not save {}: {}".format(field_name, ex))
         return False
+
+
+def load_sheet_number_formula(doc):
+    """The formula saved in this model, or the sheet number on its own."""
+    return _load_formula(
+        doc, "sheet_number_formula", normalize_sheet_number_formula, DEFAULT_SHEET_FORMULA)
+
+
+def save_sheet_number_formula(doc, formula):
+    """Store the sheet number formula. Returns True when the model holds it."""
+    return _save_formula(
+        doc, "sheet_number_formula", formula,
+        normalize_sheet_number_formula, "Save sheet number formula")
+
+
+def load_view_name_formula(doc):
+    """The formula saved in this model, or the view's own name."""
+    return _load_formula(
+        doc, "view_name_formula", normalize_view_name_formula, DEFAULT_VIEW_FORMULA)
+
+
+def save_view_name_formula(doc, formula):
+    """Store the view name formula. Returns True when the model holds it."""
+    return _save_formula(
+        doc, "view_name_formula", formula,
+        normalize_view_name_formula, "Save view name formula")
 
 
 def get_view_area(view):
@@ -647,18 +716,18 @@ def _set_parameter(instance, name, value):
     param.Set(value)
 
 
-def _apply_frame(instance, frame, view, sheet, doc, formula):
+def _apply_frame(instance, frame, view, sheet, doc, formula, view_formula):
     _set_parameter(instance, PARAM_WIDTH, frame.width)
     _set_parameter(instance, PARAM_HEIGHT, frame.height)
     _set_parameter(instance, PARAM_DEPTH, frame.thickness())
 
     sheet_number = compose_sheet_number(doc, sheet, formula)
-    label = view.Name
+    label = compose_view_name(doc, view, sheet, view_formula)
     if instance.LookupParameter(PARAM_SHEET) is not None:
         _set_parameter(instance, PARAM_SHEET, sheet_number or NO_SHEET_TEXT)
     elif sheet_number:
         # A line break in the value gives a two-line model text
-        label = "{}\r\n{}".format(view.Name, sheet_number)
+        label = "{}\r\n{}".format(label, sheet_number)
     _set_parameter(instance, PARAM_NAME, label)
     _set_ifc_export(instance)
 
@@ -677,14 +746,14 @@ def _place(doc, symbol, frame, view):
 
 
 def sync_view_references(doc, views, symbol, show_depth=False, manual_depth=None,
-                         sheet_formula=None):
+                         sheet_formula=None, view_formula=None):
     """Create or update one reference per view. Call inside an open transaction.
 
     With show_depth the reference becomes a box from the cut plane to the
     view's far limit; otherwise it is a thin plate on the cut plane.
     manual_depth (feet) draws every reference that deep instead, whatever the
     view's own depth is.
-    sheet_formula overrides the formula stored in the model for this run.
+    sheet_formula and view_formula override the formulas stored in the model.
 
     An instance that already sits on the right plane only gets its parameters
     refreshed; one that does not is replaced, because a work plane based
@@ -695,6 +764,10 @@ def sync_view_references(doc, views, symbol, show_depth=False, manual_depth=None
         sheet_formula = load_sheet_number_formula(doc)
     else:
         sheet_formula = normalize_sheet_number_formula(sheet_formula)
+    if view_formula is None:
+        view_formula = load_view_name_formula(doc)
+    else:
+        view_formula = normalize_view_name_formula(view_formula)
     if not symbol.IsActive:
         symbol.Activate()
         doc.Regenerate()
@@ -721,11 +794,11 @@ def sync_view_references(doc, views, symbol, show_depth=False, manual_depth=None
                     doc.Delete(instance.Id)
 
             if keep is not None:
-                _apply_frame(keep, frame, view, sheet, doc, sheet_formula)
+                _apply_frame(keep, frame, view, sheet, doc, sheet_formula, view_formula)
                 result.updated.append(keep.Id)
             else:
                 instance = _place(doc, symbol, frame, view)
-                _apply_frame(instance, frame, view, sheet, doc, sheet_formula)
+                _apply_frame(instance, frame, view, sheet, doc, sheet_formula, view_formula)
                 if instances:
                     result.updated.append(instance.Id)
                 else:

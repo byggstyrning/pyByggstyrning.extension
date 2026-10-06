@@ -7,8 +7,10 @@ from .core import (
     set_selection_mmi_value,
     get_or_create_mmi_storage,
     load_monitor_config,
+    load_monitor_limits,
     save_mmi_parameter,
-    save_monitor_config
+    save_monitor_config,
+    save_monitor_limits,
 )
 
 from .utils import (
@@ -41,6 +43,8 @@ __all__ = [
     'save_mmi_parameter',
     'save_monitor_config',
     'load_monitor_config',
+    'load_monitor_limits',
+    'save_monitor_limits',
     # Utility functions
     'find_mmi_parameters',
     'validate_mmi_value',
