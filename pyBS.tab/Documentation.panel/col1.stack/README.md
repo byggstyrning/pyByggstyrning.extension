@@ -76,12 +76,13 @@ selects it.
   otherwise the first type of the family.
 * The sheet number row of the window builds the text written to `Sheet Number`, left to
   right. Press + to add a part. Each part is the sheet's own number, another parameter of
-  that sheet, or a project information parameter. `between` is the text placed between the
-  parts; leave it empty to join them directly. A new part is inserted in front of the sheet
-  number, so a project parameter prefixes it. The formula is saved in the model. Views that
-  are not on a sheet, and empty results, show `-`. With a family that has no `Sheet Number`
-  parameter it becomes a second line of the `View Name` text instead. Run the tool again after
-  placing views on sheets, renumbering sheets, or changing the formula.
+  that sheet, or a project information parameter. The box between two parts is the text
+  placed there; leave it empty to join them directly. Hover a part and click the × on its
+  top right corner to remove it. A new part is inserted in front of the sheet number, so a
+  project parameter prefixes it. The formula is saved in the model. Views that are not on a
+  sheet, and empty results, show `-`. With a family that has no `Sheet Number` parameter it
+  becomes a second line of the `View Name` text instead. Run the tool again after placing
+  views on sheets, renumbering sheets, or changing the formula.
 * The family's "View Name" text faces the viewer's side of the cut plane.
 * Each instance is exported to IFC as `IfcVirtualElement`. That is set on the
   instance (Export to IFC = Yes, Export to IFC As = IfcVirtualElement), including

@@ -50,25 +50,10 @@
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
-                <Grid Grid.Row="0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <ScrollViewer Grid.Column="0" Height="36" VerticalAlignment="Center"
-                                  HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
-                        <StackPanel x:Name="sheetFormulaPanel" Orientation="Horizontal"/>
-                    </ScrollViewer>
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                        <TextBlock Text="between" VerticalAlignment="Center" Margin="8,0,6,0"
-                                   Style="{DynamicResource BodyTextBlockStyle}"
-                                   ToolTip="Text placed between the values. Leave empty to join them directly."/>
-                        <TextBox x:Name="sheetSeparatorTextBox" Width="56" Height="30"
-                                 Style="{DynamicResource PlaceholderTextBoxStyle}"
-                                 ToolTip="Text placed between the values, for example a dash. Leave empty to join them directly."
-                                 LostFocus="SheetSeparator_LostFocus"/>
-                    </StackPanel>
-                </Grid>
+                <ScrollViewer Grid.Row="0" Height="32" VerticalAlignment="Center"
+                              HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="sheetFormulaPanel" Orientation="Horizontal"/>
+                </ScrollViewer>
                 <TextBlock x:Name="sheetFormulaExample" Grid.Row="1" Margin="0,4,0,0"
                            Style="{DynamicResource BodyTextBlockStyle}"
                            Text="Sheet parameters and project information, left to right."/>

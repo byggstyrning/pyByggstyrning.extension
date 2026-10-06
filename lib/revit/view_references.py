@@ -25,8 +25,9 @@ it becomes a second line of the "View Name" text.
 
 What is written there is a formula stored in the model, like the MMI parameter.
 It is read left to right. Each part is the sheet's own number, another
-parameter of that sheet, or a project information parameter. Empty parts are
-skipped. The default is the sheet number alone.
+parameter of that sheet, or a project information parameter, and the text
+between two parts is set on that gap. Empty parts are skipped. The default
+is the sheet number alone.
 
 Every instance, including ones placed by hand, is set to export to IFC as
 IfcVirtualElement. Those are the instance parameters, not the type ones.
@@ -110,7 +111,6 @@ SOURCE_PROJECT = "project"
 SHEET_NUMBER_LABEL = "Sheet number"
 
 DEFAULT_SHEET_FORMULA = {
-    "separator": "",
     "parts": [{"source": SOURCE_SHEET_NUMBER}],
 }
 
@@ -122,7 +122,7 @@ class ViewReferenceSettingsSchema(BaseSchema):
 
     @simple_field(value_type="string")
     def sheet_number_formula():
-        """JSON object: separator, and parts in left-to-right order."""
+        """JSON object: parts in left-to-right order, with the text between them."""
         return None
 
 
@@ -284,25 +284,50 @@ def _as_text(value):
         return u"{}".format(value)
 
 
+def _formula_part(part):
+    """One formula part, or None. Keeps a per-gap separator when the part has one."""
+    if not isinstance(part, dict):
+        return None
+    source = _as_text(part.get("source"))
+    if source == SOURCE_SHEET_NUMBER:
+        item = {"source": SOURCE_SHEET_NUMBER}
+    elif source in (SOURCE_SHEET, SOURCE_PROJECT) and part.get("name"):
+        item = {"source": source, "name": _as_text(part.get("name"))}
+    else:
+        return None
+    if "separator" in part:
+        item["separator"] = _as_text(part.get("separator"))
+    return item
+
+
 def normalize_sheet_number_formula(formula):
-    """A separator plus parts. An empty or broken formula is just the sheet number."""
-    separator = u""
+    """Parts in order. The text between two parts is stored on the part before the gap.
+
+    An older formula had one separator for every gap. That value is copied onto
+    each gap. An empty or broken formula is just the sheet number.
+    """
     parts = []
+    shared = None
+    own = False
     if isinstance(formula, dict):
-        raw_separator = formula.get("separator")
-        if raw_separator:
-            separator = _as_text(raw_separator)
+        if formula.get("separator"):
+            shared = _as_text(formula.get("separator"))
         for part in formula.get("parts") or []:
-            if not isinstance(part, dict):
+            item = _formula_part(part)
+            if item is None:
                 continue
-            source = _as_text(part.get("source"))
-            if source == SOURCE_SHEET_NUMBER:
-                parts.append({"source": SOURCE_SHEET_NUMBER})
-            elif source in (SOURCE_SHEET, SOURCE_PROJECT) and part.get("name"):
-                parts.append({"source": source, "name": _as_text(part.get("name"))})
+            if "separator" in item:
+                own = True
+            parts.append(item)
     if not parts:
-        parts = [{"source": SOURCE_SHEET_NUMBER}]
-    return {"separator": separator, "parts": parts}
+        return {"parts": [{"source": SOURCE_SHEET_NUMBER}]}
+    if not own and shared:
+        for part in parts[:-1]:
+            part["separator"] = shared
+    for part in parts[:-1]:
+        part["separator"] = _as_text(part.get("separator"))
+    parts[-1].pop("separator", None)
+    return {"parts": parts}
 
 
 def sheet_number_part_label(part):
@@ -358,8 +383,14 @@ def compose_sheet_number(doc, sheet, formula):
             text = u""
         text = _as_text(text).strip()
         if text:
-            values.append(text)
-    return formula["separator"].join(values)
+            values.append((text, _as_text(part.get("separator"))))
+    if not values:
+        return u""
+    written = [values[0][0]]
+    for index in range(len(values) - 1):
+        written.append(values[index][1])
+        written.append(values[index + 1][0])
+    return u"".join(written)
 
 
 def _formula_storage(doc):
