@@ -59,16 +59,29 @@ sys.path.append(op.dirname(op.dirname(panel_dir)))
 logger = script.get_logger()
 
 # Import MMI libraries
-from mmi.config import CONFIG_SECTION, CONFIG_KEY_ACTIVE, MMI_THRESHOLD
-from mmi.config import is_monitor_active, set_monitor_active
+from mmi.config import CONFIG_SECTION, CONFIG_KEY_ACTIVE
+from mmi.config import (
+    is_monitor_active,
+    set_monitor_active,
+    DEFAULT_PIN_MMI_LIMIT,
+    DEFAULT_MOVE_MMI_LIMIT,
+    DEFAULT_TYPE_INSTANCE_LIMIT,
+    DEFAULT_INSTANCE_PARAM_LIMIT,
+)
 from mmi.core import get_mmi_parameter_name, load_monitor_config, get_default_mmi
+from mmi.threshold import (
+    at_or_above,
+    should_warn_on_count,
+    include_in_instance_param_count,
+    normalize_limit,
+)
 from mmi.utils import (
     get_element_location,
     get_element_mmi_value,
     validate_mmi_value,
     is_mmi_value_blank_for_default,
 )
-from revit.compat import get_element_id_value
+from revit.compat import get_element_id_value, make_element_id
 
 # Import MMI Schema
 try:
@@ -81,7 +94,7 @@ class MMIEventHandler(IExternalEventHandler):
     def __init__(self):
         self.elements_to_pin = []
         self.notify_message = None
-        self.mmi_threshold = MMI_THRESHOLD
+        self.mmi_threshold = DEFAULT_PIN_MMI_LIMIT
         self.elements_to_validate = []
         self.validate_corrections = {}
         
@@ -198,7 +211,7 @@ class MMIEventHandler(IExternalEventHandler):
                     forms.show_balloon(
                         header="MMI Monitor",
                         text=message,
-                        tooltip="Elements with MMI value > {} were automatically pinned".format(self.mmi_threshold),
+                        tooltip="Elements with MMI value >= {} were automatically pinned".format(self.mmi_threshold),
                         is_new=True
                     )
                 
@@ -218,7 +231,7 @@ class MMIEventHandler(IExternalEventHandler):
         self.mmi_threshold = threshold
         
         if notify:
-            self.notify_message = "Pinned {} elements with MMI value > {}"
+            self.notify_message = "Pinned {} elements with MMI value >= {}"
         else:
             self.notify_message = None
             
@@ -237,6 +250,15 @@ element_location_cache = {}  # Cache to store element locations for move detecti
 element_mmi_cache = {}  # Cache to store element MMI values to detect changes
 # Integer ElementId values: snapshot at monitor ON; ids not in this set are new post-activation
 baseline_element_ids_for_default = set()
+element_type_cache = {}  # element id int -> type id int
+type_warn_last = {}  # type id int -> datetime of last type-change balloon
+instance_param_warn_last = None
+TYPE_WARN_DEBOUNCE_SECONDS = 5
+INSTANCE_PARAM_WARN_DEBOUNCE_SECONDS = 5
+OWN_MONITOR_TRANSACTIONS = set([
+    "Correct MMI Values",
+    "Pin High MMI Elements",
+])
 
 
 def update_element_location_cache(element_id, location):
@@ -257,16 +279,22 @@ def clean_element_location_cache():
         if (now - data["timestamp"]).total_seconds() < 300
     }
 
-def populate_initial_location_cache(doc):
-    """Populate the location cache with all high MMI elements on monitor activation.
-    This ensures we can detect movement even on the first move."""
+def populate_initial_location_cache(doc, min_mmi=None, cache_all=False):
+    """Populate the location cache on monitor activation.
+
+    min_mmi caches elements at or above that MMI value.
+    cache_all caches every model element that has a location, so instance-parameter
+    edits can be told apart from moves.
+    """
     global element_location_cache
     try:
-        mmi_param_name = get_mmi_parameter_name(doc)
-        if not mmi_param_name:
-            return
+        mmi_param_name = None
+        if not cache_all:
+            mmi_param_name = get_mmi_parameter_name(doc)
+            if not mmi_param_name:
+                return
         
-        logger.debug("Populating initial location cache for high MMI elements...")
+        logger.debug("Populating initial location cache...")
         
         # Get all elements in the model
         all_elements = FilteredElementCollector(doc).WhereElementIsNotElementType().ToElements()
@@ -276,21 +304,51 @@ def populate_initial_location_cache(doc):
             # Skip elements that can't be pinned
             if not hasattr(element, "Pinned"):
                 continue
+            if cache_all:
+                if not element.Category or element.Category.CategoryType != CategoryType.Model:
+                    continue
+                current_location = get_element_location(element)
+                if current_location:
+                    update_element_location_cache(element.Id, current_location)
+                    cache_count += 1
+                continue
             
             # Get the MMI value for the element
             mmi_value, value_str, param = get_element_mmi_value(element, mmi_param_name, doc)
             
-            # Only cache high MMI elements
-            if mmi_value is not None and mmi_value > MMI_THRESHOLD:
+            # Only cache elements at or above the move limit
+            if mmi_value is not None and at_or_above(mmi_value, min_mmi):
                 current_location = get_element_location(element)
                 if current_location:
                     update_element_location_cache(element.Id, current_location)
                     cache_count += 1
         
-        logger.debug("Cached locations for {} high MMI elements".format(cache_count))
+        logger.debug("Cached locations for {} elements".format(cache_count))
         
     except Exception as ex:
         logger.error("Error populating initial location cache: {}".format(ex))
+
+
+def populate_type_id_cache(doc):
+    """Snapshot element id -> type id so later type-selector changes can be seen."""
+    global element_type_cache
+    try:
+        element_type_cache = {}
+        cache_count = 0
+        for element in FilteredElementCollector(doc).WhereElementIsNotElementType().ToElements():
+            if not element.Category or element.Category.CategoryType != CategoryType.Model:
+                continue
+            try:
+                type_id = element.GetTypeId()
+            except Exception:
+                continue
+            if type_id is None or type_id == ElementId.InvalidElementId:
+                continue
+            element_type_cache[get_element_id_value(element.Id)] = get_element_id_value(type_id)
+            cache_count += 1
+        logger.debug("Cached type ids for {} elements".format(cache_count))
+    except Exception as ex:
+        logger.error("Error populating type id cache: {}".format(ex))
 
 def populate_initial_mmi_cache(doc):
     """Populate the MMI cache with all elements on monitor activation.
@@ -344,7 +402,7 @@ def populate_baseline_element_ids_for_default(doc):
         logger.error("Error populating baseline for default MMI: {}".format(ex))
 
 
-def pin_all_high_mmi_elements(doc):
+def pin_all_high_mmi_elements(doc, pin_limit):
     """Proactively pin all high MMI elements when monitor activates.
     This prevents movement before it happens."""
     try:
@@ -371,7 +429,7 @@ def pin_all_high_mmi_elements(doc):
             mmi_value, value_str, param = get_element_mmi_value(element, mmi_param_name, doc)
             
             # Only pin high MMI elements
-            if mmi_value is not None and mmi_value >= MMI_THRESHOLD:
+            if mmi_value is not None and at_or_above(mmi_value, pin_limit):
                 elements_to_pin.append(element)
         
         if not elements_to_pin:
@@ -399,6 +457,240 @@ def pin_all_high_mmi_elements(doc):
         logger.error("Error in proactive pinning: {}".format(ex))
         return 0
 
+def _transaction_names(args):
+    try:
+        names = args.GetTransactionNames()
+    except Exception:
+        return []
+    if not names:
+        return []
+    result = []
+    for name in names:
+        result.append(str(name))
+    return result
+
+
+def _is_own_monitor_transaction(args):
+    for name in _transaction_names(args):
+        if name in OWN_MONITOR_TRANSACTIONS:
+            return True
+    return False
+
+
+def _recently_warned(stamp_map, key, now, seconds):
+    previous = stamp_map.get(key)
+    if previous is None:
+        return False
+    try:
+        return (now - previous).total_seconds() < seconds
+    except Exception:
+        return False
+
+
+def _element_type_name(element):
+    try:
+        name = element.Name
+        if name:
+            return name
+    except Exception:
+        pass
+    try:
+        return str(get_element_id_value(element.Id))
+    except Exception:
+        return "Type"
+
+
+def count_type_instances(doc, type_id):
+    """Count non-type elements whose type id matches type_id."""
+    try:
+        type_elem = doc.GetElement(type_id)
+        if type_elem is None:
+            return 0
+        dependents = type_elem.GetDependentElements(None)
+    except Exception as ex:
+        logger.debug("Could not count instances: {}".format(ex))
+        return 0
+    target = get_element_id_value(type_id)
+    count = 0
+    for dep_id in dependents:
+        element = doc.GetElement(dep_id)
+        if element is None or isinstance(element, ElementType):
+            continue
+        try:
+            element_type_id = element.GetTypeId()
+        except Exception:
+            continue
+        if element_type_id is None or element_type_id == ElementId.InvalidElementId:
+            continue
+        if get_element_id_value(element_type_id) == target:
+            count += 1
+    return count
+
+
+def _queue_type_warning(doc, type_id, type_limit, changed_types, now):
+    """Record a type once when its instance count is over the limit."""
+    if type_id is None or type_id == ElementId.InvalidElementId:
+        return
+    type_int = get_element_id_value(type_id)
+    if type_int in changed_types:
+        return
+    if _recently_warned(type_warn_last, type_int, now, TYPE_WARN_DEBOUNCE_SECONDS):
+        return
+    count = count_type_instances(doc, type_id)
+    if not should_warn_on_count(True, count, type_limit):
+        return
+    type_elem = doc.GetElement(type_id)
+    name = _element_type_name(type_elem) if type_elem is not None else str(type_int)
+    changed_types[type_int] = {"name": name, "count": count}
+
+
+def _show_type_change_warning(changed_types, type_limit, now):
+    if not changed_types:
+        return
+    items = list(changed_types.values())
+    items.sort(key=lambda item: item["count"], reverse=True)
+    top = items[:5]
+    details = []
+    for item in top:
+        details.append("{} ({} instances)".format(item["name"], item["count"]))
+    tooltip = "Types over the instance limit:\n" + "\n".join(details)
+    extra = len(items) - len(top)
+    if extra > 0:
+        tooltip += "\n... and {} more".format(extra)
+    if len(items) == 1:
+        text = "Type '{}' changed ({} instances, limit {})".format(
+            items[0]["name"], items[0]["count"], type_limit)
+    else:
+        text = "{} types changed with more than {} instances".format(len(items), type_limit)
+    forms.show_balloon(
+        header="Type Change",
+        text=text,
+        tooltip=tooltip,
+        is_new=True,
+    )
+    for type_int in changed_types:
+        type_warn_last[type_int] = now
+
+
+def _show_instance_param_warning(edited_ids, param_limit, now):
+    global instance_param_warn_last
+    count = len(edited_ids)
+    if not should_warn_on_count(True, count, param_limit):
+        return
+    if instance_param_warn_last is not None:
+        try:
+            elapsed = (now - instance_param_warn_last).total_seconds()
+            if elapsed < INSTANCE_PARAM_WARN_DEBOUNCE_SECONDS:
+                return
+        except Exception:
+            pass
+    details = []
+    for element_id in edited_ids[:5]:
+        details.append("Element ID: {}".format(get_element_id_value(element_id)))
+    tooltip = "Instance parameters edited on {} elements (limit {}).".format(count, param_limit)
+    if details:
+        tooltip += "\n" + "\n".join(details)
+    extra = count - len(details)
+    if extra > 0:
+        tooltip += "\n... and {} more".format(extra)
+    forms.show_balloon(
+        header="Instance Parameter Edit",
+        text="{} elements had instance parameters edited (limit {})".format(count, param_limit),
+        tooltip=tooltip,
+        is_new=True,
+    )
+    instance_param_warn_last = now
+
+
+def warn_on_heavy_edits(doc, args, modified_element_ids, monitor_settings):
+    """Balloon when a heavy type change or instance-parameter edit happens."""
+    global element_type_cache
+    type_enabled = bool(monitor_settings.get("warn_on_type_change", False))
+    param_enabled = bool(monitor_settings.get("warn_on_instance_params", False))
+    if not type_enabled and not param_enabled:
+        return
+    if _is_own_monitor_transaction(args):
+        logger.debug("Skipping heavy-edit warnings for a monitor transaction")
+        return
+
+    type_limit = normalize_limit(
+        monitor_settings.get("type_instance_limit"), DEFAULT_TYPE_INSTANCE_LIMIT)
+    param_limit = normalize_limit(
+        monitor_settings.get("instance_param_limit"), DEFAULT_INSTANCE_PARAM_LIMIT)
+    now = datetime.datetime.now()
+
+    modified_types = []
+    instances = []
+    for element_id in modified_element_ids:
+        element = doc.GetElement(element_id)
+        if element is None:
+            continue
+        if isinstance(element, ElementType):
+            modified_types.append(element)
+        else:
+            instances.append(element)
+
+    modified_type_ids = set()
+    changed_types = {}
+    for element in modified_types:
+        type_int = get_element_id_value(element.Id)
+        modified_type_ids.add(type_int)
+        if type_enabled:
+            _queue_type_warning(doc, element.Id, type_limit, changed_types, now)
+
+    edited_ids = []
+    for element in instances:
+        if not element.Category or element.Category.CategoryType != CategoryType.Model:
+            continue
+        try:
+            current_type_id = element.GetTypeId()
+        except Exception:
+            continue
+        if current_type_id is None or current_type_id == ElementId.InvalidElementId:
+            continue
+        cache_key = get_element_id_value(element.Id)
+        current_type_int = get_element_id_value(current_type_id)
+        type_known = cache_key in element_type_cache
+        type_changed = type_known and element_type_cache.get(cache_key) != current_type_int
+        current_location = get_element_location(element)
+        location_changed = False
+        if current_location is not None and cache_key in element_location_cache:
+            prev_location = element_location_cache[cache_key]["location"]
+            try:
+                location_changed = current_location.DistanceTo(prev_location) > 0.1
+            except Exception:
+                location_changed = False
+        regenerated = current_type_int in modified_type_ids
+        if type_enabled and type_changed:
+            previous_type_int = element_type_cache.get(cache_key)
+            _queue_type_warning(doc, current_type_id, type_limit, changed_types, now)
+            if previous_type_int is not None:
+                _queue_type_warning(
+                    doc, make_element_id(previous_type_int), type_limit, changed_types, now)
+        if param_enabled and type_known and include_in_instance_param_count(
+                type_changed, location_changed, regenerated):
+            # No stored location means this element cannot be a move we missed.
+            if current_location is None or cache_key in element_location_cache:
+                edited_ids.append(element.Id)
+        element_type_cache[cache_key] = current_type_int
+
+    if type_enabled:
+        _show_type_change_warning(changed_types, type_limit, now)
+    if param_enabled:
+        _show_instance_param_warning(edited_ids, param_limit, now)
+
+
+def _refresh_tracked_locations(doc, modified_element_ids):
+    """Store current locations after this change so the next event can see moves."""
+    for element_id in modified_element_ids:
+        element = doc.GetElement(element_id)
+        if element is None or isinstance(element, ElementType):
+            continue
+        current_location = get_element_location(element)
+        if current_location is not None:
+            update_element_location_cache(element.Id, current_location)
+
+
 def document_changed_handler(sender, args):
     """Handler for document changed event."""
     try:
@@ -414,15 +706,20 @@ def document_changed_handler(sender, args):
         
         if mod_count == 0 and add_count == 0:
             return
+
+        monitor_settings = load_monitor_config(doc, use_display_names=False)
+        if mod_count > 0:
+            warn_on_heavy_edits(doc, args, modified_element_ids, monitor_settings)
         
         # Get MMI parameter name
         mmi_param_name = get_mmi_parameter_name(doc)
         if not mmi_param_name:
             logger.warning("No MMI parameter name configured. Use MMI Config tool first.")
+            if monitor_settings.get("warn_on_instance_params", False) and mod_count > 0:
+                _refresh_tracked_locations(doc, modified_element_ids)
             return
         
         default_mmi = get_default_mmi(doc)
-        monitor_settings = load_monitor_config(doc, use_display_names=False)
         
         validate_enabled = monitor_settings["validate_mmi"]
         warn_on_move_enabled = monitor_settings["warn_on_move"]
@@ -434,7 +731,14 @@ def document_changed_handler(sender, args):
         
         if not has_modified_features and not has_default_on_new:
             logger.debug("No MMI monitor features enabled and no default on new instances. Skipping.")
+            if monitor_settings.get("warn_on_instance_params", False) and mod_count > 0:
+                _refresh_tracked_locations(doc, modified_element_ids)
             return
+
+        pin_limit = normalize_limit(
+            monitor_settings.get("pin_mmi_limit"), DEFAULT_PIN_MMI_LIMIT)
+        move_limit = normalize_limit(
+            monitor_settings.get("move_mmi_limit"), DEFAULT_MOVE_MMI_LIMIT)
         
         global baseline_element_ids_for_default
         elements_to_validate = []
@@ -523,7 +827,7 @@ def document_changed_handler(sender, args):
                             logger.debug("Element {} needs MMI value correction: '{}' to '{}'".format(
                                 element_id, orig_value, fixed_value))
                     
-                    if warn_on_move_enabled and mmi_value > MMI_THRESHOLD:
+                    if warn_on_move_enabled and at_or_above(mmi_value, move_limit):
                         current_location = get_element_location(element)
                         if current_location:
                             cache_key = get_element_id_value(element_id)
@@ -540,7 +844,7 @@ def document_changed_handler(sender, args):
                                         element_id, distance))
                             update_element_location_cache(element_id, current_location)
                     
-                    if pin_elements_enabled and mmi_value >= MMI_THRESHOLD:
+                    if pin_elements_enabled and at_or_above(mmi_value, pin_limit):
                         element_id_int = get_element_id_value(element_id)
                         prev_mmi = element_mmi_cache.get(element_id_int)
                         
@@ -551,7 +855,7 @@ def document_changed_handler(sender, args):
                                 should_pin = True
                                 logger.debug("Element {} newly detected with MMI {} - queuing for pin".format(
                                     element_id, mmi_value))
-                            elif prev_mmi < MMI_THRESHOLD and mmi_value >= MMI_THRESHOLD:
+                            elif (not at_or_above(prev_mmi, pin_limit)) and at_or_above(mmi_value, pin_limit):
                                 should_pin = True
                                 logger.debug("Element {} MMI changed from {} to {} - queuing for pin".format(
                                     element_id, prev_mmi, mmi_value))
@@ -587,7 +891,7 @@ def document_changed_handler(sender, args):
             
             forms.show_balloon(
                 header="High MMI Element Move",
-                text="{} elements with MMI >= 425 were moved".format(count),
+                text="{} elements with MMI >= {} were moved".format(count, move_limit),
                 tooltip=tooltip,
                 is_new=True
             )
@@ -598,13 +902,16 @@ def document_changed_handler(sender, args):
             # If already doing validation, avoid raising another external event immediately
             # The pin operation will be scheduled after validation completes
             if not elements_to_validate:
-                mmi_event_handler.pin_elements_deferred(elements_to_pin, MMI_THRESHOLD)
+                mmi_event_handler.pin_elements_deferred(elements_to_pin, pin_limit)
                 external_event.Raise()
                 logger.debug("Queued {} elements for pinning using external event".format(len(elements_to_pin)))
             else:
                 # Store the pinning request - it will be processed after validation
-                mmi_event_handler.pin_elements_deferred(elements_to_pin, MMI_THRESHOLD)
+                mmi_event_handler.pin_elements_deferred(elements_to_pin, pin_limit)
                 logger.debug("Pinning of {} elements will occur after validation".format(len(elements_to_pin)))
+
+        if monitor_settings.get("warn_on_instance_params", False) and mod_count > 0:
+            _refresh_tracked_locations(doc, modified_element_ids)
     
     except Exception as ex:
         logger.error("Error in document changed handler: {}".format(ex))
@@ -791,9 +1098,25 @@ if __name__ == '__main__':
             monitor_settings = load_monitor_config(revit.doc, use_display_names=False)
             mmi_param_name = get_mmi_parameter_name(revit.doc) or "Not set"
             
-            # Populate initial location cache if warn_on_move is enabled
-            if monitor_settings["warn_on_move"]:
-                populate_initial_location_cache(revit.doc)
+            pin_limit = normalize_limit(
+                monitor_settings.get("pin_mmi_limit"), DEFAULT_PIN_MMI_LIMIT)
+            move_limit = normalize_limit(
+                monitor_settings.get("move_mmi_limit"), DEFAULT_MOVE_MMI_LIMIT)
+            type_limit = normalize_limit(
+                monitor_settings.get("type_instance_limit"), DEFAULT_TYPE_INSTANCE_LIMIT)
+            param_limit = normalize_limit(
+                monitor_settings.get("instance_param_limit"), DEFAULT_INSTANCE_PARAM_LIMIT)
+            
+            # Populate initial location cache if warn_on_move is enabled.
+            # Instance-parameter warnings need locations for every model element.
+            if monitor_settings.get("warn_on_instance_params", False):
+                populate_initial_location_cache(revit.doc, cache_all=True)
+            elif monitor_settings["warn_on_move"]:
+                populate_initial_location_cache(revit.doc, min_mmi=move_limit)
+
+            if (monitor_settings.get("warn_on_type_change", False)
+                    or monitor_settings.get("warn_on_instance_params", False)):
+                populate_type_id_cache(revit.doc)
             
             # Populate initial MMI cache if pin_elements is enabled (to detect changes)
             if monitor_settings["pin_elements"]:
@@ -805,17 +1128,23 @@ if __name__ == '__main__':
             # Proactively pin all high MMI elements if pin_elements is enabled
             pinned_count = 0
             if monitor_settings["pin_elements"]:
-                pinned_count = pin_all_high_mmi_elements(revit.doc)
+                pinned_count = pin_all_high_mmi_elements(revit.doc, pin_limit)
             
             # Create a readable list of enabled features
             enabled_features = []
             if monitor_settings["pin_elements"]:
-                pin_feature_text = "Pin elements >={}".format(MMI_THRESHOLD)
+                pin_feature_text = "Pin elements >={}".format(pin_limit)
                 if pinned_count > 0:
                     pin_feature_text += " ({} pinned)".format(pinned_count)
                 enabled_features.append(pin_feature_text)
             if monitor_settings["warn_on_move"]:
-                enabled_features.append("Warn when moving elements >{}".format(MMI_THRESHOLD))
+                enabled_features.append("Warn when moving elements >={}".format(move_limit))
+            if monitor_settings.get("warn_on_type_change", False):
+                enabled_features.append(
+                    "Warn on type changes over {} instances".format(type_limit))
+            if monitor_settings.get("warn_on_instance_params", False):
+                enabled_features.append(
+                    "Warn on instance parameter edits over {} elements".format(param_limit))
             if monitor_settings["validate_mmi"]:
                 enabled_features.append("Attempt to fix MMI values")
             if monitor_settings["check_mmi_after_sync"]:
@@ -859,8 +1188,11 @@ if __name__ == '__main__':
             # Clear caches
             element_location_cache = {}
             element_mmi_cache = {}
+            element_type_cache = {}
+            type_warn_last = {}
+            instance_param_warn_last = None
             baseline_element_ids_for_default = set()
-            logger.debug("Cleared element location, MMI, and baseline caches")
+            logger.debug("Cleared element location, MMI, type, and baseline caches")
             
             success = True
         else:

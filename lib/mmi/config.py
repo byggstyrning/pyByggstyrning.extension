@@ -10,7 +10,20 @@ logger = script.get_logger()
 # Constants
 CONFIG_SECTION = 'MMIMonitor'
 CONFIG_KEY_ACTIVE = 'isActive'
-MMI_THRESHOLD = 400
+
+# Per-warning defaults. MMI_THRESHOLD remains the fallback when a pin limit is missing.
+DEFAULT_PIN_MMI_LIMIT = 400
+DEFAULT_MOVE_MMI_LIMIT = 425
+DEFAULT_TYPE_INSTANCE_LIMIT = 375
+DEFAULT_INSTANCE_PARAM_LIMIT = 375
+MMI_THRESHOLD = DEFAULT_PIN_MMI_LIMIT
+
+MONITOR_LIMIT_DEFAULTS = {
+    "pin_mmi_limit": DEFAULT_PIN_MMI_LIMIT,
+    "move_mmi_limit": DEFAULT_MOVE_MMI_LIMIT,
+    "type_instance_limit": DEFAULT_TYPE_INSTANCE_LIMIT,
+    "instance_param_limit": DEFAULT_INSTANCE_PARAM_LIMIT,
+}
 
 # MMI values offered as defaults (e.g. Settings "Default on new instances" combo)
 STANDARD_MMI_VALUES = (
@@ -22,10 +35,12 @@ STANDARD_MMI_VALUES = (
 # Standard config keys mapping
 CONFIG_KEYS = {
     "✅ Attempt to fix MMI values": "validate_mmi",
-    "🔒 Pin elements >=400": "pin_elements",
-    "⚠️ Warn when moving elements >=425": "warn_on_move",
+    "🔒 Pin elements": "pin_elements",
+    "⚠️ Warn when moving elements": "warn_on_move",
     "🔄 Check MMI after sync": "check_mmi_after_sync",
     "🆕 Default on new instances": "default_on_new_instances",
+    "⚠️ Warn on type changes": "warn_on_type_change",
+    "✏️ Warn on instance parameter edits": "warn_on_instance_params",
 }
 
 def is_monitor_active():

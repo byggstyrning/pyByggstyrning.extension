@@ -9,7 +9,8 @@ import System
 
 # Import the MMI schema
 from mmi.schema import MMIParameterSchema
-from mmi.config import CONFIG_KEYS
+from mmi.config import CONFIG_KEYS, MONITOR_LIMIT_DEFAULTS
+from mmi.threshold import normalize_limit
 try:
     from revit.compat import get_element_id_value
 except ImportError:
@@ -20,6 +21,28 @@ except ImportError:
 
 # Initialize logger
 logger = script.get_logger()
+
+# Schemas that predate per-warning limits. Newest previous version first.
+PREVIOUS_SCHEMA_GUIDS = (
+    "8844cb2d-4234-4bf0-8361-b3da4d64234d",
+    "8844cb2d-4234-4bf0-8361-b3da4d64234c",
+)
+
+_LEGACY_STRING_FIELDS = (
+    "mmi_parameter_name",
+    "last_used_date",
+    "pm_id",
+    "default_mmi",
+)
+
+_LEGACY_BOOL_FIELDS = (
+    "is_validated",
+    "validate_mmi",
+    "pin_elements",
+    "warn_on_move",
+    "check_mmi_after_sync",
+    "default_on_new_instances",
+)
 
 # Categories that should not have MMI values set
 # Using integer values directly since some BuiltInCategory enum values may not exist
@@ -203,19 +226,18 @@ def get_or_create_mmi_storage(doc):
                 logger.debug("Error checking storage entity (ElementId: {}): {}".format(ds.Id if ds else 'None', str(e)))
                 continue
         
-        # Check for old schema version and migrate if found
-        old_schema_guid = System.Guid("8844cb2d-4234-4bf0-8361-b3da4d64234c")  # Previous version GUID
-        for ds in data_storage_elements:
-            try:
-                # Try to get entity with old schema GUID
-                old_schemas = ds.GetEntitySchemaGuids()
-                if old_schema_guid in old_schemas:
-                    logger.debug("Found old schema storage, migrating to new version (ElementId: {})".format(ds.Id))
-                    # Migrate the data
-                    return migrate_mmi_storage(doc, ds, schema)
-            except Exception as e:
-                logger.debug("Error checking for old schema (ElementId: {}): {}".format(ds.Id if ds else 'None', str(e)))
-                continue
+        # Check for old schema versions and migrate if found
+        for guid_text in PREVIOUS_SCHEMA_GUIDS:
+            old_schema_guid = System.Guid(guid_text)
+            for ds in data_storage_elements:
+                try:
+                    old_schemas = ds.GetEntitySchemaGuids()
+                    if old_schema_guid in old_schemas:
+                        logger.debug("Found old schema storage, migrating to new version (ElementId: {})".format(ds.Id))
+                        return migrate_mmi_storage(doc, ds, old_schema_guid)
+                except Exception as e:
+                    logger.debug("Error checking for old schema (ElementId: {}): {}".format(ds.Id if ds else 'None', str(e)))
+                    continue
         
         # If not found, create a new one and initialize it
         logger.debug("No existing MMI storage found. Creating and initializing new one...")
@@ -225,56 +247,67 @@ def get_or_create_mmi_storage(doc):
             initial_entity = MMIParameterSchema.entity # Creates a new Entity(schema)
             new_storage.SetEntity(initial_entity) 
             logger.debug("Created and initialized new MMI settings storage (ElementId: {})".format(new_storage.Id))
-            return new_storage
+        _seed_monitor_limit_defaults(new_storage)
+        return new_storage
             
     except Exception as e:
         logger.error("Error in get_or_create_mmi_storage: {}".format(str(e)))
         return None
 
-def migrate_mmi_storage(doc, old_storage, new_schema):
-    """Migrate old MMI storage to new schema version."""
+def _read_legacy_string(old_entity, name):
     try:
-        # Get the old schema GUID
-        old_schema_guid = System.Guid("8844cb2d-4234-4bf0-8361-b3da4d64234c")
-        
-        # Try to read old data
+        value = old_entity.Get[str](name)
+        if value is None:
+            return ""
+        return value
+    except Exception:
+        return ""
+
+
+def _read_legacy_bool(old_entity, name):
+    try:
+        return bool(old_entity.Get[bool](name))
+    except Exception:
+        return False
+
+
+def _extract_legacy_monitor_data(old_entity):
+    old_data = {}
+    for name in _LEGACY_STRING_FIELDS:
+        old_data[name] = _read_legacy_string(old_entity, name)
+    for name in _LEGACY_BOOL_FIELDS:
+        old_data[name] = _read_legacy_bool(old_entity, name)
+    return old_data
+
+
+def _apply_limit_defaults(entity):
+    """Write the per-warning limit defaults and leave the new toggles off."""
+    entity.set("schema_version", "1.4")
+    for key, default in MONITOR_LIMIT_DEFAULTS.items():
+        entity.set(key, int(default))
+    entity.set("warn_on_type_change", False)
+    entity.set("warn_on_instance_params", False)
+
+
+def _seed_monitor_limit_defaults(data_storage):
+    """Fill a newly created storage element with limit defaults."""
+    try:
+        with MMIParameterSchema(data_storage, update=True) as entity:
+            _apply_limit_defaults(entity)
+    except Exception as e:
+        logger.warning("Could not seed monitor limit defaults: {}".format(e))
+
+
+def migrate_mmi_storage(doc, old_storage, old_schema_guid):
+    """Migrate old MMI storage to the current schema version."""
+    try:
         old_data = {}
         try:
             old_schemas = old_storage.GetEntitySchemaGuids()
             if old_schema_guid in old_schemas:
                 old_entity = old_storage.GetEntity(old_schema_guid)
                 if old_entity.IsValid():
-                    # Extract old field values
-                    try:
-                        old_data["mmi_parameter_name"] = old_entity.Get[str]("mmi_parameter_name") or ""
-                    except:
-                        old_data["mmi_parameter_name"] = ""
-                    
-                    try:
-                        old_data["last_used_date"] = old_entity.Get[str]("last_used_date") or ""
-                    except:
-                        old_data["last_used_date"] = ""
-                        
-                    try:
-                        old_data["is_validated"] = old_entity.Get[bool]("is_validated")
-                    except:
-                        old_data["is_validated"] = False
-                        
-                    try:
-                        old_data["validate_mmi"] = old_entity.Get[bool]("validate_mmi")
-                    except:
-                        old_data["validate_mmi"] = False
-                        
-                    try:
-                        old_data["pin_elements"] = old_entity.Get[bool]("pin_elements")
-                    except:
-                        old_data["pin_elements"] = False
-                        
-                    try:
-                        old_data["warn_on_move"] = old_entity.Get[bool]("warn_on_move")
-                    except:
-                        old_data["warn_on_move"] = False
-                        
+                    old_data = _extract_legacy_monitor_data(old_entity)
                     logger.debug("Extracted old data: {}".format(old_data))
         except Exception as e:
             logger.warning("Could not extract old data, using defaults: {}".format(e))
@@ -289,17 +322,17 @@ def migrate_mmi_storage(doc, old_storage, new_schema):
             
             # Create entity with new schema and migrated data
             with MMIParameterSchema(new_storage, update=True) as entity:
-                # Set migrated values
                 entity.set("mmi_parameter_name", old_data.get("mmi_parameter_name", ""))
                 entity.set("last_used_date", old_data.get("last_used_date", ""))
+                entity.set("pm_id", old_data.get("pm_id", ""))
+                entity.set("default_mmi", old_data.get("default_mmi", ""))
                 entity.set("is_validated", old_data.get("is_validated", False))
                 entity.set("validate_mmi", old_data.get("validate_mmi", False))
                 entity.set("pin_elements", old_data.get("pin_elements", False))
                 entity.set("warn_on_move", old_data.get("warn_on_move", False))
-                # Set default for new field
-                entity.set("check_mmi_after_sync", False)
-                entity.set("default_mmi", "")
-                entity.set("default_on_new_instances", False)
+                entity.set("check_mmi_after_sync", old_data.get("check_mmi_after_sync", False))
+                entity.set("default_on_new_instances", old_data.get("default_on_new_instances", False))
+                _apply_limit_defaults(entity)
                 
             logger.debug("Successfully migrated MMI storage to new schema (ElementId: {})".format(new_storage.Id))
             return new_storage
@@ -401,6 +434,91 @@ def save_default_mmi(doc, value):
         return False
 
 
+def _default_limit_config():
+    limits = {}
+    for key, default in MONITOR_LIMIT_DEFAULTS.items():
+        limits[key] = int(default)
+    return limits
+
+
+def _read_stored_limit(schema, key, default):
+    if schema is None or not getattr(schema, "is_valid", False):
+        return int(default)
+    try:
+        raw = schema.get(key)
+    except Exception:
+        return int(default)
+    return normalize_limit(raw, default)
+
+
+def load_monitor_limits(doc):
+    """Read the four per-warning integer limits.
+
+    Returns:
+        dict: Schema key to integer limit. Missing or invalid values use defaults.
+    """
+    limits = _default_limit_config()
+    try:
+        data_storage = get_or_create_mmi_storage(doc)
+        if not data_storage:
+            return limits
+        schema = MMIParameterSchema(data_storage)
+        for key, default in MONITOR_LIMIT_DEFAULTS.items():
+            limits[key] = _read_stored_limit(schema, key, default)
+        return limits
+    except Exception as e:
+        logger.error("Failed to load MMI monitor limits: {}".format(str(e)))
+        return limits
+
+
+def save_monitor_limits(doc, limits):
+    """Persist per-warning integer limits. Invalid values are stored as defaults.
+
+    Returns:
+        bool: True on success.
+    """
+    try:
+        data_storage = get_or_create_mmi_storage(doc)
+        if not data_storage:
+            logger.error("Could not get or create MMI storage for monitor limits")
+            return False
+        incoming = limits or {}
+        normalized = {}
+        for key, default in MONITOR_LIMIT_DEFAULTS.items():
+            normalized[key] = normalize_limit(incoming.get(key), default)
+
+        schema = MMIParameterSchema(data_storage)
+        changes_made = False
+        for key, new_value in normalized.items():
+            current = _read_stored_limit(schema, key, MONITOR_LIMIT_DEFAULTS[key])
+            if current != new_value:
+                changes_made = True
+                break
+        if not changes_made:
+            return True
+
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with revit.Transaction("Save MMI monitor limits", doc):
+            with MMIParameterSchema(data_storage) as entity:
+                for key, new_value in normalized.items():
+                    entity.set(key, int(new_value))
+                entity.set("last_used_date", timestamp)
+        logger.debug("Saved MMI monitor limits: {}".format(normalized))
+        return True
+    except Exception as e:
+        logger.error("Failed to save MMI monitor limits: {}".format(str(e)))
+        return False
+
+
+def _empty_monitor_config(use_display_names):
+    if use_display_names:
+        config = {key: False for key in CONFIG_KEYS}
+    else:
+        config = {schema_key: False for _, schema_key in CONFIG_KEYS.items()}
+    config.update(_default_limit_config())
+    return config
+
+
 def save_monitor_config(doc, selected_config):
     """Save the MMI monitor configuration to extensible storage."""
     try:
@@ -470,16 +588,16 @@ def save_monitor_config(doc, selected_config):
         return False
 
 def load_monitor_config(doc, use_display_names=False):
-    """Load the MMI monitor configuration from extensible storage."""
+    """Load the MMI monitor configuration from extensible storage.
+
+    Boolean toggles are keyed by display name or schema key. The four integer
+    limits are always included under their schema keys.
+    """
     config = {}
     try:
         data_storage = get_or_create_mmi_storage(doc)
         if not data_storage:
-            # Return defaults with appropriate keys based on use_display_names
-            if use_display_names:
-                return {key: False for key in CONFIG_KEYS}
-            else:
-                return {schema_key: False for _, schema_key in CONFIG_KEYS.items()}
+            return _empty_monitor_config(use_display_names)
             
         schema = MMIParameterSchema(data_storage)
         if schema.is_valid:
@@ -497,19 +615,13 @@ def load_monitor_config(doc, use_display_names=False):
                 else:
                     config[schema_key] = value
                 logger.debug("Loaded config for '{}': {}".format(display_name, value))
+            for key, default in MONITOR_LIMIT_DEFAULTS.items():
+                config[key] = _read_stored_limit(schema, key, default)
             return config
         else:
-            # Return defaults with appropriate keys based on use_display_names
-            if use_display_names:
-                return {key: False for key in CONFIG_KEYS}
-            else:
-                return {schema_key: False for _, schema_key in CONFIG_KEYS.items()}
+            return _empty_monitor_config(use_display_names)
             
     except Exception as e:
         logger.error("Failed to load MMI monitor config: {}".format(str(e)))
-        # Return defaults with appropriate keys based on use_display_names
-        if use_display_names:
-            return {key: False for key in CONFIG_KEYS}
-        else:
-            return {schema_key: False for _, schema_key in CONFIG_KEYS.items()}
+        return _empty_monitor_config(use_display_names)
     

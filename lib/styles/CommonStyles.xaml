@@ -839,8 +839,11 @@
                                 BorderThickness="1"
                                 CornerRadius="4"
                                 Margin="0,2,0,0"
-                                MinWidth="{Binding ActualWidth, ElementName=ToggleButton}">
-                                <ScrollViewer Margin="2,4" SnapsToDevicePixels="True" Style="{DynamicResource CustomScrollViewerStyle}">
+                                MinWidth="{Binding ActualWidth, ElementName=ToggleButton}"
+                                MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                <ScrollViewer Margin="2,4" SnapsToDevicePixels="True"
+                                              VerticalScrollBarVisibility="Auto"
+                                              Style="{DynamicResource CustomScrollViewerStyle}">
                                     <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/>
                                 </ScrollViewer>
                             </Border>
@@ -1143,8 +1146,11 @@
                                 BorderThickness="1"
                                 CornerRadius="4"
                                 Margin="0,2,0,0"
-                                MinWidth="{Binding ActualWidth, ElementName=ToggleButton}">
-                                <ScrollViewer Margin="2,4" SnapsToDevicePixels="True" Style="{DynamicResource CustomScrollViewerStyle}">
+                                MinWidth="{Binding ActualWidth, ElementName=ToggleButton}"
+                                MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                <ScrollViewer Margin="2,4" SnapsToDevicePixels="True"
+                                              VerticalScrollBarVisibility="Auto"
+                                              Style="{DynamicResource CustomScrollViewerStyle}">
                                     <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/>
                                 </ScrollViewer>
                             </Border>

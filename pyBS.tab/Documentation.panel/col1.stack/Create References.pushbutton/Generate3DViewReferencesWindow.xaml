@@ -2,8 +2,8 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Generate 3D View References"
-    Width="1000"
-    Height="660"
+    Width="1160"
+    Height="700"
     WindowStartupLocation="CenterScreen"
     ShowInTaskbar="False"
     ResizeMode="CanResize"
@@ -35,11 +35,22 @@
                        Style="{DynamicResource BodyTextBlockStyle}" Margin="0,5,0,0"/>
         </StackPanel>
         
-        <!-- View Categories -->
-        <GroupBox Grid.Row="1" Header="View Categories" Style="{DynamicResource StandardGroupBoxStyle}">
-            <WrapPanel x:Name="viewCategoriesPanel" Orientation="Horizontal" Margin="5">
-                <!-- View category checkboxes will be added here programmatically -->
-            </WrapPanel>
+        <!-- View name formula -->
+        <GroupBox Grid.Row="1" Header="View name" Style="{DynamicResource StandardGroupBoxStyle}"
+                  ToolTip="Written on each reference, left to right. The default is the view's own name. Add a view, sheet or project parameter with +.">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <ScrollViewer Grid.Row="0" Height="40" VerticalAlignment="Center"
+                              HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="viewFormulaPanel" Orientation="Horizontal"/>
+                </ScrollViewer>
+                <TextBlock x:Name="viewFormulaExample" Grid.Row="1" Margin="0,4,0,0"
+                           Style="{DynamicResource BodyTextBlockStyle}"
+                           Text="The view's own name, left to right."/>
+            </Grid>
         </GroupBox>
 
         <!-- Sheet number formula -->
@@ -50,12 +61,12 @@
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
-                <ScrollViewer Grid.Row="0" Height="32" VerticalAlignment="Center"
+                <ScrollViewer Grid.Row="0" Height="40" VerticalAlignment="Center"
                               HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
                     <StackPanel x:Name="sheetFormulaPanel" Orientation="Horizontal"/>
                 </ScrollViewer>
                 <TextBlock x:Name="sheetFormulaExample" Grid.Row="1" Margin="0,4,0,0"
-                           Style="{DynamicResource BodyTextBlockStyle}" FontWeight="Bold"
+                           Style="{DynamicResource BodyTextBlockStyle}"
                            Text="Sheet parameters and project information, left to right."/>
             </Grid>
         </GroupBox>
@@ -76,8 +87,9 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <TextBox x:Name="maxAreaTextBox" Grid.Column="4" Width="110" Height="30" Margin="8,0,0,0"
+                <TextBox x:Name="maxAreaTextBox" Grid.Column="5" Width="110" Height="30" Margin="8,0,0,0"
                          Style="{DynamicResource PlaceholderTextBoxStyle}" Tag="Max area m&#178;"
                          ToolTip="Hide views whose crop box (width x height) is larger than this many square metres, e.g. 6,25 to keep details and drop building sections. Nothing is deleted from the model."
                          TextChanged="Filter_Changed"/>
@@ -85,15 +97,19 @@
                          Style="{DynamicResource PlaceholderTextBoxStyle}"
                          Tag="Search view name, category, scale, sheet..."
                          TextChanged="Filter_Changed"/>
-                <ComboBox x:Name="sheetFilterComboBox" Grid.Column="1" Width="130" Height="30" Margin="8,0,0,0"
+                <ComboBox x:Name="categoryFilterComboBox" Grid.Column="1" Width="150" Height="30" Margin="8,0,0,0"
+                          ToolTip="Show one view category, or all of them"
+                          Style="{DynamicResource SearchableComboBoxStyle}"
+                          SelectionChanged="Filter_Changed"/>
+                <ComboBox x:Name="sheetFilterComboBox" Grid.Column="2" Width="130" Height="30" Margin="8,0,0,0"
                           ToolTip="Filter on whether the view is placed on a sheet"
                           Style="{DynamicResource StandardComboBoxStyle}"
                           SelectionChanged="Filter_Changed"/>
-                <ComboBox x:Name="referenceFilterComboBox" Grid.Column="2" Width="120" Height="30" Margin="8,0,0,0"
+                <ComboBox x:Name="referenceFilterComboBox" Grid.Column="3" Width="120" Height="30" Margin="8,0,0,0"
                           ToolTip="Filter on whether the view already has a 3D View Reference"
                           Style="{DynamicResource StandardComboBoxStyle}"
                           SelectionChanged="Filter_Changed"/>
-                <ComboBox x:Name="sheetParameterComboBox" Grid.Column="3" Width="190" Height="30" Margin="8,0,0,0"
+                <ComboBox x:Name="sheetParameterComboBox" Grid.Column="4" Width="190" Height="30" Margin="8,0,0,0"
                           ToolTip="Show a parameter of the view's sheet as an extra column"
                           Style="{DynamicResource StandardComboBoxStyle}"
                           SelectionChanged="SheetParameter_Changed"/>

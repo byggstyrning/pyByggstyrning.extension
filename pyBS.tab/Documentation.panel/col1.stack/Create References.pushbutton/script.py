@@ -13,11 +13,15 @@ clr.AddReference("PresentationCore")
 clr.AddReference("PresentationFramework")
 from System.Collections.Generic import List
 from System.Collections.ObjectModel import ObservableCollection
-from System import Double
-from System.Windows import CornerRadius, HorizontalAlignment, Size, Thickness, VerticalAlignment, Visibility
+from System import Action, Double
+from System.Windows import CornerRadius, FontWeights, HorizontalAlignment, Size, Thickness, VerticalAlignment, Visibility
+from System.Windows.Documents import Run
 from System.ComponentModel import ListSortDirection, SortDescription
-from System.Windows.Controls import Border, Button, CheckBox, ComboBox, DataGridRow, Grid, Panel, TextBlock, TextBox
-from System.Windows.Input import Cursors
+from System.Windows.Controls import (
+    Border, Button, CheckBox, ComboBox, ComboBoxItem, DataGridRow, Grid, Panel, TextBlock, TextBox,
+)
+from System.Windows.Input import Cursors, Key
+from System.Windows.Threading import DispatcherPriority
 from System.Windows.Media import Brushes, FontFamily
 from System.Windows.Data import CollectionViewSource
 from System.Windows.Media import VisualTreeHelper
@@ -61,6 +65,15 @@ SHEET_FILTERS = [SHEET_ALL, SHEET_ON, SHEET_OFF]
 REFERENCE_ALL, REFERENCE_PLACED, REFERENCE_MISSING = "Placed or not", "Placed", "Not placed"
 REFERENCE_FILTERS = [REFERENCE_ALL, REFERENCE_PLACED, REFERENCE_MISSING]
 NO_SHEET_PARAMETER = "(no sheet parameter)"
+CATEGORY_ALL = "All categories"
+
+
+class PartTag(object):
+    """Which formula and which part a control belongs to."""
+
+    def __init__(self, key, index):
+        self.key = key
+        self.index = index
 
 
 class ViewItemData(forms.Reactive):
@@ -169,17 +182,16 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         self.go_to_element = None
         self.context_item = None
 
-        self._setup_view_categories()
         self._setup_filters()
         saved_state = self._read_state()
         self._restore_filters(saved_state)
-        self._setup_sheet_formula()
+        self._setup_formulas()
         self._load_views()
 
         # Bind views to DataGrid
         self.viewsDataGrid.ItemsSource = self.views_data
         self._restore_rows(saved_state)
-        self._refresh_formula_example()
+        self._refresh_formula_examples()
         self.Closed += self._save_state
         logger.debug("UI setup complete. Found {} views.".format(self.views_data.Count))
 
@@ -202,24 +214,19 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         except Exception as e:
             logger.debug("Error setting busy indicator: {}".format(str(e)))
 
-    def _setup_view_categories(self):
-        """Set up view category checkboxes."""
-        self.view_kinds = {}
-        for kind, label in view_references.VIEW_KINDS:
-            checkbox = CheckBox()
-            checkbox.Content = label
-            checkbox.IsChecked = True
-            checkbox.Margin = Thickness(0, 0, 15, 0)
-            checkbox.SetResourceReference(CheckBox.StyleProperty, "StandardCheckBoxStyle")
-            checkbox.SetResourceReference(CheckBox.ForegroundProperty, "TextBrush")
-            checkbox.Checked += self.ViewCategory_CheckedChanged
-            checkbox.Unchecked += self.ViewCategory_CheckedChanged
-
-            self.viewCategoriesPanel.Children.Add(checkbox)
-            self.view_kinds[kind] = checkbox
-
     def _setup_filters(self):
         """Fill the filter dropdowns. The sheet parameter choice is remembered."""
+        self._formula_labels = {}
+        self._formula_kept = {}
+        self._formula_part_tags = {}
+        self._formula_search_boxes = {}
+        self._formula_search_wired = set()
+        labels = [CATEGORY_ALL] + [label for _kind, label in view_references.VIEW_KINDS]
+        self.categoryFilterComboBox.ItemsSource = List[str](labels)
+        self.categoryFilterComboBox.SelectedIndex = 0
+        self._formula_labels[id(self.categoryFilterComboBox)] = list(labels)
+        self.categoryFilterComboBox.DropDownOpened += self.FormulaDropDown_Opened
+        self.categoryFilterComboBox.DropDownClosed += self.FormulaDropDown_Closed
         self.sheetFilterComboBox.ItemsSource = List[str](SHEET_FILTERS)
         self.sheetFilterComboBox.SelectedIndex = 0
         self.referenceFilterComboBox.ItemsSource = List[str](REFERENCE_FILTERS)
@@ -260,30 +267,63 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         script.get_config().set_option("max_area_m2", (self.maxAreaTextBox.Text or "").strip())
         script.save_config()
 
-    def _setup_sheet_formula(self):
-        """The text written to Sheet Number: sheet number, sheet parameters, project information."""
+    def _setup_formulas(self):
+        """Sheet Number and View Name, each built left to right."""
         self._formula_loading = True
-        formula = view_references.load_sheet_number_formula(doc)
-        self.sheet_parts = formula["parts"]
-        self._sheet_choices = view_references.sheet_number_choice_list(doc, formula)
+        self.editors = {
+            "view": self._make_editor(
+                "view",
+                view_references.load_view_name_formula(doc),
+                view_references.view_name_choice_list(doc),
+                self.viewFormulaPanel,
+                self.viewFormulaExample,
+                view_references.SOURCE_VIEW_NAME,
+                (view_references.SOURCE_VIEW, view_references.SOURCE_PROJECT,
+                 view_references.SOURCE_SHEET),
+                "Add a view, sheet or project parameter in front of the view name"),
+            "sheet": self._make_editor(
+                "sheet",
+                view_references.load_sheet_number_formula(doc),
+                view_references.sheet_number_choice_list(doc),
+                self.sheetFormulaPanel,
+                self.sheetFormulaExample,
+                view_references.SOURCE_SHEET_NUMBER,
+                (view_references.SOURCE_PROJECT, view_references.SOURCE_SHEET),
+                "Add a sheet or project parameter in front of the sheet number"),
+        }
         self._formula_loading = False
-        self._rebuild_sheet_formula_panel()
+        self._rebuild_formula_panel("view")
+        self._rebuild_formula_panel("sheet")
+
+    def _make_editor(self, key, formula, choices, panel, example, default_source,
+                     prefer, add_tooltip):
+        return {
+            "key": key,
+            "parts": formula["parts"],
+            "choices": choices,
+            "panel": panel,
+            "example": example,
+            "default_source": default_source,
+            "prefer": prefer,
+            "add_tooltip": add_tooltip,
+        }
 
     def _same_part(self, left, right):
         if left.get("source") != right.get("source"):
             return False
-        if left.get("source") == view_references.SOURCE_SHEET_NUMBER:
+        if left.get("source") in (
+                view_references.SOURCE_SHEET_NUMBER, view_references.SOURCE_VIEW_NAME):
             return True
         return left.get("name") == right.get("name")
 
-    def _label_for_part(self, part):
-        for label, candidate in self._sheet_choices:
+    def _label_for_part(self, editor, part):
+        for label, candidate in editor["choices"]:
             if self._same_part(candidate, part):
                 return label
         return view_references.sheet_number_part_label(part)
 
-    def _part_for_label(self, label):
-        for candidate_label, part in self._sheet_choices:
+    def _part_for_label(self, editor, label):
+        for candidate_label, part in editor["choices"]:
             if candidate_label == label:
                 item = {"source": part.get("source")}
                 if part.get("name"):
@@ -291,23 +331,33 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
                 return item
         return None
 
-    def _sheet_formula(self):
-        return {"parts": [dict(part) for part in self.sheet_parts]}
+    def _formula_dict(self, key):
+        return {"parts": [dict(part) for part in self.editors[key]["parts"]]}
 
-    def _save_sheet_formula(self):
+    def _save_formulas(self):
         if getattr(self, "_formula_loading", False):
             return
-        view_references.save_sheet_number_formula(doc, self._sheet_formula())
+        try:
+            view_references.save_view_name_formula(doc, self._formula_dict("view"))
+            view_references.save_sheet_number_formula(doc, self._formula_dict("sheet"))
+        except Exception as ex:
+            logger.debug("Could not save name formulas: {}".format(ex))
 
-    def _part_to_add(self):
-        """A project information parameter when the model has one, otherwise a sheet parameter."""
-        for _label, part in self._sheet_choices:
-            if part.get("source") == view_references.SOURCE_PROJECT:
-                return dict(part)
-        for _label, part in self._sheet_choices:
-            if part.get("source") == view_references.SOURCE_SHEET:
-                return dict(part)
-        return {"source": view_references.SOURCE_SHEET_NUMBER}
+    def _part_to_add(self, editor):
+        """The first unused preferred parameter, or another copy of the default part."""
+        used = set((part.get("source"), part.get("name")) for part in editor["parts"])
+        for source in editor["prefer"]:
+            for _label, part in editor["choices"]:
+                if part.get("source") != source:
+                    continue
+                key = (part.get("source"), part.get("name"))
+                if key in used:
+                    continue
+                item = {"source": part.get("source")}
+                if part.get("name"):
+                    item["name"] = part.get("name")
+                return item
+        return {"source": editor["default_source"]}
 
     def _show_remove(self, sender, args):
         button = sender.Tag
@@ -329,30 +379,36 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         if sender.Child is not None:
             sender.Child.SetResourceReference(TextBlock.ForegroundProperty, "TextBrush")
 
-    def _rebuild_sheet_formula_panel(self):
+    def _rebuild_formula_panel(self, key):
+        editor = self.editors[key]
+        panel = editor["panel"]
         self._formula_loading = True
         try:
-            self.sheetFormulaPanel.Children.Clear()
-            labels = List[str]([label for label, part in self._sheet_choices])
-            last = len(self.sheet_parts) - 1
-            control_height = 30
-            for index, part in enumerate(self.sheet_parts):
+            panel.Children.Clear()
+            labels = List[str]([label for label, part in editor["choices"]])
+            parts = editor["parts"]
+            last = len(parts) - 1
+            control_height = 33
+            for index, part in enumerate(parts):
                 host = Grid()
-                host.Width = 200
+                host.Width = 240
                 host.Height = control_height
                 host.Margin = Thickness(0, 0, 4, 0)
                 host.VerticalAlignment = VerticalAlignment.Center
                 combo = ComboBox()
-                combo.Tag = index
-                combo.Height = control_height
+                self._formula_labels[id(combo)] = [label for label, _part in editor["choices"]]
                 combo.Margin = Thickness(0)
                 combo.VerticalAlignment = VerticalAlignment.Center
-                combo.SetResourceReference(ComboBox.StyleProperty, "StandardComboBoxStyle")
+                combo.MaxDropDownHeight = 320
+                combo.SetResourceReference(ComboBox.StyleProperty, "SearchableComboBoxStyle")
                 combo.ItemsSource = labels
-                combo.SelectedItem = self._label_for_part(part)
-                combo.SelectionChanged += self.SheetPart_Changed
+                combo.SelectedItem = self._label_for_part(editor, part)
+                combo.DropDownOpened += self.FormulaDropDown_Opened
+                combo.DropDownClosed += self.FormulaDropDown_Closed
+                combo.SelectionChanged += self.FormulaPart_Changed
+                self._formula_part_tags[id(combo)] = PartTag(key, index)
                 host.Children.Add(combo)
-                if len(self.sheet_parts) > 1:
+                if len(parts) > 1:
                     mark = TextBlock()
                     mark.Text = u"\u00d7"
                     mark.FontSize = 11
@@ -370,17 +426,17 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
                     remove.VerticalAlignment = VerticalAlignment.Top
                     remove.Visibility = Visibility.Collapsed
                     remove.Cursor = Cursors.Hand
-                    remove.Tag = index
+                    remove.Tag = PartTag(key, index)
                     remove.ToolTip = "Remove this part"
                     remove.MouseEnter += self._remove_hover_on
                     remove.MouseLeave += self._remove_hover_off
-                    remove.MouseLeftButtonUp += self.RemoveSheetPart_Click
+                    remove.MouseLeftButtonUp += self.RemoveFormulaPart_Click
                     Panel.SetZIndex(remove, 2)
                     host.Children.Add(remove)
                     host.Tag = remove
                     host.MouseEnter += self._show_remove
                     host.MouseLeave += self._hide_remove
-                self.sheetFormulaPanel.Children.Add(host)
+                panel.Children.Add(host)
                 if index < last:
                     box = TextBox()
                     box.Height = control_height
@@ -389,14 +445,14 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
                     box.Margin = Thickness(0, 0, 4, 0)
                     box.VerticalAlignment = VerticalAlignment.Center
                     box.VerticalContentAlignment = VerticalAlignment.Center
-                    box.Tag = index
+                    box.Tag = PartTag(key, index)
                     box.Text = part.get("separator") or ""
                     box.ToolTip = "Text between this parameter and the next. Leave empty to join them."
                     box.SetResourceReference(TextBox.StyleProperty, "PlaceholderTextBoxStyle")
                     self._fit_separator(box)
-                    box.TextChanged += self.SheetPartSeparator_Changed
-                    box.LostFocus += self.SheetPartSeparator_LostFocus
-                    self.sheetFormulaPanel.Children.Add(box)
+                    box.TextChanged += self.FormulaSeparator_Changed
+                    box.LostFocus += self.FormulaSeparator_LostFocus
+                    panel.Children.Add(box)
             add = Button()
             add.Content = "+"
             add.Width = control_height
@@ -404,25 +460,13 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
             add.MinHeight = control_height
             add.Margin = Thickness(0)
             add.VerticalAlignment = VerticalAlignment.Center
-            add.ToolTip = "Add a parameter in front of the sheet number"
+            add.ToolTip = editor["add_tooltip"]
+            add.Tag = key
             add.SetResourceReference(Button.StyleProperty, "StandardButtonStyle")
-            add.Click += self.AddSheetPart_Click
-            self.sheetFormulaPanel.Children.Add(add)
+            add.Click += self.AddFormulaPart_Click
+            panel.Children.Add(add)
         finally:
             self._formula_loading = False
-
-    def SheetPart_Changed(self, sender, args):
-        if self._formula_loading:
-            return
-        part = self._part_for_label(sender.SelectedItem)
-        index = sender.Tag
-        if part is None or index is None or index >= len(self.sheet_parts):
-            return
-        if "separator" in self.sheet_parts[index]:
-            part["separator"] = self.sheet_parts[index].get("separator") or ""
-        self.sheet_parts[index] = part
-        self._save_sheet_formula()
-        self._refresh_formula_example()
 
     def _fit_separator(self, box):
         """Grow or shrink the separator box so the whole text stays visible."""
@@ -448,62 +492,246 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         box.MinWidth = width
         box.Width = width
 
-    def SheetPartSeparator_Changed(self, sender, args):
+    def _part_tag(self, sender):
+        tag = self._formula_part_tags.get(id(sender))
+        if isinstance(tag, PartTag):
+            return tag
+        tag = sender.Tag
+        if isinstance(tag, PartTag):
+            return tag
+        return None
+
+    def FormulaDropDown_Opened(self, sender, args):
+        """Open the type-to-search field used by the searchable combo."""
+        self._formula_kept[id(sender)] = sender.SelectedItem
+        sender.Dispatcher.BeginInvoke(
+            DispatcherPriority.Loaded,
+            Action(lambda combo=sender: self._focus_formula_search(combo)))
+
+    def FormulaDropDown_Closed(self, sender, args):
+        """Put the full list back. A search that hid the current part does not clear it."""
+        labels = self._formula_labels.get(id(sender))
+        if not labels:
+            return
+        selected = sender.SelectedItem or self._formula_kept.get(id(sender))
+        self._formula_loading = True
+        try:
+            sender.ItemsSource = List[str](labels)
+            if selected:
+                sender.SelectedItem = selected
+        finally:
+            self._formula_loading = False
+
+    def _focus_formula_search(self, combo):
+        box = self._find_template_child(combo, "SearchTextBox")
+        if box is None:
+            return
+        if id(box) not in self._formula_search_wired:
+            self._formula_search_boxes[id(box)] = combo
+            box.TextChanged += self.FormulaSearch_Changed
+            box.PreviewKeyDown += self.FormulaSearch_PreviewKeyDown
+            self._formula_search_wired.add(id(box))
+        else:
+            self._formula_search_boxes[id(box)] = combo
+        box.Text = ""
+        box.Focus()
+
+    def _find_template_child(self, combo, name):
+        if combo.Template is None:
+            return None
+        found = combo.Template.FindName(name, combo)
+        if found is not None:
+            return found
+        popup = combo.Template.FindName("Popup", combo)
+        if popup is None or popup.Child is None:
+            return None
+        return self._find_named_child(popup.Child, name)
+
+    def _find_named_child(self, parent, name):
+        if parent is None:
+            return None
+        if getattr(parent, "Name", None) == name:
+            return parent
+        count = VisualTreeHelper.GetChildrenCount(parent)
+        for index in range(count):
+            found = self._find_named_child(VisualTreeHelper.GetChild(parent, index), name)
+            if found is not None:
+                return found
+        return None
+
+    def FormulaSearch_Changed(self, sender, args):
+        combo = self._formula_search_boxes.get(id(sender))
+        labels = self._formula_labels.get(id(combo)) if combo is not None else None
+        if not labels:
+            return
+        search = (sender.Text or "").strip().lower()
+        selected = combo.SelectedItem
+        if search:
+            filtered = [label for label in labels if search in label.lower()]
+        else:
+            filtered = list(labels)
+        self._formula_loading = True
+        try:
+            combo.ItemsSource = List[str](filtered)
+            if selected in filtered:
+                combo.SelectedItem = selected
+        finally:
+            self._formula_loading = False
+        combo.Dispatcher.BeginInvoke(
+            DispatcherPriority.Input,
+            Action(lambda box=sender: box.Focus()))
+
+    def FormulaSearch_PreviewKeyDown(self, sender, args):
+        combo = self._formula_search_boxes.get(id(sender))
+        if combo is None:
+            return
+        if args.Key == Key.Down:
+            args.Handled = True
+            combo.Dispatcher.BeginInvoke(
+                DispatcherPriority.Input,
+                Action(lambda box=combo: self._focus_formula_item(box, True)))
+        elif args.Key == Key.Up:
+            args.Handled = True
+            combo.Dispatcher.BeginInvoke(
+                DispatcherPriority.Input,
+                Action(lambda box=combo: self._focus_formula_item(box, False)))
+        elif args.Key == Key.Enter and combo.SelectedIndex >= 0:
+            args.Handled = True
+            combo.IsDropDownOpen = False
+        elif args.Key == Key.Escape:
+            args.Handled = True
+            combo.IsDropDownOpen = False
+
+    def _focus_formula_item(self, combo, first):
+        popup = combo.Template.FindName("Popup", combo) if combo.Template else None
+        if popup is None or popup.Child is None:
+            return
+        items = []
+        self._collect_combo_items(popup.Child, items)
+        if not items:
+            return
+        item = items[0] if first else items[-1]
+        item.Focus()
+        combo.SelectedIndex = 0 if first else combo.Items.Count - 1
+
+    def _collect_combo_items(self, parent, items):
+        if parent is None:
+            return
+        if isinstance(parent, ComboBoxItem):
+            items.append(parent)
+        count = VisualTreeHelper.GetChildrenCount(parent)
+        for index in range(count):
+            self._collect_combo_items(VisualTreeHelper.GetChild(parent, index), items)
+
+    def FormulaPart_Changed(self, sender, args):
+        if self._formula_loading:
+            return
+        tag = self._part_tag(sender)
+        editor = self.editors.get(tag.key) if tag is not None else None
+        if editor is None or tag.index >= len(editor["parts"]):
+            return
+        part = self._part_for_label(editor, sender.SelectedItem)
+        if part is None:
+            return
+        if "separator" in editor["parts"][tag.index]:
+            part["separator"] = editor["parts"][tag.index].get("separator") or ""
+        editor["parts"][tag.index] = part
+        self._save_formulas()
+        self._refresh_formula_examples()
+
+    def FormulaSeparator_Changed(self, sender, args):
         """Refresh the example on each keystroke. The model is saved when the box is left."""
         if self._formula_loading:
             return
-        index = sender.Tag
-        if index is None or index >= len(self.sheet_parts):
+        tag = sender.Tag
+        editor = self.editors.get(tag.key) if tag is not None else None
+        if editor is None or tag.index >= len(editor["parts"]):
             return
-        self.sheet_parts[index]["separator"] = sender.Text or ""
+        editor["parts"][tag.index]["separator"] = sender.Text or ""
         self._fit_separator(sender)
-        self._refresh_formula_example()
+        self._refresh_formula_examples()
 
-    def SheetPartSeparator_LostFocus(self, sender, args):
-        index = sender.Tag
-        if self._formula_loading or index is None or index >= len(self.sheet_parts):
+    def FormulaSeparator_LostFocus(self, sender, args):
+        tag = sender.Tag
+        editor = self.editors.get(tag.key) if tag is not None else None
+        if self._formula_loading or editor is None or tag.index >= len(editor["parts"]):
             return
-        self.sheet_parts[index]["separator"] = sender.Text or ""
-        self._save_sheet_formula()
-        self._refresh_formula_example()
+        editor["parts"][tag.index]["separator"] = sender.Text or ""
+        self._save_formulas()
+        self._refresh_formula_examples()
 
-    def AddSheetPart_Click(self, sender, args):
-        part = self._part_to_add()
-        if (self.sheet_parts
-                and self.sheet_parts[-1].get("source") == view_references.SOURCE_SHEET_NUMBER):
+    def AddFormulaPart_Click(self, sender, args):
+        editor = self.editors.get(sender.Tag)
+        if editor is None:
+            return
+        part = self._part_to_add(editor)
+        parts = editor["parts"]
+        if parts and parts[-1].get("source") == editor["default_source"]:
             part["separator"] = ""
-            self.sheet_parts.insert(len(self.sheet_parts) - 1, part)
+            parts.insert(len(parts) - 1, part)
         else:
-            if self.sheet_parts:
-                self.sheet_parts[-1]["separator"] = self.sheet_parts[-1].get("separator") or ""
-            self.sheet_parts.append(part)
-        self._rebuild_sheet_formula_panel()
-        self._save_sheet_formula()
-        self._refresh_formula_example()
+            if parts:
+                parts[-1]["separator"] = parts[-1].get("separator") or ""
+            parts.append(part)
+        self._rebuild_formula_panel(editor["key"])
+        self._save_formulas()
+        self._refresh_formula_examples()
 
-    def RemoveSheetPart_Click(self, sender, args):
-        index = sender.Tag
-        if index is not None and 0 <= index < len(self.sheet_parts):
-            del self.sheet_parts[index]
-        if not self.sheet_parts:
-            self.sheet_parts = [{"source": view_references.SOURCE_SHEET_NUMBER}]
-        self._rebuild_sheet_formula_panel()
-        self._save_sheet_formula()
-        self._refresh_formula_example()
+    def RemoveFormulaPart_Click(self, sender, args):
+        tag = sender.Tag
+        editor = self.editors.get(tag.key) if tag is not None else None
+        if editor is None:
+            return
+        if 0 <= tag.index < len(editor["parts"]):
+            del editor["parts"][tag.index]
+        if not editor["parts"]:
+            editor["parts"] = [{"source": editor["default_source"]}]
+        self._rebuild_formula_panel(editor["key"])
+        self._save_formulas()
+        self._refresh_formula_examples()
 
-    def _refresh_formula_example(self):
+    def _refresh_formula_examples(self):
+        view = None
         sheet = None
         for item in self.all_items or []:
+            if view is None:
+                view = item.view
             if item.sheet is not None:
                 sheet = item.sheet
+                view = item.view
                 break
+        self._set_formula_example("view", view, sheet)
+        self._set_formula_example("sheet", view, sheet)
+
+    def _set_formula_example(self, key, view, sheet):
+        editor = self.editors[key]
+        if key == "view":
+            if view is None:
+                editor["example"].Text = "The view's own name, left to right."
+                return
+            text = view_references.compose_view_name(
+                doc, view, sheet, self._formula_dict("view"))
+            self._show_example(editor["example"], text)
+            return
         if sheet is None:
-            self.sheetFormulaExample.Text = (
+            editor["example"].Text = (
                 "Left to right. Choose sheet parameters or project information.")
             return
-        text = view_references.compose_sheet_number(doc, sheet, self._sheet_formula())
-        self.sheetFormulaExample.Text = u"Example from sheet {}: {}".format(
-            sheet.SheetNumber, text or "-")
+        text = view_references.compose_sheet_number(
+            doc, sheet, self._formula_dict("sheet"))
+        self._show_example(editor["example"], text)
+
+    def _show_example(self, block, text):
+        """Show 'Example:' in regular weight and the composed value in bold."""
+        block.Inlines.Clear()
+        label = Run(u"Example: ")
+        label.FontWeight = FontWeights.Normal
+        value = Run(text or u"-")
+        value.FontWeight = FontWeights.Bold
+        block.Inlines.Add(label)
+        block.Inlines.Add(value)
+
+
 
     def _sheet_parameter_name(self):
         name = self.sheetParameterComboBox.SelectedItem
@@ -523,8 +751,8 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
             self.all_items.append(item)
         self._update_sheet_parameter_column()
         self._apply_filters()
-        if getattr(self, "sheet_parts", None):
-            self._refresh_formula_example()
+        if getattr(self, "editors", None):
+            self._refresh_formula_examples()
 
     def _update_sheet_parameter_column(self):
         name = self._sheet_parameter_name()
@@ -536,7 +764,7 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
 
     def _apply_filters(self):
         """Show the rows that pass the category, search, sheet and reference filters."""
-        kinds = set(kind for kind, cb in self.view_kinds.items() if cb.IsChecked == True)
+        kinds = self._selected_kinds()
         words = (self.searchTextBox.Text or "").lower().split()
         sheet_filter = self.sheetFilterComboBox.SelectedItem
         reference_filter = self.referenceFilterComboBox.SelectedItem
@@ -607,13 +835,20 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
             column.SortDirection = None
         self._update_status()
 
-    def ViewCategory_CheckedChanged(self, sender, args):
-        """Handle view category checkbox changes."""
-        if self.all_items is not None:
-            self._apply_filters()
+    def _selected_kinds(self):
+        """The view categories the category dropdown is showing."""
+        label = self.categoryFilterComboBox.SelectedItem
+        if not label or label == CATEGORY_ALL:
+            return set(kind for kind, _kind_label in view_references.VIEW_KINDS)
+        for kind, kind_label in view_references.VIEW_KINDS:
+            if kind_label == label:
+                return set([kind])
+        return set(kind for kind, _kind_label in view_references.VIEW_KINDS)
 
     def Filter_Changed(self, sender, args):
         """Search text or a filter dropdown changed."""
+        if getattr(self, "_formula_loading", False):
+            return
         if self.all_items is not None:
             self._apply_filters()
 
@@ -698,7 +933,7 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
             "search": self.searchTextBox.Text or "",
             "sheet_filter": self.sheetFilterComboBox.SelectedIndex,
             "reference_filter": self.referenceFilterComboBox.SelectedIndex,
-            "kinds_off": [kind for kind, cb in self.view_kinds.items() if cb.IsChecked != True],
+            "category_filter": self.categoryFilterComboBox.SelectedItem or CATEGORY_ALL,
             "ticked": [item.view.UniqueId for item in self.all_items if item.IsSelected],
             "sort": [[d.PropertyName, d.Direction == ListSortDirection.Ascending]
                      for d in self._sort_descriptions()],
@@ -709,7 +944,7 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
                 json.dump(state, state_file)
         except Exception as ex:
             logger.debug("Could not save the window state: {}".format(ex))
-        self._save_sheet_formula()
+        self._save_formulas()
 
     def _read_state(self):
         try:
@@ -725,9 +960,21 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
         self.sheetFilterComboBox.SelectedIndex = state.get("sheet_filter", 0)
         self.referenceFilterComboBox.SelectedIndex = state.get("reference_filter", 0)
         self.showDepthCheckbox.IsChecked = bool(state.get("show_depth", False))
-        for kind in state.get("kinds_off", []):
-            if kind in self.view_kinds:
-                self.view_kinds[kind].IsChecked = False
+        self._restore_category_filter(state)
+
+    def _restore_category_filter(self, state):
+        """Keep a saved category. An older window stored the categories that were unticked."""
+        labels = [label for label in self.categoryFilterComboBox.Items]
+        saved = state.get("category_filter")
+        if saved in labels:
+            self.categoryFilterComboBox.SelectedItem = saved
+            return
+        kinds_off = set(state.get("kinds_off") or [])
+        remaining = [label for kind, label in view_references.VIEW_KINDS if kind not in kinds_off]
+        if len(remaining) == 1 and remaining[0] in labels:
+            self.categoryFilterComboBox.SelectedItem = remaining[0]
+            return
+        self.categoryFilterComboBox.SelectedIndex = 0
 
     def _restore_rows(self, state):
         if not state:
@@ -778,12 +1025,13 @@ class Generate3DViewReferencesWindow(forms.WPFWindow):
             return
         script.get_config().set_option("manual_depth_mm", self.manualDepthTextBox.Text.strip())
         script.save_config()
-        formula = self._sheet_formula()
-        self._save_sheet_formula()
+        sheet_formula = self._formula_dict("sheet")
+        view_formula = self._formula_dict("view")
+        self._save_formulas()
         with revit.Transaction("Create 3D View References"):
             result = view_references.sync_view_references(
                 doc, selected_views, self.family_symbol, show_depth, manual_depth,
-                sheet_formula=formula)
+                sheet_formula=sheet_formula, view_formula=view_formula)
 
         self.created_elements = result.element_ids
         self.isolateButton.Content = "Isolate {} references".format(len(self.created_elements))
