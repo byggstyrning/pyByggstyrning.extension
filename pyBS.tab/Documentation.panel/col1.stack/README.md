@@ -6,8 +6,9 @@ sections, elevations, detail views and plan callouts can be seen in 3D.
 Each instance remembers which view it belongs to (extensible storage on the instance, keyed on
 the view's UniqueId). Running either tool again updates the existing instance: the size and
 name are refreshed in place, and if the view has moved the instance is replaced. A view never
-gets two references. References created before this was added carry no such link and are left
-alone; delete them by hand.
+gets two references. References placed by hand carry no such link. Their size and position are left
+alone. Running either tool still sets Export to IFC to Yes and Export to IFC As
+to IfcVirtualElement on every instance of the family, including those.
 
 The placement logic is shared by both tools and lives in `lib/revit/view_references.py`.
 
@@ -73,11 +74,18 @@ selects it.
 * `View Width` and `View Height` come from the crop box, `View Name` from the view, and
   `View Depth` as described above. The family type `Standard Reference` is used when present,
   otherwise the first type of the family.
-* The number of the sheet the view is placed on goes in `Sheet Number`, shown below the view
-  name; views that are not on a sheet show `-`. With a family that has no `Sheet Number`
+* The sheet number row of the window builds the text written to `Sheet Number`, left to
+  right. Press + to add a part. Each part is the sheet's own number, another parameter of
+  that sheet, or a project information parameter. `between` is the text placed between the
+  parts; leave it empty to join them directly. A new part is inserted in front of the sheet
+  number, so a project parameter prefixes it. The formula is saved in the model. Views that
+  are not on a sheet, and empty results, show `-`. With a family that has no `Sheet Number`
   parameter it becomes a second line of the `View Name` text instead. Run the tool again after
-  placing views on sheets or renumbering sheets to refresh the text.
+  placing views on sheets, renumbering sheets, or changing the formula.
 * The family's "View Name" text faces the viewer's side of the cut plane.
+* Each instance is exported to IFC as `IfcVirtualElement`. That is set on the
+  instance (Export to IFC = Yes, Export to IFC As = IfcVirtualElement), including
+  instances placed by hand, whenever references are created or updated.
 
 ### The family file
 

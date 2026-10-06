@@ -3,7 +3,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Generate 3D View References"
     Width="1000"
-    Height="600"
+    Height="660"
     WindowStartupLocation="CenterScreen"
     ShowInTaskbar="False"
     ResizeMode="CanResize"
@@ -13,14 +13,15 @@
     
     <Grid Margin="10">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="*" />
+        <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
         
         <!-- Busy Indicator Overlay -->
-        <Border x:Name="busyOverlay" Grid.RowSpan="4" Panel.ZIndex="10" Style="{DynamicResource BusyOverlayStyle}">
+        <Border x:Name="busyOverlay" Grid.RowSpan="5" Panel.ZIndex="10" Style="{DynamicResource BusyOverlayStyle}">
             <StackPanel Style="{DynamicResource BusyContentStyle}">
                 <ProgressBar x:Name="busyProgressBar" Style="{DynamicResource BusyProgressBarStyle}"/>
                 <TextBlock x:Name="busyTextBlock" Style="{DynamicResource BusyTextBlockStyle}" Text="Loading..."/>
@@ -40,9 +41,42 @@
                 <!-- View category checkboxes will be added here programmatically -->
             </WrapPanel>
         </GroupBox>
+
+        <!-- Sheet number formula -->
+        <GroupBox Grid.Row="2" Header="Sheet number" Style="{DynamicResource StandardGroupBoxStyle}"
+                  ToolTip="Written on each reference, left to right. Add a sheet parameter or a project information parameter with +.">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid Grid.Row="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <ScrollViewer Grid.Column="0" Height="36" VerticalAlignment="Center"
+                                  HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                        <StackPanel x:Name="sheetFormulaPanel" Orientation="Horizontal"/>
+                    </ScrollViewer>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="between" VerticalAlignment="Center" Margin="8,0,6,0"
+                                   Style="{DynamicResource BodyTextBlockStyle}"
+                                   ToolTip="Text placed between the values. Leave empty to join them directly."/>
+                        <TextBox x:Name="sheetSeparatorTextBox" Width="56" Height="30"
+                                 Style="{DynamicResource PlaceholderTextBoxStyle}"
+                                 ToolTip="Text placed between the values, for example a dash. Leave empty to join them directly."
+                                 LostFocus="SheetSeparator_LostFocus"/>
+                    </StackPanel>
+                </Grid>
+                <TextBlock x:Name="sheetFormulaExample" Grid.Row="1" Margin="0,4,0,0"
+                           Style="{DynamicResource BodyTextBlockStyle}"
+                           Text="Sheet parameters and project information, left to right."/>
+            </Grid>
+        </GroupBox>
         
         <!-- Views List -->
-        <Grid Grid.Row="2">
+        <Grid Grid.Row="3">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
@@ -143,9 +177,9 @@
         </Grid>
         
         <!-- Action Buttons -->
-        <TextBlock x:Name="countTextBlock" Grid.Row="3" HorizontalAlignment="Left" VerticalAlignment="Center"
+        <TextBlock x:Name="countTextBlock" Grid.Row="4" HorizontalAlignment="Left" VerticalAlignment="Center"
                    Margin="0,10,0,0" Style="{DynamicResource BodyTextBlockStyle}"/>
-        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
             <Button x:Name="createButton" Content="Create / Update References" Click="CreateViewReferences_Click" Style="{DynamicResource StandardButtonStyle}"/>
             <Button x:Name="isolateButton" Content="Isolate references" Click="IsolateElements_Click" 
                     IsEnabled="False" Style="{DynamicResource StandardButtonStyle}"/>
