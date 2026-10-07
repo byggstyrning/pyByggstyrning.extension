@@ -1,5 +1,5 @@
 tooltip:
-  en_us: Update pyByggstyrning from Git and reload pyRevit. Checks for updates and pulls latest changes before reloading.
+  en_us: Show what is new, then update pyByggstyrning and reload.
 engine:
   clean: true
 title:
