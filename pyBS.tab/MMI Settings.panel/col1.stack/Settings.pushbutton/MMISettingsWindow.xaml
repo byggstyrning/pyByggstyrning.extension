@@ -174,7 +174,7 @@
                                 <ToolTip Background="{DynamicResource PopupBackgroundBrush}" Foreground="{DynamicResource TextBrush}">
                                     <StackPanel Margin="5">
                                         <TextBlock Text="Warn on type changes" FontWeight="Bold" Foreground="{DynamicResource TextBrush}" Margin="0,0,0,5" Style="{DynamicResource DefaultTextBlockStyle}"/>
-                                        <TextBlock Text="When enabled, shows a balloon when a family or system type is edited, or when instances are switched to another type, and that type has more instances than the selected step. The edit is not blocked. Default step is 375." TextWrapping="Wrap" MaxWidth="350" Foreground="{DynamicResource TextBrush}" Style="{DynamicResource DefaultTextBlockStyle}"/>
+                                        <TextBlock Text="When enabled, shows a balloon when a family or system type is edited, or when instances are switched to another type, and that type has instances at or above the selected MMI step. The edit is not blocked. Default step is 375." TextWrapping="Wrap" MaxWidth="350" Foreground="{DynamicResource TextBrush}" Style="{DynamicResource DefaultTextBlockStyle}"/>
                                     </StackPanel>
                                 </ToolTip>
                             </TextBlock.ToolTip>
@@ -204,7 +204,7 @@
                                 <ToolTip Background="{DynamicResource PopupBackgroundBrush}" Foreground="{DynamicResource TextBrush}">
                                     <StackPanel Margin="5">
                                         <TextBlock Text="Warn on instance parameter edits" FontWeight="Bold" Foreground="{DynamicResource TextBrush}" Margin="0,0,0,5" Style="{DynamicResource DefaultTextBlockStyle}"/>
-                                        <TextBlock Text="When enabled, shows a balloon when one change edits instance parameters on more elements than the selected step. Moves, type switches, and instances that only update because their type was edited are not counted. The edit is not blocked. Default step is 375." TextWrapping="Wrap" MaxWidth="350" Foreground="{DynamicResource TextBrush}" Style="{DynamicResource DefaultTextBlockStyle}"/>
+                                        <TextBlock Text="When enabled, shows a balloon when instance parameters are edited on elements at or above the selected MMI step. Moves, type switches, and instances that only update because their type was edited are not counted. The edit is not blocked. Default step is 375." TextWrapping="Wrap" MaxWidth="350" Foreground="{DynamicResource TextBrush}" Style="{DynamicResource DefaultTextBlockStyle}"/>
                                     </StackPanel>
                                 </ToolTip>
                             </TextBlock.ToolTip>

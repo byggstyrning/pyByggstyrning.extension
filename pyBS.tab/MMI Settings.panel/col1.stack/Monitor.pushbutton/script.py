@@ -27,6 +27,7 @@ clr.AddReference('RevitAPIUI')
 from Autodesk.Revit.DB import *
 from Autodesk.Revit.UI import *
 from System import EventHandler
+from System.Collections.Generic import List
 from Autodesk.Revit.DB.Events import DocumentChangedEventArgs, DocumentSynchronizingWithCentralEventArgs, DocumentSynchronizedWithCentralEventArgs
 
 # Import pyRevit modules
@@ -71,7 +72,6 @@ from mmi.config import (
 from mmi.core import get_mmi_parameter_name, load_monitor_config, get_default_mmi
 from mmi.threshold import (
     at_or_above,
-    should_warn_on_count,
     include_in_instance_param_count,
     normalize_limit,
 )
@@ -97,10 +97,30 @@ class MMIEventHandler(IExternalEventHandler):
         self.mmi_threshold = DEFAULT_PIN_MMI_LIMIT
         self.elements_to_validate = []
         self.validate_corrections = {}
+        self.undo_element_ids = None
+        self.undo_already_posted = False
         
+    def queue_undo_select(self, element_ids):
+        """Remember elements to select after the next undo."""
+        self.undo_element_ids = list(element_ids)
+
     def Execute(self, uiapp):
         try:
             logger.debug("MMI Event Handler Executing")
+            undo_ids = self.undo_element_ids
+            self.undo_element_ids = None
+            if undo_ids:
+                already_posted = bool(self.undo_already_posted)
+                self.undo_already_posted = False
+                self.elements_to_pin = []
+                self.elements_to_validate = []
+                self.validate_corrections = {}
+                self.notify_message = None
+                state = _UndoThenSelect(uiapp, undo_ids)
+                if already_posted:
+                    state.phase = "select"
+                state.start()
+                return
             
             # Check if monitor is still active
             if not is_monitor_active():
@@ -120,7 +140,6 @@ class MMIEventHandler(IExternalEventHandler):
                 with Transaction(doc, "Correct MMI Values") as t:
                     t.Start()
                     
-                    corrected_count = 0
                     correction_details = []
                     
                     for element_id, correction in self.validate_corrections.items():
@@ -156,8 +175,8 @@ class MMIEventHandler(IExternalEventHandler):
                         if apply_skip is None:
                             try:
                                 param.Set(str(fixed_value))
-                                corrected_count += 1
-                                correction_details.append("'{}' → '{}'".format(orig_value, fixed_value))
+                                if correction.get("reason") != "default":
+                                    correction_details.append("'{}' → '{}'".format(orig_value, fixed_value))
                                 logger.debug("Corrected MMI value from '{}' to '{}' for element {}".format(
                                     orig_value, fixed_value, element_id))
                             except Exception as set_ex:
@@ -166,12 +185,12 @@ class MMIEventHandler(IExternalEventHandler):
                     
                     t.Commit()
                     
-                    # Notify user of corrections
-                    if corrected_count > 0:
+                    # Default MMI fills are applied quietly. Other corrections still announce.
+                    if correction_details:
                         forms.show_balloon(
                             header="MMI Value Correction",
-                            text="{} MMI values automatically corrected".format(corrected_count),
-                            tooltip="Details:\n" + "\n".join(correction_details[:5]) + 
+                            text="{} MMI values automatically corrected".format(len(correction_details)),
+                            tooltip="Details:\n" + "\n".join(correction_details[:5]) +
                                    ("\n..." if len(correction_details) > 5 else ""),
                             is_new=True
                         )
@@ -236,18 +255,45 @@ class MMIEventHandler(IExternalEventHandler):
             self.notify_message = None
             
     def validate_mmi_values_deferred(self, elements_to_validate, corrections):
-        """Queue elements for MMI value validation and correction"""
-        self.elements_to_validate = elements_to_validate
-        self.validate_corrections = corrections
+        """Add elements to the pending MMI correction queue.
 
-# Global handlers and events
-mmi_event_handler = None
-external_event = None
-doc_changed_handler = None
-doc_synchronizing_handler = None
-doc_synchronized_handler = None
+        Chain commands raise DocumentChanged once per segment, and ExternalEvent
+        runs only after the command yields. Replacing the queue kept the last segment.
+        """
+        if not self.validate_corrections:
+            self.validate_corrections = {}
+        if not self.elements_to_validate:
+            self.elements_to_validate = []
+        seen = {}
+        for existing_id in self.validate_corrections.keys():
+            try:
+                seen[get_element_id_value(existing_id)] = True
+            except Exception:
+                pass
+        for element_id, correction in (corrections or {}).items():
+            try:
+                key = get_element_id_value(element_id)
+            except Exception:
+                key = None
+            if key is not None and key in seen:
+                continue
+            self.validate_corrections[element_id] = correction
+            self.elements_to_validate.append(element_id)
+            if key is not None:
+                seen[key] = True
+
+# Global handlers and events. A second run of this persistent script must not
+# drop the live delegates, or the previous DocumentChanged handler stays attached.
+if not globals().get("_monitor_handlers_ready"):
+    mmi_event_handler = None
+    external_event = None
+    doc_changed_handler = None
+    doc_synchronizing_handler = None
+    doc_synchronized_handler = None
+    _monitor_handlers_ready = True
 element_location_cache = {}  # Cache to store element locations for move detection
 element_mmi_cache = {}  # Cache to store element MMI values to detect changes
+element_mmi_blank = set()  # Element ids whose MMI was blank the last time we saw them
 # Integer ElementId values: snapshot at monitor ON; ids not in this set are new post-activation
 baseline_element_ids_for_default = set()
 element_type_cache = {}  # element id int -> type id int
@@ -255,10 +301,227 @@ type_warn_last = {}  # type id int -> datetime of last type-change balloon
 instance_param_warn_last = None
 TYPE_WARN_DEBOUNCE_SECONDS = 5
 INSTANCE_PARAM_WARN_DEBOUNCE_SECONDS = 5
+_MONITOR_SUB_KEY = "_pybs_mmi_monitor_subs"
 OWN_MONITOR_TRANSACTIONS = set([
     "Correct MMI Values",
     "Pin High MMI Elements",
 ])
+CLICK_TO_UNDO = "Click to Undo."
+_balloon_click_handlers = []
+_pending_undo_select = None
+
+
+def _selectable_ids(doc, element_ids, instances_only):
+    chosen = List[ElementId]()
+    seen = {}
+    for element_id in element_ids:
+        try:
+            value = get_element_id_value(element_id)
+        except Exception:
+            continue
+        if value in seen:
+            continue
+        element = doc.GetElement(element_id)
+        if element is None:
+            continue
+        if instances_only and isinstance(element, ElementType):
+            continue
+        seen[value] = True
+        chosen.Add(element.Id)
+    return chosen
+
+
+def _select_existing(uiapp, element_ids):
+    uidoc = uiapp.ActiveUIDocument
+    if uidoc is None:
+        return 0
+    doc = uidoc.Document
+    chosen = _selectable_ids(doc, element_ids, False)
+    if chosen.Count < 1:
+        return 0
+    try:
+        uidoc.Selection.SetElementIds(chosen)
+        return chosen.Count
+    except Exception:
+        instances = _selectable_ids(doc, element_ids, True)
+        if instances.Count < 1:
+            return 0
+        uidoc.Selection.SetElementIds(instances)
+        return instances.Count
+
+
+class _UndoThenSelect(object):
+    """Undo the latest change, then select the elements that change touched."""
+
+    def __init__(self, uiapp, element_ids):
+        self.uiapp = uiapp
+        self.element_ids = list(element_ids)
+        self.phase = "undo"
+        self.attempts = 0
+        self.handler = None
+
+    def start(self):
+        global _pending_undo_select
+        self.handler = self._on_idling
+        _pending_undo_select = self
+        try:
+            self.uiapp.Idling += self.handler
+        except Exception as ex:
+            logger.debug("Could not subscribe Idling for undo select: {}".format(ex))
+            self.stop()
+
+    def stop(self):
+        global _pending_undo_select
+        if self.handler is not None:
+            try:
+                self.uiapp.Idling -= self.handler
+            except Exception:
+                pass
+            self.handler = None
+        if _pending_undo_select is self:
+            _pending_undo_select = None
+
+    def _on_idling(self, sender, args):
+        self.attempts += 1
+        if self.phase == "undo":
+            try:
+                command_id = RevitCommandId.LookupPostableCommandId(PostableCommand.Undo)
+                if self.uiapp.CanPostCommand(command_id):
+                    self.uiapp.PostCommand(command_id)
+                    self.phase = "select"
+                    self.attempts = 0
+                    return
+            except Exception as ex:
+                logger.debug("Undo command failed: {}".format(ex))
+                self.stop()
+                return
+            if self.attempts > 30:
+                logger.debug("Undo command was not postable")
+                self.stop()
+            return
+        try:
+            _select_existing(self.uiapp, self.element_ids)
+        except Exception as ex:
+            logger.debug("Selection after undo failed: {}".format(ex))
+        self.stop()
+
+
+def _post_undo(uiapp):
+    """Post Revit's Undo command. Returns (posted, error)."""
+    try:
+        command_id = RevitCommandId.LookupPostableCommandId(PostableCommand.Undo)
+    except Exception as ex:
+        return False, "lookup: {}".format(ex)
+    try:
+        can_post = bool(uiapp.CanPostCommand(command_id))
+    except Exception as ex:
+        return False, "can: {}".format(ex)
+    if not can_post:
+        return False, "not_postable"
+    try:
+        uiapp.PostCommand(command_id)
+    except Exception as ex:
+        return False, "post: {}".format(ex)
+    return True, ""
+
+
+def _schedule_undo_and_select(element_ids):
+    posted = False
+    try:
+        posted, post_error = _post_undo(__revit__)
+        if post_error:
+            logger.debug("Undo was not posted: {}".format(post_error))
+    except Exception as ex:
+        logger.debug("Undo post failed: {}".format(ex))
+    try:
+        if mmi_event_handler is None or external_event is None:
+            if posted:
+                state = _UndoThenSelect(__revit__, element_ids)
+                state.phase = "select"
+                state.start()
+            return
+        mmi_event_handler.undo_already_posted = posted
+        mmi_event_handler.queue_undo_select(element_ids)
+        external_event.Raise()
+    except Exception as ex:
+        logger.debug("Could not queue undo select: {}".format(ex))
+
+
+def _show_undo_balloon(header, text, element_ids):
+    import time
+    now = time.time()
+    last = getattr(sys, "_pybs_mmi_last_balloon", 0)
+    if isinstance(last, float) and now - last < 1.0:
+        return
+    setattr(sys, "_pybs_mmi_last_balloon", now)
+    ids = list(element_ids)
+    def _on_click(sender, event_args):
+        _schedule_undo_and_select(ids)
+    _balloon_click_handlers.append(_on_click)
+    forms.show_balloon(
+        header=header,
+        text="{}\n{}".format(text, CLICK_TO_UNDO),
+        tooltip=CLICK_TO_UNDO,
+        is_new=True,
+        click_result=_on_click,
+    )
+
+
+def _remember_changed_element(changed_types, type_int, element_id):
+    item = changed_types.get(type_int)
+    if item is None:
+        return
+    item["ids"].append(element_id)
+
+
+def _monitor_subscriptions():
+    """Handlers stored on sys so a script rerun can detach the previous ones."""
+    bag = getattr(sys, _MONITOR_SUB_KEY, None)
+    if not isinstance(bag, dict):
+        bag = {
+            "doc_changed": [],
+            "synchronizing": [],
+            "synchronized": [],
+        }
+        setattr(sys, _MONITOR_SUB_KEY, bag)
+    return bag
+
+
+def _remember_subscription(key, handler):
+    bag = _monitor_subscriptions()
+    handlers = bag.get(key)
+    if handlers is None:
+        handlers = []
+        bag[key] = handlers
+    handlers.append(handler)
+
+
+def _detach_monitor_subscriptions():
+    """Remove every monitor handler this engine has subscribed."""
+    bag = getattr(sys, _MONITOR_SUB_KEY, None)
+    removed = 0
+    if not bag:
+        return removed
+    try:
+        app = __revit__.Application
+    except Exception as ex:
+        logger.debug("Could not detach monitor handlers: {}".format(ex))
+        return removed
+    pairs = (
+        ("doc_changed", "DocumentChanged"),
+        ("synchronizing", "DocumentSynchronizingWithCentral"),
+        ("synchronized", "DocumentSynchronizedWithCentral"),
+    )
+    for key, event_name in pairs:
+        event = getattr(app, event_name, None)
+        for handler in list(bag.get(key) or []):
+            try:
+                event -= handler
+                removed += 1
+            except Exception:
+                pass
+        bag[key] = []
+    return removed
 
 
 def update_element_location_cache(element_id, location):
@@ -353,7 +616,7 @@ def populate_type_id_cache(doc):
 def populate_initial_mmi_cache(doc):
     """Populate the MMI cache with all elements on monitor activation.
     This allows us to detect MMI value changes."""
-    global element_mmi_cache
+    global element_mmi_cache, element_mmi_blank
     try:
         mmi_param_name = get_mmi_parameter_name(doc)
         if not mmi_param_name:
@@ -364,6 +627,8 @@ def populate_initial_mmi_cache(doc):
         # Get all elements in the model
         all_elements = FilteredElementCollector(doc).WhereElementIsNotElementType().ToElements()
         
+        element_mmi_cache = {}
+        element_mmi_blank = set()
         cache_count = 0
         for element in all_elements:
             # Skip elements that can't be pinned
@@ -372,11 +637,13 @@ def populate_initial_mmi_cache(doc):
             
             # Get the MMI value for the element
             mmi_value, value_str, param = get_element_mmi_value(element, mmi_param_name, doc)
-            
-            # Cache all MMI values (both high and low)
+            element_key = get_element_id_value(element.Id)
+            # Cache all MMI values (both high and low). Blank is remembered separately.
             if mmi_value is not None:
-                element_mmi_cache[get_element_id_value(element.Id)] = mmi_value
+                element_mmi_cache[element_key] = mmi_value
                 cache_count += 1
+            elif param is not None:
+                element_mmi_blank.add(element_key)
         
         logger.debug("Cached MMI values for {} elements".format(cache_count))
         
@@ -477,6 +744,66 @@ def _is_own_monitor_transaction(args):
     return False
 
 
+def _default_mmi_number(doc):
+    raw = get_default_mmi(doc)
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except Exception:
+        try:
+            return int(float(text))
+        except Exception:
+            return None
+
+
+def _transaction_sets_default_mmi(args, default_number):
+    if default_number is None:
+        return False
+    prefix = "Set MMI Parameter to "
+    for name in _transaction_names(args):
+        if not name.startswith(prefix):
+            continue
+        suffix = name[len(prefix):].strip()
+        try:
+            if int(suffix) == int(default_number):
+                return True
+        except Exception:
+            if suffix == str(default_number):
+                return True
+    return False
+
+
+def _mmi_changed_to_default(cache_key, mmi_value, default_number):
+    """True when this edit wrote the configured default MMI."""
+    if default_number is None or mmi_value is None:
+        return False
+    try:
+        current = int(mmi_value)
+    except Exception:
+        return False
+    if current != int(default_number):
+        return False
+    if cache_key in element_mmi_cache:
+        return element_mmi_cache.get(cache_key) != current
+    if cache_key in element_mmi_blank:
+        return True
+    return False
+
+
+def _remember_mmi(cache_key, mmi_value):
+    global element_mmi_cache, element_mmi_blank
+    if mmi_value is None:
+        element_mmi_cache.pop(cache_key, None)
+        element_mmi_blank.add(cache_key)
+        return
+    element_mmi_blank.discard(cache_key)
+    element_mmi_cache[cache_key] = mmi_value
+
+
 def _recently_warned(stamp_map, key, now, seconds):
     previous = stamp_map.get(key)
     if previous is None:
@@ -487,31 +814,66 @@ def _recently_warned(stamp_map, key, now, seconds):
         return False
 
 
-def _element_type_name(element):
+def _parameter_text(element, built_in_param):
     try:
-        name = element.Name
-        if name:
-            return name
+        param = element.get_Parameter(built_in_param)
     except Exception:
-        pass
+        return None
+    if param is None:
+        return None
+    try:
+        text = param.AsString()
+    except Exception:
+        return None
+    if text:
+        return text
+    return None
+
+
+def _element_type_name(element):
+    """Return Family: Type. IronPython cannot read Element.Name directly."""
+    if element is None:
+        return "Type"
+    name = None
+    try:
+        name = Element.Name.GetValue(element)
+    except Exception:
+        name = None
+    if not name:
+        name = _parameter_text(element, BuiltInParameter.SYMBOL_NAME_PARAM)
+    if not name:
+        name = _parameter_text(element, BuiltInParameter.ALL_MODEL_TYPE_NAME)
+    family_name = None
+    try:
+        family = element.Family
+        if family is not None:
+            family_name = Element.Name.GetValue(family)
+    except Exception:
+        family_name = None
+    if family_name and name and family_name != name:
+        return "{}: {}".format(family_name, name)
+    if name:
+        return name
     try:
         return str(get_element_id_value(element.Id))
     except Exception:
         return "Type"
 
 
-def count_type_instances(doc, type_id):
-    """Count non-type elements whose type id matches type_id."""
+def count_instances_at_or_above(doc, type_id, mmi_param_name, limit):
+    """Return ids of instances of type_id whose MMI is at or above limit."""
+    if not mmi_param_name:
+        return []
     try:
         type_elem = doc.GetElement(type_id)
         if type_elem is None:
-            return 0
+            return []
         dependents = type_elem.GetDependentElements(None)
     except Exception as ex:
         logger.debug("Could not count instances: {}".format(ex))
-        return 0
+        return []
     target = get_element_id_value(type_id)
-    count = 0
+    found = []
     for dep_id in dependents:
         element = doc.GetElement(dep_id)
         if element is None or isinstance(element, ElementType):
@@ -522,13 +884,16 @@ def count_type_instances(doc, type_id):
             continue
         if element_type_id is None or element_type_id == ElementId.InvalidElementId:
             continue
-        if get_element_id_value(element_type_id) == target:
-            count += 1
-    return count
+        if get_element_id_value(element_type_id) != target:
+            continue
+        mmi_value, _value_str, _param = get_element_mmi_value(element, mmi_param_name, doc)
+        if mmi_value is not None and at_or_above(mmi_value, limit):
+            found.append(element.Id)
+    return found
 
 
-def _queue_type_warning(doc, type_id, type_limit, changed_types, now):
-    """Record a type once when its instance count is over the limit."""
+def _queue_type_warning(doc, type_id, type_limit, changed_types, now, mmi_param_name):
+    """Record a type once when it has instances at or above the MMI limit."""
     if type_id is None or type_id == ElementId.InvalidElementId:
         return
     type_int = get_element_id_value(type_id)
@@ -536,12 +901,18 @@ def _queue_type_warning(doc, type_id, type_limit, changed_types, now):
         return
     if _recently_warned(type_warn_last, type_int, now, TYPE_WARN_DEBOUNCE_SECONDS):
         return
-    count = count_type_instances(doc, type_id)
-    if not should_warn_on_count(True, count, type_limit):
+    if not mmi_param_name:
+        return
+    instance_ids = count_instances_at_or_above(doc, type_id, mmi_param_name, type_limit)
+    if not instance_ids:
         return
     type_elem = doc.GetElement(type_id)
     name = _element_type_name(type_elem) if type_elem is not None else str(type_int)
-    changed_types[type_int] = {"name": name, "count": count}
+    changed_types[type_int] = {
+        "name": name,
+        "count": len(instance_ids),
+        "ids": list(instance_ids),
+    }
 
 
 def _show_type_change_warning(changed_types, type_limit, now):
@@ -549,25 +920,15 @@ def _show_type_change_warning(changed_types, type_limit, now):
         return
     items = list(changed_types.values())
     items.sort(key=lambda item: item["count"], reverse=True)
-    top = items[:5]
-    details = []
-    for item in top:
-        details.append("{} ({} instances)".format(item["name"], item["count"]))
-    tooltip = "Types over the instance limit:\n" + "\n".join(details)
-    extra = len(items) - len(top)
-    if extra > 0:
-        tooltip += "\n... and {} more".format(extra)
     if len(items) == 1:
-        text = "Type '{}' changed ({} instances, limit {})".format(
+        text = "Type '{}' changed ({} instances at or above MMI {})".format(
             items[0]["name"], items[0]["count"], type_limit)
     else:
-        text = "{} types changed with more than {} instances".format(len(items), type_limit)
-    forms.show_balloon(
-        header="Type Change",
-        text=text,
-        tooltip=tooltip,
-        is_new=True,
-    )
+        text = "{} types changed with instances at or above MMI {}".format(len(items), type_limit)
+    select_ids = []
+    for item in items:
+        select_ids.extend(item.get("ids", []))
+    _show_undo_balloon("Type Change", text, select_ids)
     for type_int in changed_types:
         type_warn_last[type_int] = now
 
@@ -575,7 +936,7 @@ def _show_type_change_warning(changed_types, type_limit, now):
 def _show_instance_param_warning(edited_ids, param_limit, now):
     global instance_param_warn_last
     count = len(edited_ids)
-    if not should_warn_on_count(True, count, param_limit):
+    if count < 1:
         return
     if instance_param_warn_last is not None:
         try:
@@ -584,20 +945,10 @@ def _show_instance_param_warning(edited_ids, param_limit, now):
                 return
         except Exception:
             pass
-    details = []
-    for element_id in edited_ids[:5]:
-        details.append("Element ID: {}".format(get_element_id_value(element_id)))
-    tooltip = "Instance parameters edited on {} elements (limit {}).".format(count, param_limit)
-    if details:
-        tooltip += "\n" + "\n".join(details)
-    extra = count - len(details)
-    if extra > 0:
-        tooltip += "\n... and {} more".format(extra)
-    forms.show_balloon(
-        header="Instance Parameter Edit",
-        text="{} elements had instance parameters edited (limit {})".format(count, param_limit),
-        tooltip=tooltip,
-        is_new=True,
+    _show_undo_balloon(
+        "Instance Parameter Edit",
+        "{} elements at or above MMI {} had instance parameters edited".format(count, param_limit),
+        edited_ids,
     )
     instance_param_warn_last = now
 
@@ -613,10 +964,13 @@ def warn_on_heavy_edits(doc, args, modified_element_ids, monitor_settings):
         logger.debug("Skipping heavy-edit warnings for a monitor transaction")
         return
 
+    default_number = _default_mmi_number(doc)
+    setting_default_txn = _transaction_sets_default_mmi(args, default_number)
     type_limit = normalize_limit(
         monitor_settings.get("type_instance_limit"), DEFAULT_TYPE_INSTANCE_LIMIT)
     param_limit = normalize_limit(
         monitor_settings.get("instance_param_limit"), DEFAULT_INSTANCE_PARAM_LIMIT)
+    mmi_param_name = get_mmi_parameter_name(doc)
     now = datetime.datetime.now()
 
     modified_types = []
@@ -636,7 +990,8 @@ def warn_on_heavy_edits(doc, args, modified_element_ids, monitor_settings):
         type_int = get_element_id_value(element.Id)
         modified_type_ids.add(type_int)
         if type_enabled:
-            _queue_type_warning(doc, element.Id, type_limit, changed_types, now)
+            _queue_type_warning(doc, element.Id, type_limit, changed_types, now, mmi_param_name)
+            _remember_changed_element(changed_types, type_int, element.Id)
 
     edited_ids = []
     for element in instances:
@@ -663,15 +1018,34 @@ def warn_on_heavy_edits(doc, args, modified_element_ids, monitor_settings):
         regenerated = current_type_int in modified_type_ids
         if type_enabled and type_changed:
             previous_type_int = element_type_cache.get(cache_key)
-            _queue_type_warning(doc, current_type_id, type_limit, changed_types, now)
+            _queue_type_warning(
+                doc, current_type_id, type_limit, changed_types, now, mmi_param_name)
             if previous_type_int is not None:
                 _queue_type_warning(
-                    doc, make_element_id(previous_type_int), type_limit, changed_types, now)
+                    doc, make_element_id(previous_type_int), type_limit, changed_types, now,
+                    mmi_param_name)
+        if current_type_int in changed_types:
+            _remember_changed_element(changed_types, current_type_int, element.Id)
+        if type_changed:
+            previous_type_int = element_type_cache.get(cache_key)
+            if previous_type_int in changed_types:
+                _remember_changed_element(changed_types, previous_type_int, element.Id)
         if param_enabled and type_known and include_in_instance_param_count(
                 type_changed, location_changed, regenerated):
             # No stored location means this element cannot be a move we missed.
             if current_location is None or cache_key in element_location_cache:
-                edited_ids.append(element.Id)
+                mmi_value = None
+                mmi_param = None
+                if mmi_param_name:
+                    mmi_value, _value_str, mmi_param = get_element_mmi_value(
+                        element, mmi_param_name, doc)
+                if mmi_value is not None and at_or_above(mmi_value, param_limit):
+                    wrote_default = setting_default_txn or _mmi_changed_to_default(
+                        cache_key, mmi_value, default_number)
+                    if not wrote_default:
+                        edited_ids.append(element.Id)
+                if mmi_param is not None:
+                    _remember_mmi(cache_key, mmi_value)
         element_type_cache[cache_key] = current_type_int
 
     if type_enabled:
@@ -771,6 +1145,7 @@ def document_changed_handler(sender, args):
                     "original": "(empty)",
                     "fixed": str(default_mmi).strip(),
                     "param": mmi_param_name,
+                    "reason": "default",
                 }
                 logger.debug(
                     "New instance (added) {} queued for default MMI {}".format(element_id, default_mmi))
@@ -795,6 +1170,7 @@ def document_changed_handler(sender, args):
                             "original": "(empty)",
                             "fixed": str(default_mmi).strip(),
                             "param": mmi_param_name,
+                            "reason": "default",
                         }
                         logger.debug(
                             "New instance (modified) {} queued for default MMI {}".format(
@@ -990,31 +1366,29 @@ def register_event_handlers():
     """Register the necessary event handlers for monitoring."""
     global mmi_event_handler, external_event, doc_changed_handler, doc_synchronizing_handler, doc_synchronized_handler
     try:
-        # Create external event handler (for manual operations)
-        if mmi_event_handler is None:
-            mmi_event_handler = MMIEventHandler()
-            external_event = ExternalEvent.Create(mmi_event_handler)
-            logger.debug("MMI Event Handler Created.")
+        _detach_monitor_subscriptions()
+        doc_changed_handler = None
+        doc_synchronizing_handler = None
+        doc_synchronized_handler = None
+        mmi_event_handler = MMIEventHandler()
+        external_event = ExternalEvent.Create(mmi_event_handler)
+        logger.debug("MMI Event Handler Created.")
 
-        # Register for document changed events
-        if doc_changed_handler is None:
-            doc_changed_handler = EventHandler[DocumentChangedEventArgs](document_changed_handler)
-            # Note: Application is better than Document for app-level monitoring
-            revit.doc.Application.DocumentChanged += doc_changed_handler
-            logger.debug("Document Changed Handler registered.")
-        
-        # Register for document synchronizing events
-        if doc_synchronizing_handler is None:
-            doc_synchronizing_handler = EventHandler[DocumentSynchronizingWithCentralEventArgs](document_synchronizing_handler)
-            revit.doc.Application.DocumentSynchronizingWithCentral += doc_synchronizing_handler
-            logger.debug("Document Synchronizing Handler registered.")
-            
-        # Register for document synchronized events  
-        if doc_synchronized_handler is None:
-            doc_synchronized_handler = EventHandler[DocumentSynchronizedWithCentralEventArgs](document_synchronized_handler)
-            revit.doc.Application.DocumentSynchronizedWithCentral += doc_synchronized_handler
-            logger.debug("Document Synchronized Handler registered.")
-        
+        app = revit.doc.Application
+        doc_changed_handler = EventHandler[DocumentChangedEventArgs](document_changed_handler)
+        app.DocumentChanged += doc_changed_handler
+        _remember_subscription("doc_changed", doc_changed_handler)
+        logger.debug("Document Changed Handler registered.")
+
+        doc_synchronizing_handler = EventHandler[DocumentSynchronizingWithCentralEventArgs](document_synchronizing_handler)
+        app.DocumentSynchronizingWithCentral += doc_synchronizing_handler
+        _remember_subscription("synchronizing", doc_synchronizing_handler)
+        logger.debug("Document Synchronizing Handler registered.")
+
+        doc_synchronized_handler = EventHandler[DocumentSynchronizedWithCentralEventArgs](document_synchronized_handler)
+        app.DocumentSynchronizedWithCentral += doc_synchronized_handler
+        _remember_subscription("synchronized", doc_synchronized_handler)
+        logger.debug("Document Synchronized Handler registered.")
         logger.debug("MMI Monitor event registration completed.")
         return True
     except Exception as e:
@@ -1025,39 +1399,41 @@ def deregister_event_handlers():
     """Deregister event handlers."""
     global mmi_event_handler, external_event, doc_changed_handler, doc_synchronizing_handler, doc_synchronized_handler
     try:
-        # Unregister document changed event handler
+        _detach_monitor_subscriptions()
+        app = revit.doc.Application
         if doc_changed_handler is not None:
-            revit.doc.Application.DocumentChanged -= doc_changed_handler
+            try:
+                app.DocumentChanged -= doc_changed_handler
+            except Exception:
+                pass
             doc_changed_handler = None
             logger.debug("Document Changed Handler unregistered.")
-        
-        # Unregister document synchronizing event handler
+
         if doc_synchronizing_handler is not None:
-            revit.doc.Application.DocumentSynchronizingWithCentral -= doc_synchronizing_handler
+            try:
+                app.DocumentSynchronizingWithCentral -= doc_synchronizing_handler
+            except Exception:
+                pass
             doc_synchronizing_handler = None
             logger.debug("Document Synchronizing Handler unregistered.")
-            
-        # Unregister document synchronized event handler
+
         if doc_synchronized_handler is not None:
-            revit.doc.Application.DocumentSynchronizedWithCentral -= doc_synchronized_handler
+            try:
+                app.DocumentSynchronizedWithCentral -= doc_synchronized_handler
+            except Exception:
+                pass
             doc_synchronized_handler = None
             logger.debug("Document Synchronized Handler unregistered.")
-        
-        # Clear any pending operations and mark handlers as inactive
+
         if mmi_event_handler is not None:
-            # Clear all queued operations
             mmi_event_handler.elements_to_pin = []
             mmi_event_handler.elements_to_validate = []
             mmi_event_handler.validate_corrections = {}
             mmi_event_handler.notify_message = None
             logger.debug("Cleared all queued MMI operations")
-        
-        # Dispose the external event if created
-        if external_event is not None:
-            external_event = None # Mark as inactive
-            mmi_event_handler = None
-            logger.debug("MMI ExternalEvent marked as inactive.")
 
+        external_event = None
+        mmi_event_handler = None
         logger.debug("MMI Monitor event deregistration completed.")
         return True
     except Exception as e:
@@ -1119,7 +1495,7 @@ if __name__ == '__main__':
                 populate_type_id_cache(revit.doc)
             
             # Populate initial MMI cache if pin_elements is enabled (to detect changes)
-            if monitor_settings["pin_elements"]:
+            if monitor_settings["pin_elements"] or monitor_settings.get("warn_on_instance_params", False):
                 populate_initial_mmi_cache(revit.doc)
             
             # Baseline model element ids: post-activation ids are treated as new for default MMI
@@ -1141,10 +1517,10 @@ if __name__ == '__main__':
                 enabled_features.append("Warn when moving elements >={}".format(move_limit))
             if monitor_settings.get("warn_on_type_change", False):
                 enabled_features.append(
-                    "Warn on type changes over {} instances".format(type_limit))
+                    "Warn on type changes with instances >= MMI {}".format(type_limit))
             if monitor_settings.get("warn_on_instance_params", False):
                 enabled_features.append(
-                    "Warn on instance parameter edits over {} elements".format(param_limit))
+                    "Warn on instance parameter edits >= MMI {}".format(param_limit))
             if monitor_settings["validate_mmi"]:
                 enabled_features.append("Attempt to fix MMI values")
             if monitor_settings["check_mmi_after_sync"]:
@@ -1188,6 +1564,7 @@ if __name__ == '__main__':
             # Clear caches
             element_location_cache = {}
             element_mmi_cache = {}
+            element_mmi_blank = set()
             element_type_cache = {}
             type_warn_last = {}
             instance_param_warn_last = None
