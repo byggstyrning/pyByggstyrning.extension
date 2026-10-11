@@ -45,7 +45,8 @@ from pyrevit import HOST_APP, forms, revit, script
 
 # Path setup for lib imports
 pushbutton_dir = op.dirname(__file__)
-panel_dir = op.dirname(pushbutton_dir)
+stack_dir = op.dirname(pushbutton_dir)
+panel_dir = op.dirname(stack_dir)
 tab_dir = op.dirname(panel_dir)
 extension_dir = op.dirname(tab_dir)
 lib_path = op.join(extension_dir, 'lib')
