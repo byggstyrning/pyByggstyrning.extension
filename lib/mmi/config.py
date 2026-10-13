@@ -41,6 +41,7 @@ CONFIG_KEYS = {
     "🆕 Default on new instances": "default_on_new_instances",
     "⚠️ Warn on type changes": "warn_on_type_change",
     "✏️ Warn on instance parameter edits": "warn_on_instance_params",
+    "📅 Set changed date": "write_changed_date",
 }
 
 def is_monitor_active():

@@ -10,6 +10,7 @@ import System
 # Import the MMI schema
 from mmi.schema import MMIParameterSchema
 from mmi.config import CONFIG_KEYS, MONITOR_LIMIT_DEFAULTS
+from mmi.changed_date import format_changed_date, should_stamp_changed_date
 from mmi.threshold import normalize_limit
 try:
     from revit.compat import get_element_id_value
@@ -24,6 +25,7 @@ logger = script.get_logger()
 
 # Schemas that predate per-warning limits. Newest previous version first.
 PREVIOUS_SCHEMA_GUIDS = (
+    "8844cb2d-4234-4bf0-8361-b3da4d64234e",
     "8844cb2d-4234-4bf0-8361-b3da4d64234d",
     "8844cb2d-4234-4bf0-8361-b3da4d64234c",
 )
@@ -33,6 +35,7 @@ _LEGACY_STRING_FIELDS = (
     "last_used_date",
     "pm_id",
     "default_mmi",
+    "changed_date_parameter",
 )
 
 _LEGACY_BOOL_FIELDS = (
@@ -42,6 +45,16 @@ _LEGACY_BOOL_FIELDS = (
     "warn_on_move",
     "check_mmi_after_sync",
     "default_on_new_instances",
+    "warn_on_type_change",
+    "warn_on_instance_params",
+    "write_changed_date",
+)
+
+_LEGACY_INT_FIELDS = (
+    "pin_mmi_limit",
+    "move_mmi_limit",
+    "type_instance_limit",
+    "instance_param_limit",
 )
 
 # Categories that should not have MMI values set
@@ -50,6 +63,29 @@ EXCLUDED_CATEGORIES = [
     int(BuiltInCategory.OST_CurtainGrids),  # Curtain Wall Grids (2034483)
     2451555,                                 # Wall Sweeps (no BuiltInCategory enum available)
 ]
+
+def _find_current_mmi_storage(doc):
+    """Return the current-schema storage element, or None. Does not create one."""
+    try:
+        schema = MMIParameterSchema.schema
+        if not schema:
+            return None
+        data_storage = FilteredElementCollector(doc) \
+            .OfClass(ExtensibleStorage.DataStorage) \
+            .ToElements()
+        for ds in data_storage:
+            try:
+                entity = ds.GetEntity(schema)
+                if entity.IsValid():
+                    return ds
+            except Exception as e:
+                logger.debug("Error checking storage entity: {}".format(str(e)))
+                continue
+        return None
+    except Exception as e:
+        logger.error("Error finding MMI storage: {}".format(str(e)))
+        return None
+
 
 def get_mmi_parameter_name(doc):
     """Get the configured MMI parameter name from extensible storage.
@@ -61,28 +97,68 @@ def get_mmi_parameter_name(doc):
         str: The MMI parameter name or 'MMI' as fallback
     """
     try:
-        # Look for existing storage with our schema
-        data_storage = FilteredElementCollector(doc) \
-            .OfClass(ExtensibleStorage.DataStorage) \
-            .ToElements()
-        
-        for ds in data_storage:
-            try:
-                entity = ds.GetEntity(MMIParameterSchema.schema)
-                if entity.IsValid():
-                    param_name = entity.Get[str]("mmi_parameter_name")
-                    if param_name:
-                        return param_name
-            except Exception as e:
-                logger.debug("Error checking storage entity: {}".format(str(e)))
-                continue
-        
+        ds = _find_current_mmi_storage(doc)
+        if ds is not None:
+            entity = ds.GetEntity(MMIParameterSchema.schema)
+            param_name = entity.Get[str]("mmi_parameter_name")
+            if param_name:
+                return param_name
         return "MMI"  # Default fallback if no stored value
     except Exception as e:
         logger.error("Error getting MMI parameter name: {}".format(str(e)))
         return "MMI"  # Default fallback
 
-def set_mmi_value(doc, elements, value, param_name=None):
+
+def read_changed_date_setting(doc):
+    """Read the optional changed-date switch and text parameter.
+
+    Does not create storage. Missing storage or fields mean the feature is off.
+
+    Returns:
+        tuple: (enabled, parameter_name)
+    """
+    try:
+        ds = _find_current_mmi_storage(doc)
+        if ds is None:
+            return False, ""
+        schema = MMIParameterSchema(ds)
+        if not schema.is_valid:
+            return False, ""
+        enabled = bool(schema.get("write_changed_date"))
+        raw = schema.get("changed_date_parameter")
+        parameter_name = "" if raw is None else str(raw).strip()
+        return enabled, parameter_name
+    except Exception as e:
+        logger.debug("Could not read changed date setting: {}".format(e))
+        return False, ""
+
+
+def get_changed_date_parameter_name(doc):
+    """Return the stored changed-date text parameter name, or \"\"."""
+    _enabled, parameter_name = read_changed_date_setting(doc)
+    return parameter_name
+
+
+def _button_changed_date(doc):
+    """Parameter name and YYYY-MM-dd to stamp, or (None, None)."""
+    enabled, date_param = read_changed_date_setting(doc)
+    mmi_param = get_mmi_parameter_name(doc)
+    if not should_stamp_changed_date(enabled, date_param, mmi_param):
+        return None, None
+    return date_param, format_changed_date(datetime.date.today())
+
+def _try_set_text_parameter(element, param_name, value):
+    """Set a writable text parameter. Returns True when the value is stored."""
+    if not param_name or value is None:
+        return False
+    param = element.LookupParameter(param_name)
+    if param and not param.IsReadOnly and param.StorageType == StorageType.String:
+        param.Set(str(value))
+        return True
+    return False
+
+
+def set_mmi_value(doc, elements, value, param_name=None, extra_param_name=None, extra_value=None):
     """Set MMI parameter value on the given elements.
     
     Args:
@@ -90,6 +166,8 @@ def set_mmi_value(doc, elements, value, param_name=None):
         elements: A list of elements or element_ids
         value: The MMI value to set
         param_name: Optional parameter name, will use stored value or fallback if None
+        extra_param_name: Optional text parameter written only after MMI is set
+        extra_value: Value written to extra_param_name
         
     Returns:
         tuple: (success_count, failed_elements_ids)
@@ -129,11 +207,15 @@ def set_mmi_value(doc, elements, value, param_name=None):
                         element.Category.Name, category_id))
                     continue
             
-            # Try to set the parameter value
-            param = element.LookupParameter(param_name)
-            if param and not param.IsReadOnly and param.StorageType == StorageType.String:
-                param.Set(str(value))
+            if _try_set_text_parameter(element, param_name, value):
                 success_count += 1
+                if extra_param_name and extra_value is not None:
+                    if not _try_set_text_parameter(element, extra_param_name, extra_value):
+                        logger.debug(
+                            "Could not set changed date parameter '{}' on element {}".format(
+                                extra_param_name, element.Id
+                            )
+                        )
             else:
                 failed_elements.append(element.Id)
         except Exception as ex:
@@ -161,13 +243,31 @@ def set_selection_mmi_value(doc, value, show_results=False):
         forms.alert('Please select at least one element.', exitscript=True)
         return False
     
+    # Read before the transaction so storage lookup does not nest transactions.
+    extra_name, extra_value = _button_changed_date(doc)
+    logger.info(
+        "MMI button write: value={0} selection={1} changed_date_param={2} date={3}".format(
+            value,
+            len(selection.element_ids) if selection.element_ids else 0,
+            extra_name or "",
+            extra_value or "",
+        )
+    )
+
     # Start a transaction
     t = Transaction(doc, 'Set MMI Parameter to {}'.format(value))
     t.Start()
     
     try:
-        # Set MMI parameter for selected elements
-        success_count, failed_elements = set_mmi_value(doc, selection.element_ids, value)
+        # Set MMI parameter for selected elements. The date is written in the
+        # same pass, and only on elements whose MMI value was set.
+        success_count, failed_elements = set_mmi_value(
+            doc,
+            selection.element_ids,
+            value,
+            extra_param_name=extra_name,
+            extra_value=extra_value,
+        )
         
         # Show results if requested
         if show_results and success_count > 0:
@@ -193,7 +293,7 @@ def set_selection_mmi_value(doc, value, show_results=False):
         return success_count > 0
         
     except Exception as e:
-        print("Error: {}".format(e))
+        logger.error("Error setting MMI on selection: {0}".format(e))
         forms.alert('Error: {}'.format(e), title='Error')
         return False
     finally:
@@ -271,22 +371,33 @@ def _read_legacy_bool(old_entity, name):
         return False
 
 
+def _read_legacy_int(old_entity, name):
+    try:
+        return int(old_entity.Get[System.Int32](name))
+    except Exception:
+        return None
+
+
 def _extract_legacy_monitor_data(old_entity):
     old_data = {}
     for name in _LEGACY_STRING_FIELDS:
         old_data[name] = _read_legacy_string(old_entity, name)
     for name in _LEGACY_BOOL_FIELDS:
         old_data[name] = _read_legacy_bool(old_entity, name)
+    for name in _LEGACY_INT_FIELDS:
+        old_data[name] = _read_legacy_int(old_entity, name)
     return old_data
 
 
 def _apply_limit_defaults(entity):
-    """Write the per-warning limit defaults and leave the new toggles off."""
-    entity.set("schema_version", "1.4")
+    """Write limit defaults and leave newer optional toggles off."""
+    entity.set("schema_version", "1.5")
     for key, default in MONITOR_LIMIT_DEFAULTS.items():
         entity.set(key, int(default))
     entity.set("warn_on_type_change", False)
     entity.set("warn_on_instance_params", False)
+    entity.set("write_changed_date", False)
+    entity.set("changed_date_parameter", "")
 
 
 def _seed_monitor_limit_defaults(data_storage):
@@ -333,6 +444,18 @@ def migrate_mmi_storage(doc, old_storage, old_schema_guid):
                 entity.set("check_mmi_after_sync", old_data.get("check_mmi_after_sync", False))
                 entity.set("default_on_new_instances", old_data.get("default_on_new_instances", False))
                 _apply_limit_defaults(entity)
+                entity.set("warn_on_type_change", bool(old_data.get("warn_on_type_change", False)))
+                entity.set("warn_on_instance_params", bool(old_data.get("warn_on_instance_params", False)))
+                entity.set("write_changed_date", bool(old_data.get("write_changed_date", False)))
+                date_parameter = old_data.get("changed_date_parameter", "")
+                if not date_parameter:
+                    date_parameter = ""
+                entity.set("changed_date_parameter", str(date_parameter))
+                for key, default in MONITOR_LIMIT_DEFAULTS.items():
+                    raw_limit = old_data.get(key, None)
+                    if raw_limit is None:
+                        continue
+                    entity.set(key, normalize_limit(raw_limit, default))
                 
             logger.debug("Successfully migrated MMI storage to new schema (ElementId: {})".format(new_storage.Id))
             return new_storage
@@ -431,6 +554,33 @@ def save_default_mmi(doc, value):
         return True
     except Exception as e:
         logger.error("Failed to save default_mmi: {}".format(str(e)))
+        return False
+
+
+def save_changed_date_parameter(doc, parameter_name):
+    """Persist the text parameter that receives the changed date.
+
+    Returns:
+        bool: True on success.
+    """
+    try:
+        data_storage = get_or_create_mmi_storage(doc)
+        if not data_storage:
+            logger.error("Could not get or create MMI storage for changed date parameter")
+            return False
+        normalized = "" if parameter_name is None else str(parameter_name).strip()
+        _enabled, current = read_changed_date_setting(doc)
+        if current == normalized:
+            return True
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with revit.Transaction("Save MMI changed date parameter", doc):
+            with MMIParameterSchema(data_storage) as entity:
+                entity.set("changed_date_parameter", normalized)
+                entity.set("last_used_date", timestamp)
+        logger.debug("Saved changed_date_parameter: {}".format(repr(normalized)))
+        return True
+    except Exception as e:
+        logger.error("Failed to save changed date parameter: {}".format(str(e)))
         return False
 
 

@@ -17,7 +17,7 @@ class MMIParameterSchema(BaseSchema):
     """Schema for storing MMI parameter mapping preferences and settings."""
     
     # Schema identification and access levels
-    guid = "8844cb2d-4234-4bf0-8361-b3da4d64234e"  # Updated GUID for new version
+    guid = "8844cb2d-4234-4bf0-8361-b3da4d64234f"  # Updated GUID for changed-date fields
     vendor = "pyByggstyrning"
     application = "MMIParameterMapping"
     read_access_level = ES.AccessLevel.Public
@@ -26,7 +26,7 @@ class MMIParameterSchema(BaseSchema):
     @simple_field(value_type="string")
     def schema_version():
         """Current schema version."""
-        return "1.4"
+        return "1.5"
     
     @simple_field(value_type="string")
     def mmi_parameter_name():
@@ -107,3 +107,13 @@ class MMIParameterSchema(BaseSchema):
     def instance_param_limit():
         """Element count above which an instance-parameter edit shows a warning."""
         return DEFAULT_INSTANCE_PARAM_LIMIT
+
+    @simple_field(value_type="boolean")
+    def write_changed_date():
+        """When true, MMI buttons also write today's date to changed_date_parameter."""
+        return False
+
+    @simple_field(value_type="string")
+    def changed_date_parameter():
+        """Text parameter that receives YYYY-MM-dd when an MMI button sets MMI."""
+        return None

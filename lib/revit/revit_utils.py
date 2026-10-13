@@ -68,8 +68,14 @@ def get_element_by_ifc_guid(ifc_guid):
     
     return None
 
-def get_available_parameters():
-    """Get all available parameters in the document."""
+def get_available_parameters(storage_types=None):
+    """Get writable instance parameter names visible in the active view.
+
+    Args:
+        storage_types: Storage types to include. Defaults to string, number, and integer.
+    """
+    if storage_types is None:
+        storage_types = (StorageType.String, StorageType.Double, StorageType.Integer)
     doc = revit.doc
     # Use a more efficient collector setup - collect just the element ids first
     collector = FilteredElementCollector(doc, doc.ActiveView.Id) \
@@ -99,10 +105,15 @@ def get_available_parameters():
         processed_categories[cat_id] = True
         
         for param in element.Parameters:
-            if not param.IsReadOnly and param.StorageType in [StorageType.String, StorageType.Double, StorageType.Integer]:
+            if not param.IsReadOnly and param.StorageType in storage_types:
                 params.add(param.Definition.Name)
 
     return sorted(list(params))
+
+
+def get_available_text_parameters():
+    """Writable text parameters in the active view, one name per category."""
+    return get_available_parameters((StorageType.String,))
 
 def get_available_parameters2():
     """Get all available parameters that could be used for MMI."""

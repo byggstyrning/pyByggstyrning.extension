@@ -13,8 +13,6 @@ __highlight__ = 'updated'
 # Import standard libraries
 import sys
 import os.path as op
-import json
-import time
 
 # Import Revit API
 import clr
@@ -31,6 +29,7 @@ from Autodesk.Revit.DB import *
 # Import .NET System
 import System
 from System import Object
+from System.Windows import Visibility
 try:
     from System.Collections.ObjectModel import ObservableCollection
 except ImportError:
@@ -60,23 +59,48 @@ logger = script.get_logger()
 # Import from MMI library modules
 from mmi.config import CONFIG_KEYS, STANDARD_MMI_VALUES, MONITOR_LIMIT_DEFAULTS
 from mmi.colorizer import get_color_for_mmi
-from mmi.core import (
-    get_mmi_parameter_name,
-    save_mmi_parameter,
-    save_monitor_config,
-    load_monitor_config,
-    load_monitor_limits,
-    get_default_mmi,
-    save_default_mmi,
-    save_monitor_limits,
-)
+try:
+    from mmi.core import (
+        get_mmi_parameter_name,
+        get_changed_date_parameter_name,
+        save_mmi_parameter,
+        save_changed_date_parameter,
+        save_monitor_config,
+        load_monitor_config,
+        load_monitor_limits,
+        get_default_mmi,
+        save_default_mmi,
+        save_monitor_limits,
+    )
+except Exception as _core_import_ex:
+    forms.alert(
+        "MMI Settings failed to load library code.\n\n{0}\n\nReload the pyByggstyrning extension.".format(
+            _core_import_ex
+        ),
+        title="MMI Settings",
+    )
+    raise
 # Import revit utils
-from revit.revit_utils import get_available_parameters
+from revit.revit_utils import get_available_parameters, get_available_text_parameters
 
 # Import styles for theme support
 from styles import load_styles_to_window
 
 from System.Windows.Media import Brushes, SolidColorBrush, Color as WpfMediaColor
+
+
+class ParameterItem(Object):
+    """One row in a searchable parameter combo."""
+
+    def __init__(self, name):
+        self.display_name = name
+        self.name = name
+
+    def __str__(self):
+        return self.display_name
+
+    def ToString(self):
+        return self.display_name
 
 
 class DefaultMmiComboItem(Object):
@@ -107,9 +131,16 @@ class MMISettingsWindow(forms.WPFWindow):
             
             # Load styles AFTER window initialization (window-scoped, does not affect Revit UI)
             load_styles_to_window(self)
+
+            self.writeChangedDateCheckBox.Checked += self.WriteChangedDate_Checked
+            self.writeChangedDateCheckBox.Unchecked += self.WriteChangedDate_Unchecked
             
-            # Set up ComboBox
+            # Set up parameter combos. The date combo reuses the same search handlers.
+            self._parameter_lists = {}
+            self._wired_search_combos = set()
+            self._search_combo = self.parameterComboBox
             self.parameterComboBox.DisplayMemberPath = "display_name"
+            self.dateParameterComboBox.DisplayMemberPath = "display_name"
             
             self._populate_mmi_combos()
             
@@ -132,48 +163,59 @@ class MMISettingsWindow(forms.WPFWindow):
             self._is_searching = False
             
             # Wire up DropDownOpened and DropDownClosed events for search functionality
-            self.parameterComboBox.DropDownOpened += self.on_parameter_dropdown_opened
-            self.parameterComboBox.DropDownClosed += self.on_parameter_dropdown_closed
+            for combo in (self.parameterComboBox, self.dateParameterComboBox):
+                combo.DropDownOpened += self.on_parameter_dropdown_opened
+                combo.DropDownClosed += self.on_parameter_dropdown_closed
             
         except Exception as e:
             logger.error("Error initializing MMI Settings window: {}".format(str(e)))
-            forms.alert("Failed to initialize MMI Settings window. See log for details.", title="Error")
+            import traceback
+            forms.alert(
+                "Failed to initialize MMI Settings window.\n\n{0}".format(traceback.format_exc()),
+                title="MMI Settings",
+            )
             raise
     
+    def _combo_key(self, combo):
+        name = getattr(combo, "Name", None)
+        if name:
+            return str(name)
+        return id(combo)
+
+    def _bind_parameter_combo(self, combo, names):
+        """Fill a searchable combo and keep the full list for its search box."""
+        items = ObservableCollection[Object]()
+        for param_name in names or []:
+            items.Add(ParameterItem(param_name))
+        combo.ItemsSource = items
+        self._parameter_lists[self._combo_key(combo)] = list(items)
+
+    def _select_parameter(self, combo, name):
+        if not name or combo.ItemsSource is None:
+            return
+        for item in combo.ItemsSource:
+            if item.display_name == name:
+                combo.SelectedItem = item
+                return
+
+    def _selected_parameter_name(self, combo):
+        item = combo.SelectedItem
+        if item is None:
+            return ""
+        name = getattr(item, "display_name", None)
+        if not name:
+            return ""
+        return str(name).strip()
+
     def load_parameters(self):
-        """Load available parameters into the ComboBox."""
+        """Load available parameters into the MMI and changed-date combos."""
         try:
-            # Get all available parameters
             available_parameters = get_available_parameters()
-            
             if not available_parameters:
                 logger.warning("No parameters found in the project")
-                return
-            
-            # Create simple objects with display_name for the ComboBox
-            # The SearchableComboBoxStyle expects items with display_name property
-            class ParameterItem(Object):
-                def __init__(self, name):
-                    self.display_name = name
-                    self.name = name
-                
-                def __str__(self):
-                    return self.display_name
-                
-                def ToString(self):
-                    """Explicit ToString implementation for WPF binding."""
-                    return self.display_name
-            
-            items = ObservableCollection[Object]()
-            for param_name in available_parameters:
-                items.Add(ParameterItem(param_name))
-            
-            # Set ItemsSource
-            self.parameterComboBox.ItemsSource = items
-            
-            # Store original items for search filtering
-            self.all_parameters = list(items)
-            
+            self._bind_parameter_combo(self.parameterComboBox, available_parameters)
+            self._bind_parameter_combo(
+                self.dateParameterComboBox, get_available_text_parameters())
         except Exception as e:
             logger.error("Error loading parameters: {}".format(str(e)))
     
@@ -257,10 +299,10 @@ class MMISettingsWindow(forms.WPFWindow):
             
             # Set selected parameter in ComboBox
             if self.parameterComboBox.ItemsSource:
-                for item in self.parameterComboBox.ItemsSource:
-                    if item.display_name == current_parameter:
-                        self.parameterComboBox.SelectedItem = item
-                        break
+                self._select_parameter(self.parameterComboBox, current_parameter)
+
+            self._select_parameter(
+                self.dateParameterComboBox, get_changed_date_parameter_name(revit.doc))
             
             # Load current monitor configuration (using schema keys, not display names)
             current_config = load_monitor_config(revit.doc, use_display_names=False)
@@ -276,6 +318,11 @@ class MMISettingsWindow(forms.WPFWindow):
                 "warn_on_type_change", False)
             self.warnOnInstanceParamsCheckBox.IsChecked = current_config.get(
                 "warn_on_instance_params", False)
+            date_enabled = bool(current_config.get("write_changed_date", False))
+            self.writeChangedDateCheckBox.IsChecked = date_enabled
+            self.dateParameterComboBox.Visibility = (
+                Visibility.Visible if date_enabled else Visibility.Collapsed
+            )
 
             limit_boxes = (
                 ("pin_mmi_limit", self.pinLimitComboBox),
@@ -332,6 +379,22 @@ class MMISettingsWindow(forms.WPFWindow):
                     error_msg = "Failed to save MMI parameter setting. See log for details."
                     forms.alert(error_msg, title="MMI Parameter Error")
                     return  # Don't continue if parameter save failed
+
+            date_enabled = bool(self.writeChangedDateCheckBox.IsChecked)
+            date_name = self._selected_parameter_name(self.dateParameterComboBox)
+            mmi_name = self._selected_parameter_name(self.parameterComboBox) or get_mmi_parameter_name(revit.doc)
+            if date_enabled and not date_name and not get_changed_date_parameter_name(revit.doc):
+                forms.alert(
+                    "Choose a text parameter for the changed date, or turn Set changed date off.",
+                    title="MMI Settings",
+                )
+                return
+            if date_enabled and date_name and date_name == mmi_name:
+                forms.alert(
+                    "Choose a text parameter other than the MMI parameter.",
+                    title="MMI Settings",
+                )
+                return
             
             # Build config dictionary using schema keys
             config = {
@@ -342,6 +405,7 @@ class MMISettingsWindow(forms.WPFWindow):
                 "default_on_new_instances": self.defaultOnNewInstancesCheckBox.IsChecked or False,
                 "warn_on_type_change": self.warnOnTypeChangeCheckBox.IsChecked or False,
                 "warn_on_instance_params": self.warnOnInstanceParamsCheckBox.IsChecked or False,
+                "write_changed_date": date_enabled,
             }
             
             # Save the configuration
@@ -371,6 +435,20 @@ class MMISettingsWindow(forms.WPFWindow):
                     title="MMI Settings",
                 )
                 return
+
+            if date_name and not save_changed_date_parameter(revit.doc, date_name):
+                forms.warning(
+                    "Failed to save the changed date parameter. See log for details.",
+                    title="MMI Settings",
+                )
+                return
+
+            logger.info(
+                "MMI Settings saved: write_changed_date={0} changed_date_parameter={1}".format(
+                    date_enabled,
+                    date_name or get_changed_date_parameter_name(revit.doc) or "",
+                )
+            )
             
             forms.show_balloon(
                 header="MMI Settings Saved",
@@ -387,24 +465,50 @@ class MMISettingsWindow(forms.WPFWindow):
     def CancelButton_Click(self, sender, e):
         """Handle click on Cancel button."""
         self.Close()
+
+    def WriteChangedDate_Checked(self, sender, e):
+        """Show the text-parameter selector and open it when the user turns the switch on."""
+        self.dateParameterComboBox.Visibility = Visibility.Visible
+        if getattr(self, "_is_initializing", False):
+            return
+        from System.Windows.Threading import DispatcherPriority
+        self.dateParameterComboBox.Dispatcher.BeginInvoke(
+            DispatcherPriority.Loaded,
+            System.Action(self._open_date_parameter_selector),
+        )
+
+    def _open_date_parameter_selector(self):
+        try:
+            self.dateParameterComboBox.IsDropDownOpen = True
+        except Exception as ex:
+            logger.debug("Could not open changed date parameter selector: {}".format(ex))
+
+    def WriteChangedDate_Unchecked(self, sender, e):
+        """Hide the text-parameter selector while the switch is off."""
+        try:
+            self.dateParameterComboBox.IsDropDownOpen = False
+        except Exception:
+            pass
+        self.dateParameterComboBox.Visibility = Visibility.Collapsed
     
     def on_parameter_dropdown_opened(self, sender, args):
         """Handle parameter dropdown opened event - initialize search filter."""
         try:
             # Set flag to indicate we're searching (prevents auto-save)
             self._is_searching = True
+            self._search_combo = sender
             
             # Store current selection before filtering
-            if self.parameterComboBox.SelectedItem:
-                self._selected_item_before_search = self.parameterComboBox.SelectedItem
+            if sender.SelectedItem:
+                self._selected_item_before_search = sender.SelectedItem
                 try:
-                    self._selected_param_name_before_search = self.parameterComboBox.SelectedItem.display_name
+                    self._selected_param_name_before_search = sender.SelectedItem.display_name
                 except:
                     self._selected_param_name_before_search = None
             
             # Use Dispatcher to wait for popup to be fully rendered before finding SearchTextBox
             from System.Windows.Threading import DispatcherPriority
-            self.parameterComboBox.Dispatcher.BeginInvoke(
+            sender.Dispatcher.BeginInvoke(
                 DispatcherPriority.Loaded,
                 System.Action(self._initialize_search_textbox)
             )
@@ -423,15 +527,15 @@ class MMISettingsWindow(forms.WPFWindow):
         """Initialize the search textbox after popup is loaded."""
         try:
             # Check if template exists
-            if not self.parameterComboBox.Template:
+            if not self._search_combo.Template:
                 logger.warning("ComboBox has no template")
                 return
             
             # Try to find Popup first
-            popup = self.parameterComboBox.Template.FindName("Popup", self.parameterComboBox)
+            popup = self._search_combo.Template.FindName("Popup", self._search_combo)
             
             # Try to find SearchTextBox directly
-            search_textbox = self.parameterComboBox.Template.FindName("SearchTextBox", self.parameterComboBox)
+            search_textbox = self._search_combo.Template.FindName("SearchTextBox", self._search_combo)
             
             # If not found directly, try traversing visual tree from Popup
             if not search_textbox and popup:
@@ -462,12 +566,14 @@ class MMISettingsWindow(forms.WPFWindow):
                 self._search_textbox = search_textbox
                 # Clear search text
                 search_textbox.Text = ""
-                # Wire up TextChanged event if not already done
-                if not hasattr(self, '_search_textbox_wired'):
+                # Wire each combo's search box once. Key by name so a new
+                # wrapper for the same combo does not subscribe twice.
+                combo_key = self._combo_key(self._search_combo)
+                if combo_key not in self._wired_search_combos:
                     search_textbox.TextChanged += self.on_search_text_changed
                     search_textbox.KeyDown += self.on_search_textbox_keydown
                     search_textbox.PreviewKeyDown += self.on_search_textbox_preview_keydown
-                    self._search_textbox_wired = True
+                    self._wired_search_combos.add(combo_key)
                     logger.debug("Wired up SearchTextBox events")
                 # Focus the search textbox
                 search_textbox.Focus()
@@ -486,12 +592,14 @@ class MMISettingsWindow(forms.WPFWindow):
         try:
             search_text = sender.Text.lower().strip()
             
+            combo = self._search_combo
             # Clear current items - handle ItemsSource
-            if self.parameterComboBox.ItemsSource is not None:
-                self.parameterComboBox.ItemsSource = None
-            self.parameterComboBox.Items.Clear()
+            if combo.ItemsSource is not None:
+                combo.ItemsSource = None
+            combo.Items.Clear()
             
-            if not hasattr(self, 'all_parameters') or not self.all_parameters:
+            all_parameters = self._parameter_lists.get(self._combo_key(combo), [])
+            if not all_parameters:
                 return
             
             # Use ItemsSource for SearchableComboBox
@@ -499,16 +607,16 @@ class MMISettingsWindow(forms.WPFWindow):
             
             if not search_text:
                 # Show all parameters if search is empty
-                for param_item in self.all_parameters:
+                for param_item in all_parameters:
                     filtered_collection.Add(param_item)
             else:
                 # Filter parameters based on search text
-                for param_item in self.all_parameters:
+                for param_item in all_parameters:
                     param_name = param_item.display_name.lower()
                     if search_text in param_name:
                         filtered_collection.Add(param_item)
             
-            self.parameterComboBox.ItemsSource = filtered_collection
+            combo.ItemsSource = filtered_collection
             
             # Try to restore selection if it matches the filter
             if hasattr(self, '_selected_item_before_search') and self._selected_item_before_search:
@@ -516,7 +624,7 @@ class MMISettingsWindow(forms.WPFWindow):
                     # Use ItemsSource since we just set it
                     for item in filtered_collection:
                         if item == self._selected_item_before_search:
-                            self.parameterComboBox.SelectedItem = item
+                            combo.SelectedItem = item
                             break
                 except Exception as ex:
                     logger.debug("Error restoring selection in filter: {}".format(str(ex)))
@@ -524,7 +632,7 @@ class MMISettingsWindow(forms.WPFWindow):
             # Maintain focus on search textbox after filtering
             if hasattr(self, '_search_textbox') and self._search_textbox:
                 from System.Windows.Threading import DispatcherPriority
-                self.parameterComboBox.Dispatcher.BeginInvoke(
+                combo.Dispatcher.BeginInvoke(
                     DispatcherPriority.Input,
                     System.Action(lambda: self._search_textbox.Focus())
                 )
@@ -543,7 +651,7 @@ class MMISettingsWindow(forms.WPFWindow):
                 args.Handled = True
                 # Use Dispatcher to set focus after current event completes
                 from System.Windows.Threading import DispatcherPriority
-                self.parameterComboBox.Dispatcher.BeginInvoke(
+                self._search_combo.Dispatcher.BeginInvoke(
                     DispatcherPriority.Input,
                     System.Action(lambda: self._focus_first_item())
                 )
@@ -551,10 +659,10 @@ class MMISettingsWindow(forms.WPFWindow):
             
             # Handle Up arrow key
             elif args.Key == Key.Up:
-                if self.parameterComboBox.Items.Count > 0:
+                if self._search_combo.Items.Count > 0:
                     args.Handled = True
                     from System.Windows.Threading import DispatcherPriority
-                    self.parameterComboBox.Dispatcher.BeginInvoke(
+                    self._search_combo.Dispatcher.BeginInvoke(
                         DispatcherPriority.Input,
                         System.Action(lambda: self._focus_last_item())
                     )
@@ -562,15 +670,15 @@ class MMISettingsWindow(forms.WPFWindow):
             
             # Handle Enter key
             elif args.Key == Key.Enter:
-                if self.parameterComboBox.SelectedIndex >= 0:
+                if self._search_combo.SelectedIndex >= 0:
                     args.Handled = True
-                    self.parameterComboBox.IsDropDownOpen = False
+                    self._search_combo.IsDropDownOpen = False
                 return
             
             # Handle Escape key
             elif args.Key == Key.Escape:
                 args.Handled = True
-                self.parameterComboBox.IsDropDownOpen = False
+                self._search_combo.IsDropDownOpen = False
                 return
                 
         except Exception as ex:
@@ -582,8 +690,8 @@ class MMISettingsWindow(forms.WPFWindow):
             first_item = self._find_first_combobox_item()
             if first_item:
                 first_item.Focus()
-                if self.parameterComboBox.Items.Count > 0:
-                    self.parameterComboBox.SelectedIndex = 0
+                if self._search_combo.Items.Count > 0:
+                    self._search_combo.SelectedIndex = 0
         except Exception as ex:
             logger.debug("Error focusing first item: {}".format(str(ex)))
     
@@ -593,7 +701,7 @@ class MMISettingsWindow(forms.WPFWindow):
             last_item = self._find_last_combobox_item()
             if last_item:
                 last_item.Focus()
-                self.parameterComboBox.SelectedIndex = self.parameterComboBox.Items.Count - 1
+                self._search_combo.SelectedIndex = self._search_combo.Items.Count - 1
         except Exception as ex:
             logger.debug("Error focusing last item: {}".format(str(ex)))
     
@@ -609,10 +717,10 @@ class MMISettingsWindow(forms.WPFWindow):
             from System.Windows.Controls import ComboBoxItem
             from System.Windows.Media import VisualTreeHelper
             
-            if not self.parameterComboBox.Template:
+            if not self._search_combo.Template:
                 return None
             
-            popup = self.parameterComboBox.Template.FindName("Popup", self.parameterComboBox)
+            popup = self._search_combo.Template.FindName("Popup", self._search_combo)
             if not popup or not popup.Child:
                 return None
             
@@ -641,10 +749,10 @@ class MMISettingsWindow(forms.WPFWindow):
             from System.Windows.Controls import ComboBoxItem
             from System.Windows.Media import VisualTreeHelper
             
-            if not self.parameterComboBox.Template:
+            if not self._search_combo.Template:
                 return None
             
-            popup = self.parameterComboBox.Template.FindName("Popup", self.parameterComboBox)
+            popup = self._search_combo.Template.FindName("Popup", self._search_combo)
             if not popup or not popup.Child:
                 return None
             
@@ -669,8 +777,13 @@ class MMISettingsWindow(forms.WPFWindow):
 
 if __name__ == '__main__':
     try:
+        logger.info("MMI Settings: opening window")
         window = MMISettingsWindow()
         window.ShowDialog()
     except Exception as e:
         logger.error("Error showing MMI Settings window: {}".format(str(e)))
-        forms.alert("Failed to open MMI Settings window. See log for details.", title="Error")
+        import traceback
+        forms.alert(
+            "Failed to open MMI Settings window.\n\n{0}".format(traceback.format_exc()),
+            title="MMI Settings",
+        )
