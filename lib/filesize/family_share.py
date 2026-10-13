@@ -24,6 +24,7 @@ from filesize.family_purge import (
     _find_family,
     _instance_count,
     _load_ok,
+    _progress,
     _text,
     quiet_transaction,
 )
@@ -208,11 +209,11 @@ def _category_counts(doc):
     return dict(counts)
 
 
-def duplicated_nested(doc, on_status=None):
+def duplicated_nested(doc, on_status=None, host_names=None, on_progress=None):
     """Non-shared model families loaded in two or more hosts.
 
-    Returns a list of (nested name, sorted host names). One host that fails to
-    open is skipped.
+    host_names limits which hosts are opened. Returns a list of
+    (nested name, sorted host names). One host that fails to open is skipped.
     """
     hosts = {}
     families = []
@@ -224,10 +225,16 @@ def duplicated_nested(doc, on_status=None):
             continue
         seen.add(family.Name)
         families.append(family.Name)
+    if host_names is not None:
+        allowed = set(host_names)
+        families = [name for name in families if name in allowed]
     families.sort()
     total = len(families)
     _emit(on_status, u'Looking for nested families copied into several hosts ({0})'.format(total))
     for index, host_name in enumerate(families):
+        _progress(
+            on_progress, index + 1, total or 1,
+            u'Scanning {0}'.format(host_name))
         if index % 25 == 0:
             _emit(on_status, u'  scan {0}/{1}'.format(index + 1, total))
         host = _find_family(doc, host_name)
@@ -355,41 +362,52 @@ def _load_host(doc, family_doc, host_name):
     _load_in_group(doc, _do_load, _accept)
 
 
-def share_duplicated_nested(doc, out_dir, log_path=None, on_status=None):
+def share_duplicated_nested(doc, out_dir, log_path=None, on_status=None,
+                            host_names=None, on_progress=None):
     """Share nested families that are copied into two or more hosts.
 
-    Writes one .rfa per shared family under out_dir. Does not save the project.
-    A host that cannot accept the shared version is left as it was.
+    host_names limits which hosts are opened and reloaded. Writes one .rfa
+    per shared family under out_dir. Does not save the project. A host that
+    cannot accept the shared version is left as it was.
     """
     if out_dir and not os.path.isdir(out_dir):
         os.makedirs(out_dir)
     started = time.time()
     instances_before = int(_instance_count(doc))
     categories_before = _category_counts(doc)
-    found = duplicated_nested(doc, on_status)
+    found = duplicated_nested(doc, on_status, host_names, on_progress)
     _emit(on_status, u'{0} nested families are copied into several hosts'.format(len(found)))
 
     paths = {}
     export_errors = []
-    for name, host_names in found:
-        _emit(on_status, u'Shared definition: {0} ({1} hosts)'.format(name, len(host_names)))
+    export_total = len(found)
+    for index, pair in enumerate(found):
+        name, hosts_for_nested = pair
+        _progress(
+            on_progress, index + 1, export_total or 1,
+            u'Exporting shared {0}'.format(name))
+        _emit(on_status, u'Shared definition: {0} ({1} hosts)'.format(
+            name, len(hosts_for_nested)))
         try:
-            paths[name] = _export_shared(doc, name, host_names[0], out_dir)
+            paths[name] = _export_shared(doc, name, hosts_for_nested[0], out_dir)
         except Exception as ex:
             export_errors.append({'name': name, 'error': _text(ex)})
             _emit(on_status, u'  export rolled back: {0}'.format(_text(ex)))
 
     by_host = {}
-    for name, host_names in found:
+    for name, hosts_for_nested in found:
         if name not in paths:
             continue
-        for host_name in host_names:
+        for host_name in hosts_for_nested:
             by_host.setdefault(host_name, []).append(name)
     host_names = sorted(by_host.keys())
 
     rows = []
     total = len(host_names)
     for index, host_name in enumerate(host_names):
+        _progress(
+            on_progress, index + 1, total or 1,
+            u'Sharing nested families in {0}'.format(host_name))
         _emit(on_status, u'[{0}/{1}] {2}'.format(index + 1, total, host_name))
         host = _find_family(doc, host_name)
         row = {
@@ -408,6 +426,9 @@ def share_duplicated_nested(doc, out_dir, log_path=None, on_status=None):
             family_doc = doc.EditFamily(host)
             prepared = []
             for name in by_host[host_name]:
+                _progress(
+                    on_progress, index + 1, total or 1,
+                    u'{0} / {1}'.format(host_name, name))
                 try:
                     _load_nested(family_doc, name, paths[name])
                     prepared.append(name)
@@ -437,6 +458,10 @@ def share_duplicated_nested(doc, out_dir, log_path=None, on_status=None):
         rolled_text = u', '.join(item['name'] for item in row['rolled_back']) or u'-'
         _emit(on_status, u'    shared: {0}  rolled back: {1}  {2}s'.format(
             shared_text, rolled_text, row['sec']))
+        _progress(
+            on_progress, index + 1, total or 1,
+            u'{0}  shared {1}, rolled back {2}'.format(
+                host_name, len(row['shared']), len(row['rolled_back'])))
 
     instances_after = int(_instance_count(doc))
     categories_after = _category_counts(doc)

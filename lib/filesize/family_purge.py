@@ -360,7 +360,7 @@ def project_famtype_refs(doc, family):
     return refs
 
 
-def slim_family_doc(fdoc, stats, depth=0, max_depth=6, protect=None):
+def slim_family_doc(fdoc, stats, depth=0, max_depth=6, protect=None, on_status=None):
     stats['docs'] = stats.get('docs', 0) + 1
     stats['purged'] = stats.get('purged', 0) + purge_unused(fdoc, protect=protect)
     if depth >= max_depth:
@@ -372,8 +372,10 @@ def slim_family_doc(fdoc, stats, depth=0, max_depth=6, protect=None):
         nested_name = nested.Name
         nested_doc = None
         try:
+            _emit(on_status, u'{0} / {1}'.format(_text(fdoc.Title), _text(nested_name)))
             nested_doc = fdoc.EditFamily(nested)
-            slim_family_doc(nested_doc, stats, depth + 1, max_depth)
+            slim_family_doc(
+                nested_doc, stats, depth + 1, max_depth, on_status=on_status)
             try:
                 loaded = nested_doc.LoadFamily(fdoc, _KeepValuesLoadOptions())
                 if _load_ok(loaded):
@@ -402,7 +404,7 @@ def _find_family(doc, name):
     return None
 
 
-def slim_project_family(doc, family, protect=None):
+def slim_project_family(doc, family, protect=None, on_status=None):
     """Slim one loaded family. Unchanged families are not loaded back."""
     started = time.time()
     name = family.Name
@@ -410,7 +412,7 @@ def slim_project_family(doc, family, protect=None):
     family_doc = None
     try:
         family_doc = doc.EditFamily(family)
-        slim_family_doc(family_doc, stats, protect=protect)
+        slim_family_doc(family_doc, stats, protect=protect, on_status=on_status)
         if stats.get('purged') or stats.get('reloaded'):
             loaded = family_doc.LoadFamily(doc, _KeepValuesLoadOptions())
             stats['loaded'] = _load_ok(loaded)
@@ -429,6 +431,57 @@ def slim_project_family(doc, family, protect=None):
                 pass
     stats['sec'] = round(time.time() - started, 1)
     return stats
+
+
+def _family_category_name(family):
+    category = family.FamilyCategory
+    if category is not None and category.Name:
+        return category.Name
+    return u''
+
+
+def family_instance_counts(doc):
+    """Placed instance count per family name in this model."""
+    symbol_names = {}
+    for symbol in DB.FilteredElementCollector(doc).OfClass(DB.FamilySymbol):
+        try:
+            family = symbol.Family
+            name = family.Name if family is not None else None
+            if not name:
+                continue
+            symbol_names[_id_value(symbol.Id)] = name
+        except Exception:
+            continue
+    counts = {}
+    for instance in DB.FilteredElementCollector(doc).OfClass(DB.FamilyInstance):
+        try:
+            name = symbol_names.get(_id_value(instance.GetTypeId()))
+        except Exception:
+            continue
+        if not name:
+            continue
+        counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
+def loadable_families(doc):
+    """Editable non-inplace families as (name, category, instance count)."""
+    counts = family_instance_counts(doc)
+    rows = []
+    seen = set()
+    for family in DB.FilteredElementCollector(doc).OfClass(DB.Family):
+        if not family.Name or not family.IsEditable or family.IsInPlace:
+            continue
+        if family.Name in seen:
+            continue
+        seen.add(family.Name)
+        rows.append((
+            family.Name,
+            _family_category_name(family),
+            counts.get(family.Name, 0),
+        ))
+    rows.sort(key=lambda item: (_text(item[1]).lower(), _text(item[0]).lower()))
+    return rows
 
 
 def _candidate_names(doc):
@@ -468,14 +521,26 @@ def _emit(callback, message):
         pass
 
 
-def purge_project(doc, max_pass=15, keep_classes=KEEP_CLASSES):
+def _progress(callback, current, total, message):
+    if callback is None:
+        return
+    try:
+        callback(current, total, message)
+    except Exception:
+        pass
+
+
+def purge_project(doc, max_pass=15, keep_classes=KEEP_CLASSES, on_progress=None):
     """Project Purge Unused, repeated, never deleting keep_classes.
 
     Only meaningful in a model that still has its placed instances. In a model
     whose geometry was peeled off, every family counts as unused.
     """
     counts = Counter()
-    for _ in range(max_pass):
+    for pass_index in range(max_pass):
+        _progress(
+            on_progress, 0, 0,
+            u'Purging unused project content, pass {0}'.format(pass_index + 1))
         found = doc.GetUnusedElements(HashSet[DB.ElementId]())
         ids = HashSet[DB.ElementId]()
         kinds = Counter()
@@ -517,26 +582,41 @@ def purge_project(doc, max_pass=15, keep_classes=KEEP_CLASSES):
     return dict(counts)
 
 
-def purge(doc, log_path=None, on_status=None, do_project_purge=True):
-    """Slim every editable loaded family, then optionally purge the project.
+def purge(doc, log_path=None, on_status=None, do_project_purge=True,
+          family_names=None, on_progress=None):
+    """Slim editable loaded families, then optionally purge the project.
 
-    Caller turns quiet mode on first and off afterwards, including around the
-    compact save. Returns a result dict. Does not save the document.
+    family_names limits the run to those families. None means every editable
+    loaded family. Caller turns quiet mode on first and off afterwards,
+    including around the compact save. Returns a result dict. Does not save
+    the document.
     """
     before = begin_counts(doc)
     names, duplicates = _candidate_names(doc)
+    if family_names is not None:
+        wanted = set(family_names)
+        names = [name for name in names if name in wanted]
     total = len(names)
     started = time.time()
     rows = []
     _emit(on_status, u'Slimming {0} loadable families'.format(total))
+    _progress(on_progress, 0, total, u'Slimming {0} families'.format(total))
+
+    def _note(message):
+        _emit(on_status, message)
+        _progress(on_progress, _note_state['index'], total or 1, message)
+
+    _note_state = {'index': 0}
     for index, name in enumerate(names):
-        _emit(on_status, u'[{0}/{1}] {2}'.format(index + 1, total, name))
+        _note_state['index'] = index + 1
+        _note(u'Purging {0}'.format(name))
         family = _find_family(doc, name)
         if family is None:
             stats = {'name': name, 'error': u'family was not found', 'loaded': False}
         else:
             protect = project_famtype_refs(doc, family)
-            stats = slim_project_family(doc, family, protect=protect)
+            stats = slim_project_family(
+                doc, family, protect=protect, on_status=_note)
             if protect:
                 stats['protected'] = [
                     u'{0} : {1}'.format(pair[0], pair[1]) for pair in sorted(protect)
@@ -555,11 +635,11 @@ def purge(doc, log_path=None, on_status=None, do_project_purge=True):
                 stats.get('reloaded') or 0,
                 len(kept),
                 stats.get('sec') or 0)
-        _emit(on_status, detail)
+        _note(detail.strip())
     project_counts = None
     if do_project_purge:
         _emit(on_status, u'Purging unused items in the project')
-        project_counts = purge_project(doc)
+        project_counts = purge_project(doc, on_progress=on_progress)
     return {
         'families': rows,
         'family_total': total,
