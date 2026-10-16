@@ -12,6 +12,8 @@ revit.view_hud_config. Available chips:
 - Visual style (Wireframe, Hidden Line, Shaded, …)
 - Scope box (dropdown; hidden when the view has no Scope Box parameter)
 - Section box (on/off; hidden on non-3D views)
+- Sheet (shown only while a 3D View Reference on one sheet is selected;
+  click opens that sheet)
 
 start_view_hud / stop_view_hud / is_view_hud_running manage the bundle as
 one toggle for the ribbon button. A ⚙ badge on the right of the bar opens
@@ -85,6 +87,7 @@ DETAIL_LEVEL_ID = CHIP_DETAIL_LEVEL
 DISPLAY_STYLE_ID = CHIP_DISPLAY_STYLE
 SCOPE_BOX_ID = CHIP_SCOPE_BOX
 SECTION_BOX_ID = CHIP_SECTION_BOX
+SHEET_JUMP_ID = 'sheet_jump'
 CONFIG_ID = 'hud_config'
 _SAVE = 'Save'
 _AUTO_START = 'Auto-start'
@@ -755,17 +758,52 @@ def make_config_switcher():
         on_left_click=lambda ua: None)
 
 
+def _sheet_chip_text(document, view):
+    from pyrevit import HOST_APP
+    from revit.view_reference_jumps import sheet_chip_text
+    uiapp = HOST_APP.uiapp
+    if uiapp is None or uiapp.ActiveUIDocument is None:
+        return None
+    return sheet_chip_text(document, uiapp.ActiveUIDocument)
+
+
+def _open_sheet_chip(uiapp):
+    from revit.view_reference_jumps import open_selected_reference_sheet
+    open_selected_reference_sheet(uiapp)
+
+
+def make_sheet_jump_switcher():
+    """Chip for the selected 3D View Reference. Hidden for any other selection."""
+    return TextSwitcher(
+        SHEET_JUMP_ID,
+        text_provider=_sheet_chip_text,
+        tooltip_provider=lambda text: u'Zoom to this view on the sheet',
+        on_left_click=_open_sheet_chip,
+    )
+
+
+def ensure_sheet_jump_chip(host):
+    """Add or replace the sheet chip so a reload picks up the current click."""
+    if host is None:
+        return
+    ids = [item_id for item_id in host.item_ids() if item_id != SHEET_JUMP_ID]
+    index = ids.index(CONFIG_ID) if CONFIG_ID in ids else None
+    host.add_item(make_sheet_jump_switcher(), index=index, refresh=True)
+
+
 def _sync_host_chips(host):
     """Add/remove user chips; keep config badge last. No host teardown."""
     wanted = enabled_chip_ids()
     for item_id in list(host.item_ids()):
-        if item_id != CONFIG_ID and item_id not in wanted:
+        if item_id not in (CONFIG_ID, SHEET_JUMP_ID) and item_id not in wanted:
             host.remove_item(item_id, _teardown_if_empty=False, refresh=False)
     for idx, chip_id in enumerate(wanted):
         if host.find_item(chip_id) is None:
             factory = _FACTORIES.get(chip_id)
             if factory is not None:
                 host.add_item(factory(), index=idx, refresh=False)
+    if host.find_item(SHEET_JUMP_ID) is None:
+        host.add_item(make_sheet_jump_switcher(), refresh=False)
     host.remove_item(CONFIG_ID, _teardown_if_empty=False, refresh=False)
     host.add_item(make_config_switcher(), refresh=False)
     host.refresh()
@@ -798,6 +836,7 @@ def start_view_hud(uiapp, document, logger=None):
     existing = find_hud_host(document)
     if existing is not None and existing.is_paused() and existing.item_ids():
         existing.resume()
+        ensure_sheet_jump_chip(existing)
         return existing
     if existing is not None:
         existing.stop()
@@ -807,6 +846,7 @@ def start_view_hud(uiapp, document, logger=None):
         factory = _FACTORIES.get(chip_id)
         if factory is not None:
             host.add_item(factory(), refresh=False)
+    host.add_item(make_sheet_jump_switcher(), refresh=False)
     host.add_item(make_config_switcher(), refresh=False)
     host.refresh()
     return host

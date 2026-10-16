@@ -26,6 +26,7 @@ Auto-start hooks `DocumentOpened` from `startup.py`.
 | Visual style | Wireframe, Hidden Line, Shaded, … | dropdown | view has no display style |
 | Scope box | Assigned scope box, or None | dropdown of project scope boxes | view has no Scope Box parameter |
 | Section box | On / Off | toggle 3D section box | view is not a 3D view |
+| Sheet | Sheet number of the selected 3D View Reference | open the sheet and zoom to that viewport | selection is not references on one sheet |
 
 Phase and Workset are on by default. The others are opt-in via the ⚙
 badge (CommandSwitchWindow toggles).

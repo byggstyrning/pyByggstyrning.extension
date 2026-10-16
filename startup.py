@@ -63,8 +63,6 @@ def _maybe_start_view_hud(document=None):
         if lib_path not in sys.path:
             sys.path.insert(0, lib_path)
         from revit.view_hud_config import is_auto_start_enabled
-        if not is_auto_start_enabled():
-            return
         uiapp = HOST_APP.uiapp
         if uiapp is None:
             return
@@ -75,10 +73,15 @@ def _maybe_start_view_hud(document=None):
                 return
             doc = uidoc.Document
         from revit.context_switchers import (
+            ensure_sheet_jump_chip,
+            find_hud_host,
             is_view_hud_running,
             start_view_hud,
         )
         if is_view_hud_running(doc):
+            ensure_sheet_jump_chip(find_hud_host(doc))
+            return
+        if not is_auto_start_enabled():
             return
         start_view_hud(uiapp, doc)
     except Exception as ex:
