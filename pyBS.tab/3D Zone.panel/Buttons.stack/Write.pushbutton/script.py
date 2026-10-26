@@ -174,7 +174,13 @@ class ConfigSelectorWindow(forms.WPFWindow):
         # Load cached "active view only" setting
         cached_active_view_only = get_active_view_only_setting()
         self.activeViewOnlyCheckBox.IsChecked = cached_active_view_only
-    
+
+        # Zone Audit: trace the current selection instead of writing (read-only)
+        self.trace_selected = False
+        n_selected = len(selected_element_ids)
+        self.traceSelectedCheckBox.Content = "Trace {} selected element(s): why (not) mapped? (read-only)".format(n_selected)
+        self.traceSelectedCheckBox.IsEnabled = n_selected > 0
+
     def write_button_click(self, sender, args):
         """Handle Write button click - collect checked configs and close."""
         # Collect all checked configurations
@@ -182,13 +188,14 @@ class ConfigSelectorWindow(forms.WPFWindow):
         for item in self.config_items:
             if item.IsSelected:
                 selected_configs.append(item.config_dict)
-        
+
         # Sort by order
         selected_configs.sort(key=lambda x: x.get("order", 0))
-        
+
         # Store result and active view setting, then close window
         self.selected_configs = selected_configs
         self.active_view_only = self.activeViewOnlyCheckBox.IsChecked
+        self.trace_selected = bool(self.traceSelectedCheckBox.IsChecked)
         
         # Cache the "active view only" setting for next time
         set_active_view_only_setting(self.active_view_only)
@@ -204,7 +211,12 @@ class ConfigSelectorWindow(forms.WPFWindow):
 
 if __name__ == '__main__':
     doc = revit.doc
-    
+    # Current selection, used by the "Trace selected element(s)" checkbox
+    try:
+        selected_element_ids = list(revit.get_selection().element_ids)
+    except Exception:
+        selected_element_ids = []
+
     class BatchProgressAdapter(object):
         """Adapter to map per-config progress (0..N) into one batch progress bar.
         
@@ -300,7 +312,42 @@ if __name__ == '__main__':
         active_view = doc.ActiveView
         if active_view:
             view_id = active_view.Id
-    
+
+    # --- Zone Audit: trace the selected elements instead of writing (read-only) ---
+    if selector_window.trace_selected:
+        try:
+            from zone3d import audit
+            try:
+                audit = reload(audit)
+            except Exception:
+                pass
+            output = script.get_output()
+            output.set_title("Zone Audit - element trace")
+            output.print_md("# Zone Audit: why (not) mapped?")
+            output.print_md("Read-only. Mirrors Write Mappings gate by gate; nothing is written to the model.")
+            elements = [doc.GetElement(eid) for eid in selected_element_ids]
+            elements = [e for e in elements if e is not None]
+            summary_lines = []
+            with forms.ProgressBar(title="Zone Audit: tracing...", indeterminate=True):
+                for zone_config in selected_configs:
+                    result = audit.run_element_trace(doc, zone_config, elements, view_id=view_id, output=output)
+                    if result.get("error"):
+                        summary_lines.append("{}: {}".format(zone_config.get("name", "?"), result["error"]))
+                        continue
+                    totals = result.get("totals", {})
+                    summary_lines.append("{}: {}".format(
+                        zone_config.get("name", "?"),
+                        ", ".join("{} {}".format(k, v) for k, v in sorted(totals.items(), key=lambda kv: -kv[1]))))
+                    summary_lines.append("  logs: {}".format(result.get("txt")))
+            output.print_md("## Reason codes")
+            output.print_html("<pre style='white-space:pre-wrap;font-size:11px'>{}</pre>".format(
+                audit._esc(audit.reasons_help_text())))
+            forms.alert("Element trace done.\n\n" + "\n".join(summary_lines), title="Zone Audit")
+        except Exception as e:
+            logger.error("Zone Audit failed: {}".format(e))
+            forms.alert("Zone Audit failed:\n\n{}".format(e), title="Zone Audit")
+        script.exit()
+
     try:
         # Execute selected configurations manually (similar to execute_all_configurations)
         summary = {
