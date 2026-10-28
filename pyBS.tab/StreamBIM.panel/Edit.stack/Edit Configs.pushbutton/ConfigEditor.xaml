@@ -36,7 +36,7 @@
                     </Grid.RowDefinitions>
 
                     <ListView x:Name="configsListView" Grid.Row="0" Margin="0,0,0,10" SelectionMode="Single"
-                             Style="{DynamicResource StandardListBoxStyle}">
+                             Style="{DynamicResource StandardListViewStyle}">
                         <ListView.View>
                             <GridView ColumnHeaderContainerStyle="{DynamicResource DefaultGridViewColumnHeaderStyle}">
                                 <GridViewColumn Header="Checklist" DisplayMemberBinding="{Binding ChecklistName}" Width="150"/>
