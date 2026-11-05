@@ -4,7 +4,7 @@
 from Autodesk.Revit.DB import (
     FilteredElementCollector, BuiltInParameter, BuiltInCategory,
     Category, ElementId, Level, SpatialElementBoundaryOptions, StorageType,
-    FamilyInstance, FilledRegion, View, Options, GeometryElement
+    FamilyInstance, FilledRegion, View, Options, GeometryElement, Material, Color
 )
 from pyrevit import script
 
@@ -910,15 +910,193 @@ class CurveSegmentWrapper(object):
 class RegionAdapter(SpatialElementAdapter):
     """Adapter for FilledRegion elements."""
     
-    def __init__(self, active_view=None):
+    MATERIAL_FROM_TYPE_NAME = "__region_type_name__"
+
+    def __init__(self, active_view=None, parameters_to_copy=None, auto_bind_missing=True,
+                 material_source=None, material_param="Material", create_missing_materials=True):
         """Initialize adapter with active view for phase handling.
-        
+
         Args:
             active_view: View object (optional, will be retrieved from doc if needed)
+            parameters_to_copy: list of parameter names to copy from each FilledRegion
+                to its 3D zone instance. None keeps the legacy behaviour (copy every
+                writable instance parameter that matches by name). An empty list
+                copies nothing.
+            auto_bind_missing: when a chosen parameter exists on the region but not on
+                the zone instance, extend that parameter's project binding to the
+                Generic Models category so the value can land. Only instance
+                bindings are extended; type bindings are reported instead.
+            material_source: where the zone's material name comes from. None leaves the
+                material alone; MATERIAL_FROM_TYPE_NAME uses the filled region's type
+                name (e.g. "OOMB 800"); a string with {Param} tags is a name template;
+                any other string is a region parameter whose value is the material name
+                (e.g. "OP_Kalkylgrupp" -> "OOMB"); a dict {"keys": [...], "map": {...}}
+                is an explicit mapping from a "|"-joined combination of region parameter
+                values to a material name (e.g. "300|KOMB" -> "3Dzone(350)-KOMB").
+            material_param: name of the zone family's material parameter.
+            create_missing_materials: create a material with that name (deterministic
+                colour from the name) when the project has none, instead of skipping.
         """
         self._active_view = active_view
         self._view_phase_id = None
-    
+        self.parameters_to_copy = parameters_to_copy
+        self.auto_bind_missing = auto_bind_missing
+        self.material_source = material_source
+        self.material_param = material_param
+        self.create_missing_materials = create_missing_materials
+        self._material_cache = None  # lower-case name -> Material, built on first use
+        # Filled in during copy_properties_to_instance; read by the button for its summary.
+        self.copy_report = {
+            "copied": {},          # param name -> number of instances written
+            "bound": set(),        # params whose binding was extended to Generic Models
+            "missing": set(),      # chosen params that could not be found or bound on the zone
+            "type_mismatch": set(),# chosen params whose storage type differs on the zone
+            "no_value": set(),     # chosen params that were empty on at least one region
+            "materials": {},       # material name -> number of zones it was set on
+            "materials_created": set(),
+            "materials_missing": set(),  # names with no material and creation off/failed
+            "material_param_missing": False,
+            "unmapped_combos": set(),    # explicit mapping: combinations with no material chosen
+        }
+
+    # ------------------------------------------------------------------
+    # Material from region type name or a region parameter value
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _material_lookup_key(name):
+        # "3DZone(100)", "3Dzone(100)" and "3Dzone (100)" all exist in real projects and
+        # mean the same thing: compare without case and without spaces.
+        return "".join(name.split()).lower()
+
+    def _region_param_text(self, source_element, param_name):
+        param = source_element.LookupParameter(param_name)
+        if param is None or not param.HasValue:
+            return ""
+        if param.StorageType == StorageType.String:
+            return (param.AsString() or "").strip()
+        try:
+            return (param.AsValueString() or "").strip()
+        except Exception:
+            return ""
+
+    def _material_keys(self, source_element, doc):
+        """Return candidate material names, most specific first, or [] for none.
+
+        material_source may be:
+          MATERIAL_FROM_TYPE_NAME      -> [region type name]
+          a parameter name             -> [that parameter's value]
+          a template with {Param} tags -> the rendered name, then the same name with
+                                          trailing "-part" segments dropped one at a
+                                          time, e.g. "3Dzone(800)-OOMB" -> "3Dzone(800)".
+                                          A tag whose parameter is empty makes the
+                                          template yield nothing.
+        """
+        src = self.material_source
+        if not src:
+            return []
+        if isinstance(src, dict):
+            # Explicit mapping: {"keys": [param names], "map": {"300|KOMB": "3Dzone(350)-KOMB"}}
+            values = [self._region_param_text(source_element, k) for k in src.get("keys", [])]
+            if not values or any(not v for v in values):
+                return []
+            combo = "|".join(values)
+            name = (src.get("map", {}).get(combo) or "").strip()
+            if not name:
+                self.copy_report.setdefault("unmapped_combos", set()).add(combo)
+                return []
+            return [name]
+        if src == self.MATERIAL_FROM_TYPE_NAME:
+            try:
+                rtype = doc.GetElement(source_element.GetTypeId())
+                name = (rtype.Name or "").strip() if rtype is not None else ""
+            except Exception:
+                name = ""
+            return [name] if name else []
+        if "{" not in src:
+            name = self._region_param_text(source_element, src)
+            return [name] if name else []
+        # template
+        import re
+        missing = []
+        def sub(match):
+            value = self._region_param_text(source_element, match.group(1).strip())
+            if not value:
+                missing.append(match.group(1))
+            return value
+        rendered = re.sub(r"\{([^}]+)\}", sub, src).strip()
+        if missing or not rendered:
+            return []
+        names = [rendered]
+        head = rendered
+        while "-" in head:
+            head = head.rsplit("-", 1)[0].strip()
+            if head:
+                names.append(head)
+        return names
+
+    def _find_or_create_material(self, doc, names):
+        """names: candidate names, most specific first. Reuse the first that exists;
+        otherwise create the most specific one (if enabled)."""
+        if self._material_cache is None:
+            self._material_cache = {}
+            self._material_exact = {}
+            for mat in FilteredElementCollector(doc).OfClass(Material):
+                try:
+                    self._material_exact.setdefault(mat.Name.strip(), mat)
+                    self._material_cache.setdefault(self._material_lookup_key(mat.Name), mat)
+                except Exception:
+                    continue
+        for candidate in names:
+            # Exact name first: "3DZone(100)" and "3Dzone (100)" can both exist, and an
+            # explicit pick must land on the one that was picked.
+            mat = self._material_exact.get(candidate.strip())
+            if mat is None:
+                mat = self._material_cache.get(self._material_lookup_key(candidate))
+            if mat is not None:
+                return mat
+        name = names[0]
+        if not self.create_missing_materials:
+            return None
+        try:
+            mat_id = Material.Create(doc, name)
+            mat = doc.GetElement(mat_id)
+            # Deterministic colour from the name so each husdel/kalkylgrupp looks distinct
+            h = 0
+            for ch in name:
+                h = (h * 31 + ord(ch)) & 0xFFFFFF
+            r, g, b = 80 + (h & 0x7F), 80 + ((h >> 8) & 0x7F), 80 + ((h >> 16) & 0x7F)
+            mat.Color = Color(r, g, b)
+            mat.UseRenderAppearanceForShading = False
+            self._material_cache[self._material_lookup_key(name)] = mat
+            self.copy_report["materials_created"].add(name)
+            logger.info("Created material '{}'".format(name))
+            return mat
+        except Exception as e:
+            logger.debug("Could not create material '{}': {}".format(name, e))
+            return None
+
+    def _assign_material(self, source_element, target_instance, doc):
+        rep = self.copy_report
+        names = self._material_keys(source_element, doc)
+        if not names:
+            return
+        tgt = self._find_target_param(target_instance, self.material_param)
+        if tgt is None or tgt.IsReadOnly or tgt.StorageType != StorageType.ElementId:
+            rep["material_param_missing"] = True
+            return
+        mat = self._find_or_create_material(doc, names)
+        if mat is None:
+            rep["materials_missing"].add(names[0])
+            return
+        try:
+            if not tgt.HasValue or tgt.AsElementId() != mat.Id:
+                tgt.Set(mat.Id)
+            used = mat.Name
+            rep["materials"][used] = rep["materials"].get(used, 0) + 1
+        except Exception as e:
+            logger.debug("Could not set material '{}' on {}: {}".format(mat.Name, target_instance.Id, e))
+            rep["materials_missing"].add(mat.Name)
+
     def set_active_view(self, view):
         """Set the active view for phase handling.
         
@@ -1112,14 +1290,126 @@ class RegionAdapter(SpatialElementAdapter):
         """Return element ID string as-is (already sanitized)."""
         return number
     
+    # ------------------------------------------------------------------
+    # Selective copy: only the parameters the user picked in the button
+    # ------------------------------------------------------------------
+    def _find_target_param(self, target_instance, param_name):
+        param = target_instance.LookupParameter(param_name)
+        if param is None and hasattr(target_instance, "Symbol") and target_instance.Symbol:
+            param = target_instance.Symbol.LookupParameter(param_name)
+        return param
+
+    def _ensure_bound_to_generic_models(self, doc, param_name):
+        """Extend the project binding of `param_name` to Generic Models.
+
+        Works for shared and project parameters alike: the existing binding is found in
+        the document's BindingMap by definition name and re-inserted with the category
+        added. Returns True if the binding now covers Generic Models.
+        """
+        try:
+            gm_cat = Category.GetCategory(doc, BuiltInCategory.OST_GenericModel)
+            bindings = doc.ParameterBindings
+            it = bindings.ForwardIterator()
+            it.Reset()
+            while it.MoveNext():
+                defn = it.Key
+                if defn is None or defn.Name != param_name:
+                    continue
+                binding = it.Current
+                if binding is None or not hasattr(binding, "Categories"):
+                    return False
+                if type(binding).__name__ != "InstanceBinding":
+                    logger.warning("Parameter '{}' is a type binding; not extended to Generic Models".format(param_name))
+                    return False
+                cats = binding.Categories
+                if cats.Contains(gm_cat):
+                    return True
+                cats.Insert(gm_cat)
+                ok = False
+                try:
+                    ok = bindings.ReInsert(defn, binding)
+                except Exception:
+                    ok = False
+                if not ok:
+                    try:
+                        ok = bindings.ReInsert(defn, binding, defn.GetGroupTypeId())
+                    except Exception as e2:
+                        logger.debug("ReInsert with group failed for '{}': {}".format(param_name, e2))
+                if ok:
+                    doc.Regenerate()
+                    logger.info("Extended binding of '{}' to Generic Models".format(param_name))
+                return bool(ok)
+            return False
+        except Exception as e:
+            logger.debug("Could not extend binding of '{}': {}".format(param_name, e))
+            return False
+
+    def _copy_one_value(self, source_param, target_param):
+        st = source_param.StorageType
+        if st == StorageType.String:
+            value = source_param.AsString()
+            if not value:
+                return False
+            target_param.Set(value)
+        elif st == StorageType.Integer:
+            target_param.Set(source_param.AsInteger())
+        elif st == StorageType.Double:
+            target_param.Set(source_param.AsDouble())
+        elif st == StorageType.ElementId:
+            value = source_param.AsElementId()
+            if not value or value == ElementId.InvalidElementId:
+                return False
+            target_param.Set(value)
+        else:
+            return False
+        return True
+
+    def _copy_selected_parameters(self, source_element, target_instance, doc):
+        rep = self.copy_report
+        for name in self.parameters_to_copy:
+            try:
+                src = source_element.LookupParameter(name)
+                if src is None or not src.HasValue:
+                    rep["no_value"].add(name)
+                    continue
+                tgt = self._find_target_param(target_instance, name)
+                if tgt is None and self.auto_bind_missing:
+                    if self._ensure_bound_to_generic_models(doc, name):
+                        rep["bound"].add(name)
+                        tgt = self._find_target_param(target_instance, name)
+                if tgt is None:
+                    rep["missing"].add(name)
+                    continue
+                if tgt.IsReadOnly:
+                    rep["missing"].add(name)
+                    continue
+                if tgt.StorageType != src.StorageType:
+                    rep["type_mismatch"].add(name)
+                    continue
+                if self._copy_one_value(src, tgt):
+                    rep["copied"][name] = rep["copied"].get(name, 0) + 1
+                else:
+                    rep["no_value"].add(name)
+            except Exception as e:
+                logger.debug("Error copying '{}' from FilledRegion {}: {}".format(name, source_element.Id, e))
+                rep["missing"].add(name)
+
     def copy_properties_to_instance(self, source_element, target_instance, doc):
-        """Copy matching parameters from FilledRegion to target instance.
-        
+        """Copy parameters from FilledRegion to target instance.
+
+        With `parameters_to_copy` set (the button always sets it), only those names are
+        copied and the outcome is collected in `copy_report`. Without it, every writable
+        instance parameter that matches by name is copied (legacy behaviour).
+
         Args:
             source_element: FilledRegion element
             target_instance: FamilyInstance to copy properties to
             doc: Revit document
         """
+        if self.parameters_to_copy is not None:
+            self._copy_selected_parameters(source_element, target_instance, doc)
+            self._assign_material(source_element, target_instance, doc)
+            return
         try:
             # Parameters to skip (system/built-in parameters)
             skip_params = set()
