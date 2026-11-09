@@ -18,8 +18,9 @@ Covered deprecations:
 * ``Definition.ParameterType`` / ``ParameterType`` enum (deprecated Revit 2022,
   ``Definition.ParameterType`` removed from the ``Definition`` class in Revit
   2026). Use :func:`get_param_data_type` or the typed predicates
-  :func:`is_param_yesno`, :func:`is_param_text`, :func:`is_param_number`,
-  :func:`is_param_integer`, :func:`is_param_acceptable_for_mapping`.
+  :func:`is_param_yesno`, :func:`is_param_text`, :func:`is_param_multiline_text`,
+  :func:`is_param_number`, :func:`is_param_integer`,
+  :func:`is_param_acceptable_for_mapping`.
 
 * ``DisplayUnitType`` (removed Revit 2025). Use
   :func:`convert_from_internal_units` / :func:`convert_to_internal_units` with
@@ -107,6 +108,10 @@ if HAS_FORGE_PARAM_TYPE:
         _SPEC_TEXT = SpecTypeId.String.Text
         _SPEC_NUMBER = SpecTypeId.Number
         _SPEC_INT = SpecTypeId.Int.Integer
+        try:
+            _SPEC_MULTILINE_TEXT = SpecTypeId.String.MultilineText
+        except Exception:
+            _SPEC_MULTILINE_TEXT = None
     except Exception:
         # Older 2022 drops may not yet expose all SpecTypeId members; fall
         # back to None and use StorageType only.
@@ -114,8 +119,10 @@ if HAS_FORGE_PARAM_TYPE:
         _SPEC_TEXT = None
         _SPEC_NUMBER = None
         _SPEC_INT = None
+        _SPEC_MULTILINE_TEXT = None
 else:
     _SPEC_YESNO = _SPEC_TEXT = _SPEC_NUMBER = _SPEC_INT = None
+    _SPEC_MULTILINE_TEXT = None
 
 
 def get_param_data_type(definition):
@@ -177,6 +184,27 @@ def is_param_text(definition):
         return definition.StorageType == StorageType.String
     except Exception:
         return False
+
+
+def is_param_multiline_text(definition):
+    """True if the parameter definition is a multiline text field."""
+    try:
+        if definition.StorageType != StorageType.String:
+            return False
+    except Exception:
+        pass
+    if HAS_FORGE_PARAM_TYPE and _SPEC_MULTILINE_TEXT is not None:
+        try:
+            return definition.GetDataType() == _SPEC_MULTILINE_TEXT
+        except Exception:
+            pass
+    if HAS_LEGACY_PARAM_TYPE:
+        try:
+            from Autodesk.Revit.DB import ParameterType
+            return definition.ParameterType == ParameterType.MultilineText
+        except Exception:
+            return False
+    return False
 
 
 def is_param_number(definition):

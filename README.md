@@ -17,7 +17,7 @@ pyBS tab
 | **StreamBIM**       | Checklist Importer, Edit Configs, Run Everything                                                                         |
 | **MMI Settings**    | Settings, Monitor, Colorizer                                                                                             |
 | **MMI**             | Quick-set buttons for MMI values 200, 225, 250, 275, 300, 325, 350, 375, 400, 425, 450, 475                              |
-| **Elements**        | Weight Calc, Family Elevations                                                                                           |
+| **Elements**        | Weight Calc, +Height, Family Elevations                                                                                  |
 | **MEP Spaces**      | Create Spaces from Link, Update Spaces, Tag All Spaces                                                                   |
 | **3D Zone**         | Edit Spatial Mappings, Create 3D Zones from Rooms / Areas / Regions, Mass from Regions, Write Mappings, Isolate 3D Zones |
 | **View**            | Color Elements, Reset                                                                                                    |

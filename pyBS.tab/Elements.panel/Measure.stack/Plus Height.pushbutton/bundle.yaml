@@ -1,0 +1,6 @@
+title:
+  en_us: '+Height'
+tooltip:
+  en_us: >-
+    Write each element elevation in meters, with a + prefix, into a multiline
+    text parameter. Pick Project Base Point, Survey Point, or Internal Origin.

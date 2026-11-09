@@ -14,10 +14,12 @@ clr.AddReference('RevitAPIUI')
 from Autodesk.Revit.DB import *
 
 from pyrevit import script, forms, revit
+from System.Collections.Generic import List
+from System import String
 
 # Add lib path
 script_path = __file__
-extension_dir = op.dirname(op.dirname(op.dirname(op.dirname(script_path))))
+extension_dir = op.dirname(op.dirname(op.dirname(op.dirname(op.dirname(script_path)))))
 lib_path = op.join(extension_dir, 'lib')
 if lib_path not in sys.path:
     sys.path.append(lib_path)
@@ -33,6 +35,7 @@ from revit.compat import (
     get_element_id_value,
     UnitTypeId,
 )
+from styles import load_styles_to_window
 
 logger = script.get_logger()
 WEIGHT_PARAM_DEFAULT = "Weight"
@@ -402,28 +405,48 @@ def print_skipped_elements_table(skipped_elements):
         output_window.print_md("")  # Empty line between categories
 
 
+class WeightParameterWindow(forms.WPFWindow):
+    """Styled parameter picker for the weight value."""
+
+    def __init__(self, parameter_names, default_name):
+        xaml_file = op.join(op.dirname(__file__), 'WeightWindow.xaml')
+        forms.WPFWindow.__init__(self, xaml_file)
+        load_styles_to_window(self)
+        self.selected_parameter = None
+        parameters = List[String]()
+        selected_index = 0
+        for index, name in enumerate(parameter_names):
+            parameters.Add(name)
+            if default_name and name == default_name:
+                selected_index = index
+        self.parameterCombo.ItemsSource = parameters
+        self.parameterCombo.SelectedIndex = selected_index
+
+    def ok_click(self, sender, args):
+        selected = self.parameterCombo.SelectedItem
+        if selected:
+            self.selected_parameter = str(selected)
+        self.DialogResult = True
+        self.Close()
+
+
 def select_weight_parameter(doc):
     """Let user select which parameter to use for weight."""
     available_parameters = get_available_parameters()
-    
+
     if not available_parameters:
         forms.alert("No writable parameters found in the project.", title="Weight Calculator")
         return None
-    
+
     default_param = None
     for param in available_parameters:
         if param.lower() == WEIGHT_PARAM_DEFAULT.lower():
             default_param = param
             break
-    
-    selected_parameter = forms.ask_for_one_item(
-        available_parameters,
-        default=default_param,
-        prompt="Select parameter to store weight values (kg):",
-        title="Weight Calculator"
-    )
-    
-    return selected_parameter
+
+    window = WeightParameterWindow(available_parameters, default_param)
+    window.ShowDialog()
+    return window.selected_parameter
 
 
 def main():
