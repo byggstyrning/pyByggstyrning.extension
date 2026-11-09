@@ -6,6 +6,7 @@
     <Grid Margin="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
@@ -17,7 +18,14 @@
                   FontWeight="SemiBold"
                   Margin="0,0,0,10"/>
 
-        <ListBox x:Name="configsListView" Grid.Row="1" Margin="0,0,0,10"
+        <!-- Zone Audit: trace the selected elements instead of writing (read-only) -->
+        <CheckBox x:Name="traceSelectedCheckBox" Grid.Row="1"
+                  Content="Trace selected element(s): why (not) mapped? (read-only)"
+                  Style="{DynamicResource ToggleSwitchStyle}"
+                  FontWeight="SemiBold"
+                  Margin="0,0,0,10"/>
+
+        <ListBox x:Name="configsListView" Grid.Row="2" Margin="0,0,0,10"
                   Background="{DynamicResource ControlBackgroundBrush}"
                   Foreground="{DynamicResource TextBrush}"
                   BorderBrush="{DynamicResource BorderBrush}"
@@ -37,7 +45,7 @@
             </ListBox.ItemTemplate>
         </ListBox>
 
-        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
             <Button x:Name="writeButton" Content="Write" Width="100" IsDefault="True" Style="{DynamicResource StandardButtonStyle}"/>
             <Button x:Name="cancelButton" Content="Cancel" Width="100" IsCancel="True" Style="{DynamicResource SecondaryButtonStyle}"/>
         </StackPanel>

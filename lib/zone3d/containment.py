@@ -15,6 +15,7 @@ from Autodesk.Revit.DB import (
 )
 from Autodesk.Revit.DB.Architecture import Room
 from Autodesk.Revit.DB.Mechanical import Space
+from System.Collections.Generic import List
 
 # FootPrintRoof: keep separate from Room import. Some IronPython/Revit combinations
 # raise "Cannot import name FootPrintRoof" on combined import and break entire
@@ -92,8 +93,24 @@ DEFAULT_STOREY_HEIGHT_FEET = 10.0
 
 # Roof footprint sampling + plurality containment (internal feet)
 ROOF_FOOTPRINT_SAMPLE_SPACING_FT = 1.5
-ROOF_FOOTPRINT_MAX_POINTS = 56
-ROOF_CONTAINMENT_VOTE_MIN_FRACTION = 0.5
+ROOF_FOOTPRINT_MAX_POINTS = 150
+# Plurality vote with a minimum share. Zone tops cut through the floor above them, so a
+# floor's top-face samples are never inside the zone below it: 0.5 could not be reached.
+ROOF_CONTAINMENT_VOTE_MIN_FRACTION = 0.15
+
+# Point-based families: offset for the two facing points of hosted families (300 mm)
+POINT_FAMILY_FACING_OFFSET_FT = 300.0 / 304.8
+
+# Face sampling: target spacing between grid samples and per-axis grid limits (feet)
+FACE_GRID_SPACING_FT = 5.0
+FACE_GRID_MIN = 2
+FACE_GRID_MAX = 12
+# Last-resort tier: points just outside a wall face, into the space the wall bounds (50 mm)
+TOUCH_OFFSET_FT = 50.0 / 304.8
+# Body-face sampling of point-based families only for bodies larger than this (~0.9 m)
+FACE_TIER_MIN_EXTENT_FT = 3.0
+FACE_TIER_MAX_FACES = 4
+FACE_TIER_MAX_GRID = 6
 
 # Coplanar overlap for thin sources (Fire Protection) vs walls/floors (internal feet)
 COPLANAR_NORMAL_ANGLE_TOL_DEG = 5.0
@@ -403,64 +420,84 @@ def _get_inplace_family_test_points(element, doc=None):
     except Exception:
         return points
 
-def _generate_grid_points_on_face(face, grid_size=5):
-    """Generate a grid of test points on a planar face.
-    
-    Uses UV parameterization to create evenly distributed points across the face.
-    Only includes points that are actually inside the face boundary (handles
-    irregular face shapes like L-shaped floors).
-    
-    Args:
-        face: PlanarFace object from Revit geometry
-        grid_size: Number of points per axis (default 5 = 25 points total)
-        
-    Returns:
-        list: List of XYZ points on the face surface
+def _grid_size_for_face(face, uv_bbox, max_grid=FACE_GRID_MAX):
+    """Per-axis grid counts so samples sit about FACE_GRID_SPACING_FT apart."""
+    try:
+        if isinstance(face, PlanarFace):
+            lu = abs(uv_bbox.Max.U - uv_bbox.Min.U)
+            lv = abs(uv_bbox.Max.V - uv_bbox.Min.V)
+        else:
+            side = math.sqrt(max(float(face.Area), 0.0))
+            lu = side
+            lv = side
+        nu = int(math.ceil(lu / FACE_GRID_SPACING_FT)) + 1
+        nv = int(math.ceil(lv / FACE_GRID_SPACING_FT)) + 1
+        return (max(FACE_GRID_MIN, min(max_grid, nu)), max(FACE_GRID_MIN, min(max_grid, nv)))
+    except Exception:
+        return (min(max_grid, 5), min(max_grid, 5))
+
+
+def _generate_grid_samples_with_normals(face, grid_size=None, max_grid=FACE_GRID_MAX):
+    """Grid samples on a face as (XYZ, normal) pairs; only points inside the face boundary.
+
+    grid_size None = adaptive (see _grid_size_for_face); an int forces an n x n grid.
+    Works for planar and curved faces (UV parameterisation).
     """
-    points = []
+    samples = []
     try:
         bbox = face.GetBoundingBox()
         if not bbox:
-            return points
-        
+            return samples
+        if grid_size is None:
+            nu, nv = _grid_size_for_face(face, bbox, max_grid)
+        else:
+            nu = int(grid_size)
+            nv = int(grid_size)
         u_min, u_max = bbox.Min.U, bbox.Max.U
         v_min, v_max = bbox.Min.V, bbox.Max.V
-        
-        # Generate grid points using UV parameterization
-        for i in range(grid_size):
-            for j in range(grid_size):
-                # Calculate UV coordinates at cell centers (offset by 0.5)
-                u = u_min + (u_max - u_min) * (i + 0.5) / grid_size
-                v = v_min + (v_max - v_min) * (j + 0.5) / grid_size
+        for i in range(nu):
+            for j in range(nv):
+                u = u_min + (u_max - u_min) * (i + 0.5) / nu
+                v = v_min + (v_max - v_min) * (j + 0.5) / nv
                 uv = UV(u, v)
-                
-                # Only include points that are inside the face boundary
-                # This handles irregular face shapes (L-shaped, with holes, etc.)
                 try:
-                    # IsInside returns IntersectionResult, check if point is inside
                     result = face.IsInside(uv)
-                    # In IronPython, IsInside returns a tuple (bool, IntersectionResult)
-                    # or just bool depending on overload
+                    # IronPython may return (bool, IntersectionResult) or a plain bool
                     is_inside = result[0] if isinstance(result, tuple) else result
-                    if is_inside:
-                        xyz = face.Evaluate(uv)
-                        if xyz:
-                            points.append(xyz)
-                except:
-                    # Fallback: try to evaluate anyway
-                    try:
-                        xyz = face.Evaluate(uv)
-                        if xyz:
-                            points.append(xyz)
-                    except:
-                        pass
-        
-        return points
+                    if not is_inside:
+                        continue
+                except Exception:
+                    pass
+                try:
+                    xyz = face.Evaluate(uv)
+                except Exception:
+                    xyz = None
+                if xyz is None:
+                    continue
+                try:
+                    normal = face.ComputeNormal(uv)
+                except Exception:
+                    normal = None
+                samples.append((xyz, normal))
     except Exception as e:
-        logger.debug("Error generating grid points on face: {}".format(str(e)))
-        return points
+        logger.debug("Error generating grid samples on face: {}".format(str(e)))
+    return samples
 
-def _get_host_object_test_points(element, doc=None, grid_size=5):
+
+def _generate_grid_points_on_face(face, grid_size=5, max_grid=FACE_GRID_MAX):
+    """Grid of test points on a face (see _generate_grid_samples_with_normals).
+
+    Args:
+        face: Face from Revit geometry (planar or curved)
+        grid_size: points per axis; None = adaptive to the face size
+
+    Returns:
+        list: XYZ points on the face surface
+    """
+    return [xyz for xyz, _normal in _generate_grid_samples_with_normals(face, grid_size, max_grid)]
+
+
+def _get_host_object_test_points(element, doc=None, grid_size=None):
     """Get grid-based test points for HostObject elements (floors, ceilings, roofs, walls).
     
     Uses HostObjectUtils to extract actual face geometry:
@@ -532,69 +569,332 @@ def _get_host_object_test_points(element, doc=None, grid_size=5):
         logger.debug("Error getting host object test points: {}".format(str(e)))
         return points
 
-def get_element_test_points(element, doc=None):
-    """Get multiple test points for an element to improve containment detection.
-    
-    For walls and linear elements, returns multiple points along the element.
-    For point-based elements, returns a single point.
-    
-    Areas are 2D planar elements and are only used as sources (not targets),
-    but we handle them here for robustness.
-    
-    IMPORTANT: In-place families require special handling because:
-    - Their Location property is often None or at project origin
-    - They may have multiple solid forms
-    For these elements, we generate test points from solid centroids.
-    
-    Args:
-        element: Revit element
-        doc: Revit document (optional, used for in-place family handling)
-        
-    Returns:
-        list: List of XYZ points to test
+def _read_element_solids(element, doc=None, include_sub_elements=True):
+    """All solids of an element in project coordinates, nested family instances included.
+
+    Railings keep their rails in separate TopRail / HandRail elements, so those are read
+    too when the railing itself has no solid of its own.
+    """
+    solids = []
+    try:
+        options = _get_geometry_options(doc)
+        geometry = element.get_Geometry(options)
+        if geometry:
+            solids = _collect_all_solids_from_geometry(geometry)
+    except Exception as e:
+        logger.debug("Error reading element solids: {}".format(str(e)))
+    if not solids and include_sub_elements:
+        for sub in _get_sub_elements_with_geometry(element):
+            try:
+                sub_geom = sub.get_Geometry(_get_geometry_options(doc))
+                if sub_geom:
+                    solids.extend(_collect_all_solids_from_geometry(sub_geom))
+            except Exception:
+                continue
+    return solids
+
+
+def _get_sub_elements_with_geometry(element):
+    """Child elements that carry a parent's visible geometry (railing top rail and handrails)."""
+    subs = []
+    try:
+        doc = element.Document
+        ids = []
+        if hasattr(element, "TopRail"):
+            try:
+                ids.append(element.TopRail)
+            except Exception:
+                pass
+        if hasattr(element, "GetHandRails"):
+            try:
+                ids.extend(list(element.GetHandRails()))
+            except Exception:
+                pass
+        for eid in ids:
+            try:
+                if eid is None or get_element_id_value(eid) < 0:
+                    continue
+                sub = doc.GetElement(eid)
+                if sub is not None:
+                    subs.append(sub)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return subs
+
+
+def _largest_first(solids):
+    try:
+        return sorted(solids, key=lambda solid: solid.Volume, reverse=True)
+    except Exception:
+        return list(solids)
+
+
+def _centroids_of_solids(solids, max_points=30):
+    """Centroids of the given solids, largest first (capped)."""
+    points = []
+    for solid in _largest_first(solids)[:max_points]:
+        try:
+            centroid = solid.ComputeCentroid()
+            if centroid is not None:
+                points.append(centroid)
+        except Exception:
+            continue
+    return points
+
+
+def _face_points_from_solids(solids, max_faces=FACE_TIER_MAX_FACES, max_grid=FACE_TIER_MAX_GRID):
+    """Grid points on the largest faces (planar or curved) of the given solids."""
+    faces = []
+    for solid in solids:
+        try:
+            for face in solid.Faces:
+                try:
+                    if face.Area >= COPLANAR_MIN_FACE_AREA_SQ_FT:
+                        faces.append(face)
+                except Exception:
+                    continue
+        except Exception:
+            continue
+    faces.sort(key=lambda face: face.Area, reverse=True)
+    points = []
+    for face in faces[:max_faces]:
+        points.extend(_generate_grid_points_on_face(face, grid_size=None, max_grid=max_grid))
+    return points
+
+
+def _get_geometry_face_test_points(element, doc=None, max_faces=4, max_grid=FACE_GRID_MAX):
+    """Grid points on the largest faces of an element's solid geometry (fallback sampler)."""
+    try:
+        return _face_points_from_solids(_read_element_solids(element, doc), max_faces, max_grid)
+    except Exception as e:
+        logger.debug("Error sampling geometry faces: {}".format(str(e)))
+        return []
+
+
+def _get_wall_touching_points(element, doc=None):
+    """Points TOUCH_OFFSET_FT outside each side face of a wall (last-resort tier).
+
+    A wall whose faces coincide with the zone boundaries (zones drawn to wall faces) has
+    no sample inside any zone. A point just outside each face lands in the space the wall
+    bounds; the configured sort order then decides between the two sides.
     """
     points = []
+    if not hasattr(element, "WallType"):
+        return points
+    for side in [ShellLayerType.Exterior, ShellLayerType.Interior]:
+        try:
+            for ref in HostObjectUtils.GetSideFaces(element, side) or []:
+                try:
+                    face = element.GetGeometryObjectFromReference(ref)
+                    if face is None:
+                        continue
+                    for xyz, normal in _generate_grid_samples_with_normals(face, None, 4):
+                        if normal is not None:
+                            points.append(xyz + normal * TOUCH_OFFSET_FT)
+                except Exception:
+                    continue
+        except Exception:
+            continue
+    if not points:
+        # No usable side faces: use the two largest faces of the solid geometry instead
+        for solid in _read_element_solids(element, doc):
+            try:
+                faces = sorted(list(solid.Faces), key=lambda face: face.Area, reverse=True)[:2]
+            except Exception:
+                continue
+            for face in faces:
+                for xyz, normal in _generate_grid_samples_with_normals(face, None, 4):
+                    if normal is not None:
+                        points.append(xyz + normal * TOUCH_OFFSET_FT)
+    return points
+
+
+def _lift_curve_points_into_body(element, points):
+    """Re-sample curve points at 25/50/75 % of the element height when the curve is not in the body.
+
+    Walls always qualify: Wall.Location.Curve is at the base level, i.e. under the wall
+    when it has a base offset and exactly on the zone's bottom face otherwise. Other
+    curve elements qualify only when a sample lies outside the bounding box in Z, so
+    pipes, ducts and beams keep their true 3D curve points. Modifies the list in place.
+    """
+    try:
+        if not points:
+            return
+        bbox = element.get_BoundingBox(None)
+        if not bbox:
+            return
+        min_z = bbox.Min.Z
+        max_z = bbox.Max.Z
+        if max_z - min_z < 0.1:
+            return
+        is_wall = hasattr(element, "WallType")
+        outside = False
+        for p in points:
+            if p.Z < min_z - 0.01 or p.Z > max_z + 0.01:
+                outside = True
+                break
+        if not (is_wall or outside):
+            return
+        lifted = []
+        for t in [0.25, 0.5, 0.75]:
+            z = min_z + (max_z - min_z) * t
+            for p in points:
+                lifted.append(XYZ(p.X, p.Y, z))
+        points[:] = lifted
+    except Exception as e:
+        logger.debug("Error lifting curve points: {}".format(str(e)))
+
+
+def _get_hosted_family_facing_points(element, base_point, z):
+    """Two points offset along FacingOrientation for families hosted on a HostObject.
+
+    A door or window on a zone boundary has its body inside the wall, so neither the
+    centroid nor the insertion point is inside any zone. One point on each side of the
+    host lets the configured sort order decide, the same way boundary walls are handled.
+    The offset is half the host wall thickness plus 50 mm, never less than 300 mm.
+    """
+    points = []
+    try:
+        if not isinstance(element, FamilyInstance):
+            return points
+        host = element.Host
+        if host is None or not isinstance(host, HostObject):
+            return points
+        facing = element.FacingOrientation
+        if facing is None or facing.GetLength() < 1e-9:
+            return points
+        facing = facing.Normalize()
+        offset = POINT_FAMILY_FACING_OFFSET_FT
+        try:
+            if hasattr(host, "Width"):
+                offset = max(offset, float(host.Width) / 2.0 + 50.0 / 304.8)
+        except Exception:
+            pass
+        mid = XYZ(base_point.X, base_point.Y, z)
+        points.append(mid + facing * offset)
+        points.append(mid - facing * offset)
+    except Exception as e:
+        logger.debug("Error computing facing offset points: {}".format(str(e)))
+    return points
+
+
+def _bbox_max_extent(bbox):
+    try:
+        return max(bbox.Max.X - bbox.Min.X, bbox.Max.Y - bbox.Min.Y, bbox.Max.Z - bbox.Min.Z)
+    except Exception:
+        return 0.0
+
+
+def get_element_test_points(element, doc=None, return_body_count=False):
+    """Get multiple test points for an element to improve containment detection.
+
+    Three tiers of points are produced (see get_containing_element_indexed):
+
+    - BODY points, tested first, point by point: for point-based families the centroid
+      of the largest solid and the bounding-box centre; for elements without a point or
+      curve location (railings, stairs, ramps, parts) the centroids of their solids.
+    - REGULAR points, first zone in sort order that contains any of them: face grids of
+      walls/floors/roofs/ceilings, curve samples of linear elements (lifted into the
+      body for walls), insertion-point column of point-based families, and grid points
+      on the body faces of larger or hollow bodies.
+    - TAIL points, tried only when nothing else is inside any zone: wall "touching"
+      points 50 mm outside each side face, and the facing points of hosted families.
+
+    Args:
+        element: Revit element
+        doc: Revit document (optional, used for geometry options)
+        return_body_count: if True, return (points, n_body, n_tail): the first n_body
+            points are body points, the last n_tail points are tail points
+
+    Returns:
+        list: List of XYZ points to test (or (list, int, int) when return_body_count)
+    """
+    points = []
+    n_body = 0
+    n_tail = 0
+
+    def _result():
+        if return_body_count:
+            return (points, n_body, n_tail)
+        return points
+
     try:
         # Special handling for Areas - use bounding box center
         if isinstance(element, Area):
             bbox = element.get_BoundingBox(None)
             if bbox:
                 points.append((bbox.Min + bbox.Max) / 2.0)
-            return points
-        
-        # Special handling for in-place families
-        # These often have Location = None or unreliable Location.Point
+            return _result()
+
+        # In-place families: centroids of all solids, then grid points on the body faces
+        # (arches and rings have their centroids in the void)
         if is_inplace_family(element):
             inplace_points = _get_inplace_family_test_points(element, doc)
             if inplace_points:
-                return inplace_points
-            # Fall back to bounding box center
-            bbox = element.get_BoundingBox(None)
-            if bbox:
-                points.append((bbox.Min + bbox.Max) / 2.0)
-            return points
-        
-        # Special handling for HostObjects (floors, ceilings, roofs, walls)
-        # These elements benefit from grid-based sampling across their faces
-        # for better containment detection when spanning multiple zones
+                points.extend(inplace_points)
+            else:
+                bbox = element.get_BoundingBox(None)
+                if bbox:
+                    points.append((bbox.Min + bbox.Max) / 2.0)
+            points.extend(_get_geometry_face_test_points(element, doc, FACE_TIER_MAX_FACES, FACE_TIER_MAX_GRID))
+            return _result()
+
+        # HostObjects (floors, ceilings, roofs, walls): grid points on their faces.
+        # Sparse grids (perforated or joined walls) are topped up from the solid geometry.
         if isinstance(element, HostObject):
-            host_points = _get_host_object_test_points(element, doc)
+            host_points = list(_get_host_object_test_points(element, doc) or [])
+            if len(host_points) < 8:
+                host_points.extend(_get_geometry_face_test_points(element, doc))
             if host_points:
-                return host_points
+                points.extend(host_points)
+                if hasattr(element, "WallType"):
+                    touch = _get_wall_touching_points(element, doc)
+                    points.extend(touch)
+                    n_tail = len(touch)
+                return _result()
             # Fall through to Location/bbox fallback if face extraction fails
-        
+
         loc = element.Location
-        if loc is None:
+        has_point = loc is not None and hasattr(loc, "Point")
+        has_curve = loc is not None and hasattr(loc, "Curve")
+        if not has_point and not has_curve:
+            # No usable Location (railings, stairs, ramps, parts, ...): centroids of the
+            # solids as body points, then the bounding-box centre, then body faces.
+            solids = _read_element_solids(element, doc)
+            body = _centroids_of_solids(solids)
             bbox = element.get_BoundingBox(None)
             if bbox:
-                points.append((bbox.Min + bbox.Max) / 2.0)
-            return points
-        
-        if hasattr(loc, "Point"):
-            # LocationPoint - get vertical test points for columns/vertical elements
+                body.append((bbox.Min + bbox.Max) / 2.0)
+            points.extend(body)
+            n_body = len(body)
+            points.extend(_face_points_from_solids(solids))
+            return _result()
+
+        if has_point:
+            # LocationPoint: body points first, then the insertion point column
             base_point = loc.Point
             bbox = element.get_BoundingBox(None)
-            
+            solids = _read_element_solids(element, doc, include_sub_elements=False)
+
+            body = []
+            centroid = None
+            largest = _largest_first(solids)[:1]
+            if largest:
+                try:
+                    centroid = largest[0].ComputeCentroid()
+                except Exception:
+                    centroid = None
+            if centroid is not None:
+                body.append(centroid)
+            if bbox:
+                center = (bbox.Min + bbox.Max) / 2.0
+                if centroid is None or center.DistanceTo(centroid) > 1e-6:
+                    body.append(center)
+            points.extend(body)
+            n_body = len(body)
+
             if bbox and abs(bbox.Max.Z - bbox.Min.Z) > 0.1:
                 # Element has vertical extent - add points at 25%, 50%, 75% of height
                 min_z = bbox.Min.Z
@@ -602,10 +902,22 @@ def get_element_test_points(element, doc=None):
                 for t in [0.25, 0.5, 0.75]:
                     z = min_z + (max_z - min_z) * t
                     points.append(XYZ(base_point.X, base_point.Y, z))
+                mid_z = (min_z + max_z) / 2.0
             else:
                 # No significant vertical extent - use base point only
                 points.append(base_point)
-        elif hasattr(loc, "Curve"):
+                mid_z = base_point.Z
+
+            # Larger bodies (vaults, arches, hollow families): grid points on their faces
+            if solids and bbox and _bbox_max_extent(bbox) >= FACE_TIER_MIN_EXTENT_FT:
+                points.extend(_face_points_from_solids(solids))
+
+            # Hosted families (doors, windows, wall-hosted fixtures): last resort, one
+            # point on each side of the host
+            tail = _get_hosted_family_facing_points(element, base_point, mid_z)
+            points.extend(tail)
+            n_tail = len(tail)
+        elif has_curve:
             # LocationCurve - get multiple points along the curve
             curve = loc.Curve
             if curve:
@@ -639,17 +951,23 @@ def get_element_test_points(element, doc=None):
                     points.append(midpoint - perp_direction * 2.0)
                 except:
                     pass
+
+            # A wall's location curve sits at its base level: below the wall when it has
+            # a base offset, and exactly on the zone's bottom face otherwise. Lift the
+            # curve samples into the body (25/50/75 % of the height) for walls, and for
+            # any element whose curve lies outside its own bounding box in Z.
+            _lift_curve_points_into_body(element, points)
         
         # Fallback to bounding box center
         if not points:
             bbox = element.get_BoundingBox(None)
             if bbox:
                 points.append((bbox.Min + bbox.Max) / 2.0)
-        
-        return points
+
+        return _result()
     except Exception as e:
         logger.debug("Error getting element test points: {}".format(str(e)))
-        return points
+        return _result()
 
 
 def _is_roof_element(element):
@@ -801,7 +1119,7 @@ def _get_floor_footprint_test_points(element, doc=None):
                         try:
                             face = element.GetGeometryObjectFromReference(ref)
                             if face and isinstance(face, PlanarFace):
-                                face_points = _generate_grid_points_on_face(face, grid_size=4)
+                                face_points = _generate_grid_points_on_face(face, grid_size=None)
                                 for p in face_points:
                                     if len(points) >= max_total:
                                         return points[:max_total]
@@ -1191,7 +1509,9 @@ def is_point_inside_solid_optimized(point, solid):
     try:
         # Create tiny line from point (learnrevitapi best practice)
         # Offset of 0.01 feet (≈3mm) in Revit internal units for point-in-solid check
-        line = Line.CreateBound(point, XYZ(point.X, point.Y, point.Z + 0.01))
+        # Symmetric probe: a point lying exactly on the zone's top face (floors under a
+        # zone top) or bottom face still yields a segment inside the solid.
+        line = Line.CreateBound(XYZ(point.X, point.Y, point.Z - 0.01), XYZ(point.X, point.Y, point.Z + 0.01))
         
         # Create intersection options
         opts = SolidCurveIntersectionOptions()
@@ -1209,36 +1529,40 @@ def is_point_inside_solid_optimized(point, solid):
         logger.debug("Error in optimized point-in-solid check: {}".format(str(e)))
         return False
 
-def _collect_all_solids_from_geometry(geometry):
-    """Extract ALL solids from geometry, including nested GeometryInstance objects.
-    
-    This is critical for in-place families which often have multiple solid forms.
-    Standard families may also have multiple solids that need to be checked.
-    
+def _collect_all_solids_from_geometry(geometry, _depth=0):
+    """Extract ALL solids from geometry, recursing into nested GeometryInstance objects.
+
+    Family instances nest (a door with a nested handle family, a railing baluster with a
+    nested profile family), so one level of GetInstanceGeometry() misses geometry. The
+    recursion is capped at 4 levels.
+
     Args:
         geometry: GeometryElement from element.get_Geometry()
-        
+
     Returns:
-        list: List of Solid objects with Volume > 0
+        list: List of Solid objects with Volume > 0 (project coordinates)
     """
     solids = []
     if not geometry:
         return solids
-    
+
     for geom_obj in geometry:
-        # Check if it's a GeometryInstance (wrapper around family geometry)
         if hasattr(geom_obj, "GetInstanceGeometry"):
-            # GetInstanceGeometry() returns geometry in project coordinates
-            # This is correct for containment testing
-            instance_geom = geom_obj.GetInstanceGeometry()
+            if _depth >= 4:
+                continue
+            try:
+                instance_geom = geom_obj.GetInstanceGeometry()
+            except Exception:
+                instance_geom = None
             if instance_geom:
-                for inst_obj in instance_geom:
-                    if hasattr(inst_obj, "Volume") and inst_obj.Volume > 0:
-                        solids.append(inst_obj)
-        # Direct solid in geometry
-        elif hasattr(geom_obj, "Volume") and geom_obj.Volume > 0:
-            solids.append(geom_obj)
-    
+                solids.extend(_collect_all_solids_from_geometry(instance_geom, _depth + 1))
+        elif hasattr(geom_obj, "Volume"):
+            try:
+                if geom_obj.Volume > 0:
+                    solids.append(geom_obj)
+            except Exception:
+                continue
+
     return solids
 
 def is_point_in_element(element, point, doc):
@@ -2377,6 +2701,123 @@ def build_source_element_spatial_index(source_elements, doc, cell_size_feet=50.0
     
     return spatial_index
 
+def _is_identity_transform(t):
+    return (t.Origin.X == 0 and t.Origin.Y == 0 and t.Origin.Z == 0 and
+            t.BasisX.X == 1 and t.BasisX.Y == 0 and t.BasisX.Z == 0 and
+            t.BasisY.X == 0 and t.BasisY.Y == 1 and t.BasisY.Z == 0 and
+            t.BasisZ.X == 0 and t.BasisZ.Y == 0 and t.BasisZ.Z == 1)
+
+
+def _bboxes_overlap(a, b):
+    try:
+        return (a.Min.X <= b.Max.X and a.Max.X >= b.Min.X and
+                a.Min.Y <= b.Max.Y and a.Max.Y >= b.Min.Y and
+                a.Min.Z <= b.Max.Z and a.Max.Z >= b.Min.Z)
+    except Exception:
+        return True
+
+
+def _zone_solids_host(zone_el, doc, link_instance=None):
+    """Zone solids and bbox in HOST coordinates, cached next to the zone's geometry."""
+    zid = get_element_id_value(zone_el.Id)
+    cached = _geometry_cache.get(zid)
+    if cached is None:
+        options = _get_geometry_options(doc)
+        try:
+            geometry = zone_el.get_Geometry(options)
+            solids = _collect_all_solids_from_geometry(geometry) if geometry else []
+        except Exception:
+            solids = []
+        cached = {"solids": solids, "bbox": zone_el.get_BoundingBox(None)}
+        _geometry_cache[zid] = cached
+    if "solids_host" not in cached:
+        solids = cached.get("solids", [])
+        bbox = cached.get("bbox")
+        host_solids = solids
+        host_bbox = bbox
+        if link_instance is not None:
+            try:
+                t = link_instance.GetTotalTransform()
+                if not _is_identity_transform(t):
+                    host_solids = _transform_solids_with_transform(solids, t)
+                    host_bbox = _transform_axis_aligned_bbox(bbox, t) if bbox else None
+            except Exception as ex:
+                logger.debug("Error transforming zone solids to host: {}".format(str(ex)))
+        cached["solids_host"] = host_solids
+        cached["bbox_host"] = host_bbox
+    return cached.get("solids_host", []), cached.get("bbox_host")
+
+
+def element_intersects_zone_solid(target_el, zone_el, doc, link_instance=None):
+    """Exact test: does the target's geometry intersect any solid of the zone?
+
+    Uses Revit's ElementIntersectsSolidFilter on a collector holding only the target, in
+    host coordinates. This is the same test Zone Audit uses for "geometry intersects".
+    """
+    try:
+        solids_host, bbox_host = _zone_solids_host(zone_el, doc, link_instance)
+        if not solids_host:
+            return False
+        ebox = target_el.get_BoundingBox(None)
+        if ebox is not None and bbox_host is not None and not _bboxes_overlap(ebox, bbox_host):
+            return False
+        ids = List[ElementId]([target_el.Id])
+        for solid in solids_host:
+            try:
+                if solid is None or solid.Volume <= 1e-9:
+                    continue
+                passed = FilteredElementCollector(target_el.Document, ids)\
+                    .WherePasses(ElementIntersectsSolidFilter(solid)).ToElementIds()
+                if len(list(passed)) > 0:
+                    return True
+            except Exception as ex:
+                logger.debug("ElementIntersectsSolidFilter failed: {}".format(str(ex)))
+                continue
+        return False
+    except Exception as e:
+        logger.debug("Error in element_intersects_zone_solid: {}".format(str(e)))
+        return False
+
+
+def _sort_candidates(candidates, sort_property="ElementId", sort_descending=False):
+    if sort_property == "ElementId":
+        return sorted(candidates, key=lambda el: get_element_id_value(el.Id), reverse=sort_descending)
+    try:
+        from zone3d.core import sort_source_elements
+        return sort_source_elements(candidates, sort_property, descending=sort_descending)
+    except ImportError:
+        return sorted(candidates, key=lambda el: get_element_id_value(el.Id), reverse=sort_descending)
+
+
+def _candidates_for_bbox(target_el, element_index, cell_size_feet=50.0, link_instance=None,
+                         sort_property="ElementId", sort_descending=False):
+    """Candidate zones from the index cells covering the target's bounding box (plus one cell)."""
+    try:
+        bbox = target_el.get_BoundingBox(None)
+        if bbox is None or not element_index:
+            return []
+        if link_instance is not None:
+            try:
+                t = link_instance.GetTotalTransform()
+                if not _is_identity_transform(t):
+                    bbox = _transform_axis_aligned_bbox(bbox, t.Inverse)
+            except Exception:
+                pass
+        seen = set()
+        candidates = []
+        for ix in range(int(bbox.Min.X / cell_size_feet) - 1, int(bbox.Max.X / cell_size_feet) + 2):
+            for iy in range(int(bbox.Min.Y / cell_size_feet) - 1, int(bbox.Max.Y / cell_size_feet) + 2):
+                for source_el in element_index.get((ix, iy), []):
+                    el_id = get_element_id_value(source_el.Id)
+                    if el_id not in seen:
+                        seen.add(el_id)
+                        candidates.append(source_el)
+        return _sort_candidates(candidates, sort_property, sort_descending)
+    except Exception as e:
+        logger.debug("Error collecting bbox candidates: {}".format(str(e)))
+        return []
+
+
 def get_containing_element_indexed(target_el, doc, element_index, cell_size_feet=50.0, sort_property="ElementId", sort_descending=False, link_instance=None):
     """Find containing element using pre-built spatial index (fast path).
     
@@ -2403,10 +2844,12 @@ def get_containing_element_indexed(target_el, doc, element_index, cell_size_feet
     try:
         # Get test points in target element's document (host when using link)
         target_doc = target_el.Document
+        n_body = 0
+        n_tail = 0
         if _is_3d_zone_vote_target(target_el):
             test_points = _merge_3d_zone_vote_test_points(target_el, target_doc)
         else:
-            test_points = get_element_test_points(target_el, target_doc)
+            test_points, n_body, n_tail = get_element_test_points(target_el, target_doc, return_body_count=True)
         if not test_points:
             return None
         
@@ -2490,21 +2933,59 @@ def get_containing_element_indexed(target_el, doc, element_index, cell_size_feet
                 test_points, candidates, _zone_inside, ROOF_CONTAINMENT_VOTE_MIN_FRACTION,
                 sort_candidates_by_id=False)
         
-        for source_el in candidates:
-            for point in test_points:
-                try:
-                    element_id = get_element_id_value(source_el.Id)
-                    if element_id in _geometry_cache:
-                        cached = _geometry_cache[element_id]
-                        bbox = cached.get("bbox")
-                        if bbox and not is_point_in_bbox(point, bbox):
-                            continue
-                except Exception:
+        def _cached_bbox_rejects(source_el, point):
+            """True when the cached zone bbox proves the point cannot be inside (or lookup failed)."""
+            try:
+                element_id = get_element_id_value(source_el.Id)
+                if element_id in _geometry_cache:
+                    bbox = _geometry_cache[element_id].get("bbox")
+                    if bbox and not is_point_in_bbox(point, bbox):
+                        return True
+            except Exception:
+                return True
+            return False
+
+        # Pass 1 (point-based families only): body points decide, point by point.
+        # The centroid is tested against every candidate zone in sort order before the
+        # bbox centre is; the first zone that contains a body point wins.
+        for point in test_points[:n_body]:
+            for source_el in candidates:
+                if _cached_bbox_rejects(source_el, point):
                     continue
-                
                 if is_point_in_element(source_el, point, doc):
                     return source_el
-        
+
+        # Pass 2 (all element kinds): first zone in the configured sort order that
+        # contains any of the regular sample points. Unchanged behaviour for walls,
+        # ducts and other curve-based elements.
+        regular_end = len(test_points) - n_tail
+        for source_el in candidates:
+            for point in test_points[n_body:regular_end]:
+                if _cached_bbox_rejects(source_el, point):
+                    continue
+                if is_point_in_element(source_el, point, doc):
+                    return source_el
+
+        # Pass 3 (last resort): touching points just outside wall faces and the facing
+        # points of hosted families. Only reached when nothing else is inside any zone,
+        # e.g. a wall sitting in the gap between two zones drawn to its faces.
+        for source_el in candidates:
+            for point in test_points[regular_end:]:
+                if _cached_bbox_rejects(source_el, point):
+                    continue
+                if is_point_in_element(source_el, point, doc):
+                    return source_el
+
+        # Pass 4 (exact geometry): no sample point is inside any zone, so intersect the
+        # element's own geometry with the zone solids. Same test Zone Audit uses for
+        # "geometry intersects", so what the audit shows as inside is never dropped by
+        # sampling alone. Candidates come from the cells covering the element's bounding
+        # box; the first zone in the configured sort order wins.
+        for source_el in _candidates_for_bbox(target_el, element_index, cell_size_feet, link_instance,
+                                              sort_property, sort_descending):
+            if element_intersects_zone_solid(target_el, source_el, doc, link_instance):
+                return source_el
+
         return None
     except Exception as e:
         logger.debug("Error getting containing element (indexed): {}".format(str(e)))
@@ -3362,22 +3843,10 @@ def precompute_geometries(elements, doc):
             if not geometry:
                 continue
             
-            # Extract solid
-            solid = None
-            for geom_obj in geometry:
-                if hasattr(geom_obj, "GetInstanceGeometry"):
-                    instance_geom = geom_obj.GetInstanceGeometry()
-                    for inst_obj in instance_geom:
-                        if hasattr(inst_obj, "Volume") and inst_obj.Volume > 0:
-                            solid = inst_obj
-                            break
-                elif hasattr(geom_obj, "Volume") and geom_obj.Volume > 0:
-                    solid = geom_obj
-                    break
-            
-            if solid:
-                # Cache as list keyed "solids" to match is_point_in_element's expected format
-                _geometry_cache[element_id] = {"solids": [solid], "bbox": bbox}
+            # Extract ALL solids (in-place zones and nested families have several)
+            solids = _collect_all_solids_from_geometry(geometry)
+            if solids:
+                _geometry_cache[element_id] = {"solids": solids, "bbox": bbox}
         except Exception as e:
             logger.debug("Error precomputing geometry for element {}: {}".format(element_id, str(e)))
             continue
