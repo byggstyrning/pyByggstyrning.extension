@@ -15,9 +15,9 @@ from Autodesk.Revit.DB import (
     FilteredElementCollector,
     BasePoint,
     LocationPoint,
-    LocationCurve,
     StorageType,
     Family,
+    FamilyInstance,
     IFamilyLoadOptions,
 )
 
@@ -86,20 +86,31 @@ def get_project_base_point(doc):
     return None
 
 
-def get_element_point(element):
-    """Point used for elevation: insertion point, else curve midpoint, else bbox base."""
+def is_marker_instance(element):
+    """True for a Plushöjdsmarkör instance, including one hosted on another family."""
     try:
-        location = element.Location
-        if isinstance(location, LocationPoint) and location.Point:
-            return location.Point
-        if isinstance(location, LocationCurve) and location.Curve:
-            return location.Curve.Evaluate(0.5, True)
+        if not isinstance(element, FamilyInstance):
+            return False
+        symbol = element.Symbol
+        if symbol is None or symbol.Family is None:
+            return False
+        return unicode(symbol.Family.Name) == MARKER_FAMILY_NAME
+    except Exception:
+        return False
+
+
+def get_marker_base_point(instance):
+    """Project position of this marker family's origin, not the host origin."""
+    try:
+        transform = instance.GetTransform()
+        if transform is not None:
+            return transform.Origin
     except Exception:
         pass
     try:
-        bbox = element.get_BoundingBox(None)
-        if bbox:
-            return bbox.Min
+        location = instance.Location
+        if isinstance(location, LocationPoint) and location.Point:
+            return location.Point
     except Exception:
         pass
     return None
@@ -121,37 +132,82 @@ def elevation_internal(doc, point, coordinate_system, project_base_z):
     return point.Z - project_base_z
 
 
-def get_multiline_text_parameters(doc, view):
-    """Writable multiline text parameter names on elements in the view."""
-    collector = FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType().ToElementIds()
-    names = set()
-    seen_types = {}
+def instance_chain(instance):
+    """The marker, then each family it is nested inside."""
+    chain = []
+    current = instance
+    seen = {}
+    while current is not None:
+        try:
+            element_id = get_element_id_value(current.Id)
+        except Exception:
+            break
+        if element_id in seen:
+            break
+        seen[element_id] = True
+        chain.append(current)
+        try:
+            current = current.SuperComponent
+        except Exception:
+            break
+    return chain
 
-    for element_id in collector:
-        element = doc.GetElement(element_id)
-        if not element or not element.Category:
-            continue
+
+def writable_parameter_host(marker, parameter_name):
+    """Instance that can store the height.
+
+    A shared marker nested in the closet keeps plushöjd read-only and shows
+    the closet parameter. The height is still the marker origin.
+    """
+    for element in instance_chain(marker):
         try:
-            type_id = element.GetTypeId()
-            type_key = get_element_id_value(type_id)
+            param = element.LookupParameter(parameter_name)
         except Exception:
-            type_key = 0
-        sample_key = (get_element_id_value(element.Category.Id), type_key)
-        if sample_key in seen_types:
+            param = None
+        if not param or param.IsReadOnly:
             continue
-        seen_types[sample_key] = True
-        try:
-            parameters = element.Parameters
-        except Exception:
+        if param.StorageType != StorageType.String:
             continue
-        for param in parameters:
+        return element
+    return None
+
+
+def markers_in_view(doc, view):
+    """Plushöjdsmarkör instances visible in the view, including shared nested ones."""
+    view_ids = {}
+    for element_id in FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType().ToElementIds():
+        view_ids[get_element_id_value(element_id)] = True
+    markers = []
+    for element in FilteredElementCollector(doc).OfClass(FamilyInstance):
+        if not is_marker_instance(element):
+            continue
+        in_view = False
+        for item in instance_chain(element):
+            if get_element_id_value(item.Id) in view_ids:
+                in_view = True
+                break
+        if in_view:
+            markers.append(element)
+    return markers
+
+
+def get_multiline_text_parameters(doc, view):
+    """Writable multiline text parameters on the marker or the family it is nested in."""
+    names = set()
+    for marker in markers_in_view(doc, view):
+        for element in instance_chain(marker):
             try:
-                if param.IsReadOnly or param.StorageType != StorageType.String:
-                    continue
-                if is_param_multiline_text(param.Definition):
-                    names.add(param.Definition.Name)
+                parameters = element.Parameters
             except Exception:
                 continue
+            for param in parameters:
+                try:
+                    if param.IsReadOnly or param.StorageType != StorageType.String:
+                        continue
+                    if is_param_multiline_text(param.Definition):
+                        names.add(param.Definition.Name)
+                except Exception:
+                    continue
     return sorted(names)
 
 
@@ -166,21 +222,11 @@ def preferred_parameter(parameter_names):
 
 
 def collect_elements_with_parameter(doc, view, parameter_name):
-    """Model elements in the view that expose the chosen parameter."""
+    """Markers in the view whose height can be stored on the marker or its host."""
     elements = []
-    collector = FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType()
-    for element in collector:
-        try:
-            if not element.Category:
-                continue
-            if element.ViewSpecific:
-                continue
-            param = element.LookupParameter(parameter_name)
-            if not param:
-                continue
+    for element in markers_in_view(doc, view):
+        if writable_parameter_host(element, parameter_name) is not None:
             elements.append(element)
-        except Exception:
-            continue
     return elements
 
 
@@ -322,7 +368,7 @@ def main():
     parameter_names = get_multiline_text_parameters(doc, view)
     if not parameter_names:
         forms.alert(
-            "No writable multiline text parameters found in the active view.\n\n"
+            "No writable multiline text parameters found on Plushöjdsmarkör in the active view.\n\n"
             "The target parameter must be Multiline Text, not single-line Text.",
             title="+Height",
         )
@@ -350,7 +396,7 @@ def main():
     elements = collect_elements_with_parameter(doc, view, height_parameter)
     if not elements:
         forms.alert(
-            "No elements with parameter \"{}\" found in the active view.".format(height_parameter),
+            "No Plushöjdsmarkör instances with parameter \"{}\" found in the active view.".format(height_parameter),
             title="+Height",
         )
         return
@@ -366,19 +412,19 @@ def main():
             if idx % batch_size == 0 or idx == total_count - 1:
                 pb.update_progress(idx + 1, total_count)
 
-            is_editable, edit_reason = is_element_editable(doc, element)
-            if not is_editable:
-                skipped_count += 1
-                continue
-
-            is_writable, write_reason, param = is_parameter_writable(element, height_parameter)
-            if not is_writable:
-                skipped_count += 1
-                continue
-
-            point = get_element_point(element)
+            point = get_marker_base_point(element)
             if point is None:
                 failed_count += 1
+                continue
+
+            target = writable_parameter_host(element, height_parameter)
+            if target is None:
+                skipped_count += 1
+                continue
+
+            is_editable, edit_reason = is_element_editable(doc, target)
+            if not is_editable:
+                skipped_count += 1
                 continue
 
             try:
@@ -390,7 +436,7 @@ def main():
                 continue
 
             results.append({
-                'element': element,
+                'element': target,
                 'height_text': height_text,
             })
 
