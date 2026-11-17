@@ -97,6 +97,24 @@ def copy_parameter_value(source_param, target_param, return_value=False):
         
         # Check storage types match
         if source_param.StorageType != target_param.StorageType:
+            source_storage = source_param.StorageType
+            if target_param.StorageType == StorageType.String and (
+                source_storage == StorageType.Double or source_storage == StorageType.Integer
+            ):
+                value = None
+                try:
+                    value = source_param.AsValueString()
+                except Exception:
+                    value = None
+                if not value:
+                    if source_storage == StorageType.Double:
+                        value = str(source_param.AsDouble())
+                    else:
+                        value = str(source_param.AsInteger())
+                if target_param.HasValue and target_param.AsString() == value:
+                    return (False, value) if return_value else False
+                target_param.Set(value)
+                return (True, value) if return_value else True
             return (False, None) if return_value else False
         
         storage_type = source_param.StorageType
@@ -586,6 +604,10 @@ def copy_parameters(source_element, target_element, source_param_names, target_p
                         elif source_param.StorageType == StorageType.Double:
                             if abs(source_param.AsDouble() - target_param.AsDouble()) < 1e-9:
                                 already_correct_count += 1
+                    elif target_param.StorageType == StorageType.String:
+                        formatted = source_param.AsValueString()
+                        if formatted and target_param.AsString() == formatted:
+                            already_correct_count += 1
                 except: pass
         
         except Exception as e:
@@ -658,7 +680,7 @@ def write_parameters_to_elements(doc, zone_config, progress_bar=None, view_id=No
         "parameters_copied": 0,
         "errors": []
     }
-    
+
     try:
         # Detect containment strategy
         source_categories = zone_config.get("source_categories", [])
