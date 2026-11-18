@@ -910,6 +910,40 @@ class SpaceAdapter(RoomAdapter):
         """Return family name prefix for Spaces."""
         return "3DZone_Space-"
 
+    def copy_properties_to_instance(self, source_element, target_instance, doc):
+        """Copy matching parameters, then write Space Name/Number to the
+        instance parameters 'Name' and 'Number' if bound to Generic Models."""
+        super(SpaceAdapter, self).copy_properties_to_instance(source_element, target_instance, doc)
+
+        values = [
+            ("Name", source_element.get_Parameter(BuiltInParameter.ROOM_NAME)),
+            ("Number", source_element.get_Parameter(BuiltInParameter.ROOM_NUMBER)),
+        ]
+        invalid_bip = getattr(BuiltInParameter, 'INVALID', None)
+        for target_name, source_param in values:
+            try:
+                if not source_param or not source_param.HasValue:
+                    continue
+                value = source_param.AsString()
+                if not value:
+                    continue
+                target_param = target_instance.LookupParameter(target_name)
+                if not target_param or target_param.IsReadOnly:
+                    continue
+                if target_param.StorageType != StorageType.String:
+                    continue
+                # Only project/shared parameters, never a built-in named "Name"
+                bip = getattr(target_param.Definition, 'BuiltInParameter', invalid_bip)
+                if invalid_bip is not None and bip != invalid_bip:
+                    continue
+                if target_param.AsString() != value:
+                    target_param.Set(value)
+                    logger.debug("Set '{}' = '{}' on 3D Zone {} from Space {}".format(
+                        target_name, value, target_instance.Id, source_element.Id))
+            except Exception as e:
+                logger.debug("Error writing '{}' from Space {}: {}".format(
+                    target_name, source_element.Id, e))
+
 
 class CurveSegmentWrapper(object):
     """Wrapper to make Curve objects work with boundary segment interface."""
