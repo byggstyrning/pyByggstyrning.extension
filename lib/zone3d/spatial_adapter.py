@@ -644,6 +644,7 @@ class RoomAdapter(SpatialElementAdapter):
     def get_existing_instance(self, element, doc, zone_instances_cache=None):
         """Get existing 3D Zone instance for room if it exists."""
         room_id_str = str(get_element_id_value(element.Id))
+        prefix = self.get_family_name_prefix()
         
         # Iterate through pre-filtered 3DZone instances only
         if zone_instances_cache is None:
@@ -658,7 +659,7 @@ class RoomAdapter(SpatialElementAdapter):
             for instance in all_generic_instances:
                 try:
                     family_name = instance.Symbol.Family.Name
-                    if family_name.startswith("3DZone_Room-"):
+                    if family_name.startswith(prefix):
                         zone_instances_cache.append(instance)
                 except:
                     pass
@@ -667,7 +668,7 @@ class RoomAdapter(SpatialElementAdapter):
             try:
                 family_name = instance.Symbol.Family.Name
                 # Check if this 3DZone family matches this room (room ID is unique)
-                if room_id_str in family_name:
+                if family_name.startswith(prefix) and room_id_str in family_name:
                     return instance
             except:
                 pass
@@ -896,6 +897,18 @@ class RoomAdapter(SpatialElementAdapter):
                             return
             except Exception as symbol_set_error:
                 logger.debug("Could not set type parameter on symbol: {}".format(symbol_set_error))
+
+
+class SpaceAdapter(RoomAdapter):
+    """Adapter for MEP Space elements.
+
+    Spaces share Room's number/name/phase built-in parameters, UnboundedHeight
+    and boundary API, so only the family name prefix differs.
+    """
+
+    def get_family_name_prefix(self):
+        """Return family name prefix for Spaces."""
+        return "3DZone_Space-"
 
 
 class CurveSegmentWrapper(object):
